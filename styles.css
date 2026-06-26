@@ -1,0 +1,506 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #13151B;
+  --surface:   #1B1E27;
+  --surface2:  #232734;
+  --border:    #313747;
+  --border2:   #3C4356;
+  --accent:      #FFC629;
+  --accent-soft: #C99A12;
+  --text:   #ECEFF4;
+  --text-2: #B4BCCE;
+  --text-3: #ABB3C5;
+  --danger: #FF8A7A;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-mono, ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Viewport: the window onto the infinite world ── */
+#viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  /* dotted grid that scrolls with the world via background-position */
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.1px);
+  background-size: 28px 28px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+#viewport.panning { cursor: grabbing; }
+
+/* ── World: the infinite plane that gets transformed ── */
+#world {
+  position: absolute;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* ── Card ── */
+.card {
+  position: absolute;
+  width: 240px;
+  min-height: 96px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.card:hover { border-color: var(--border2); }
+.card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
+}
+.card.dragging { cursor: grabbing; }
+
+.card-header {
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem 0.35rem;
+  cursor: grab;
+}
+.card.dragging .card-header { cursor: grabbing; }
+
+.card-title {
+  min-width: 50px;
+  display: inline-block;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  outline: none;
+  border-radius: 4px;
+  padding: 0.1rem 1.4rem 0.1rem 0.25rem;
+  margin: -0.1rem -0.25rem;
+  word-break: break-word;
+}
+.card-title:focus { background: var(--surface2); cursor: text; }
+.card-title:empty::before {
+  content: 'Untitled';
+  color: var(--text-3);
+}
+
+.card-delete {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  width: 22px; height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 5px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.card:hover .card-delete { opacity: 1; }
+.card-delete:hover { background: rgba(255,138,122,0.14); color: var(--danger); }
+
+.card-body {
+  flex: 1;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  line-height: 1.55;
+  padding: 0 0.95rem 0.8rem;
+  outline: none;
+  /* bottom corners match the card so the focus background never covers
+     the card's rounded corners (replaces the old overflow:hidden) */
+  border-radius: 0 0 9px 9px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+.card-body:focus { background: var(--surface2); }
+.card-body:empty::before {
+  content: 'Add a note…';
+  color: var(--text-3);
+}
+
+/* ── Toolbar ── */
+#toolbar {
+  position: fixed;
+  top: 1rem; left: 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+}
+#toolbar .brand {
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text);
+  padding: 0 0.4rem 0 0.3rem;
+  letter-spacing: -0.01em;
+}
+#toolbar .brand .dot { color: var(--accent); }
+.btn {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.btn:hover { background: var(--border); }
+.btn.primary {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: #1A1305;
+}
+.btn.primary:hover { background: var(--accent); border-color: var(--accent); }
+
+/* ── Status (bottom-left): coords + save state ── */
+#status {
+  position: fixed;
+  bottom: 0.9rem; left: 1rem;
+  z-index: 10;
+  display: flex;
+  gap: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-3);
+  background: rgba(27,30,39,0.7);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.35rem 0.65rem;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+#status .save.dirty { color: var(--phase-60, #F8CF5F); }
+#status .save.saved { color: var(--accent); }
+
+/* ── Hint (bottom-right) ── */
+#hint {
+  position: fixed;
+  bottom: 0.9rem; right: 1rem;
+  z-index: 10;
+  font-size: 0.72rem;
+  color: var(--text-3);
+  background: rgba(27,30,39,0.7);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.4rem 0.7rem;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  line-height: 1.5;
+}
+#hint kbd {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--text-2);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
+/* ════════════════════════════════════════════════════════
+   60% — iframes, connections, ports, resize
+   ════════════════════════════════════════════════════════ */
+
+/* ── Connection layer (SVG inside #world) ── */
+#connections {
+  position: absolute;
+  top: 0; left: 0;
+  overflow: visible;          /* paths draw beyond the 0×0 svg box */
+  pointer-events: none;       /* only the hit paths opt back in */
+}
+#connections .line {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 2;
+  transition: stroke 0.12s;
+}
+#connections .hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;     /* generous click target along the curve */
+  cursor: pointer;
+}
+#connections .conn:hover .line { stroke: var(--text-2); }
+#connections .conn.selected .line { stroke: var(--accent); stroke-width: 2.5; }
+#connections .conn-temp {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+/* Ports straddle the node border; nodes intentionally don't clip overflow
+   (the card body rounds its own bottom corners; the iframe clips via
+   .iframe-wrap), so the handles aren't cut off. */
+
+/* ── Ports — connection handles, shown on node hover ── */
+.port {
+  position: absolute;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  cursor: crosshair;
+  transition: opacity 0.12s, transform 0.1s;
+  z-index: 4;
+}
+.node:hover .port, .node.selected .port { opacity: 0.95; pointer-events: auto; }
+.port:hover { transform: translate(-50%, -50%) scale(1.3); }
+.port.top    { left: 50%;  top: 0; }
+.port.right  { left: 100%; top: 50%; }
+.port.bottom { left: 50%;  top: 100%; }
+.port.left   { left: 0;    top: 50%; }
+
+/* highlight a node while dragging a connection toward it */
+.node.drop-target { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── iframe node ── */
+.iframe-node {
+  position: absolute;
+  width: 480px;
+  height: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.iframe-node:hover { border-color: var(--border2); }
+.iframe-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
+}
+.iframe-node.dragging { cursor: grabbing; }
+
+.iframe-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  flex: none;
+}
+.iframe-node.dragging .iframe-header { cursor: grabbing; }
+
+.iframe-label {
+  flex: 1;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iframe-toggle {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.iframe-toggle:hover { color: var(--text); background: var(--border); }
+
+/* content-zoom stepper ( − 100% + ) */
+.iframe-czoom {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.czoom-btn, .czoom-val {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.czoom-btn {
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+}
+.czoom-val {
+  font-size: 0.64rem;
+  min-width: 2.6em;
+  text-align: center;
+  border-left: 1px solid var(--border2);
+  border-right: 1px solid var(--border2);
+  padding: 0 0.1rem;
+}
+.czoom-btn:hover, .czoom-val:hover { color: var(--text); background: var(--border); }
+
+/* zoom-to-frame button */
+.iframe-zoom {
+  flex: none;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 0.22rem 0.4rem;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.iframe-zoom:hover { color: var(--text); background: var(--border); }
+
+/* the delete × uses the card rule (absolute + hover-only); in the iframe
+   header it belongs in the flex row and should stay visible */
+.iframe-header .card-delete {
+  position: static;
+  flex: none;
+  opacity: 0.7;
+}
+.iframe-header .card-delete:hover { opacity: 1; }
+
+.iframe-wrap {
+  flex: 1;
+  position: relative;
+  background: #0E1016;
+  overflow: hidden;                 /* clips the scaled frame to the node box */
+  border-radius: 0 0 10px 10px;
+}
+.iframe-frame {
+  /* width/height/transform are set in JS (layoutFrame): the frame renders at
+     a fixed logical width and is scaled to fit the box. */
+  border: 0;
+  display: block;
+  transform-origin: 0 0;
+  pointer-events: none;       /* canvas mode: frame is inert, node is draggable */
+}
+
+/* interact mode: frame receives pointer events; show a clear indicator */
+.iframe-node.interactive { border-color: var(--accent); }
+.iframe-node.interactive .iframe-frame { pointer-events: auto; }
+/* while zooming (Ctrl/⌘ held), let the wheel reach the canvas, not the frame */
+body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none; }
+.iframe-node.interactive .iframe-toggle {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255, 198, 41, 0.12);
+}
+
+/* ── Resize handle (bottom-right corner) ── */
+.resize-handle {
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 16px; height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 4;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--border2) 50%, var(--border2) 70%, transparent 70%);
+}
+.iframe-node:hover .resize-handle, .iframe-node.selected .resize-handle { opacity: 1; }
+
+/* ── Modal (themed iframe creation) ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(4px);
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  width: min(420px, calc(100vw - 2rem));
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  padding: 1.4rem 1.5rem 1.25rem;
+}
+.modal h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin-bottom: 1.1rem;
+}
+.modal-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 0.45rem;
+}
+#frame-url {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  padding: 0.6rem 0.7rem;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+#frame-url::placeholder { color: var(--text-3); }
+#frame-url:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 198, 41, 0.18);
+}
+.modal-note {
+  font-size: 0.78rem;
+  color: var(--text-3);
+  line-height: 1.5;
+  margin-top: 0.6rem;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.3rem;
+}

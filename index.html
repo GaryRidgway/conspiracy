@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infinite Whiteboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="viewport">
+    <div id="world"></div>
+  </div>
+
+  <div id="toolbar">
+    <span class="brand">Infinite Whiteboard<span class="dot">.</span></span>
+    <button class="btn primary" id="addCard">+ Card</button>
+    <button class="btn" id="addFrame">+ Frame</button>
+    <button class="btn" id="fitContent">Fit</button>
+    <button class="btn" id="resetView">Reset view</button>
+    <button class="btn" id="clearBoard">Clear</button>
+  </div>
+
+  <div id="status">
+    <span id="coords">x: 0  y: 0</span>
+    <span class="save" id="saveState">saved</span>
+  </div>
+
+  <div id="hint">
+    <kbd>drag</kbd> to pan · <kbd>⌘/Ctrl+scroll</kbd> or pinch to zoom · <kbd>dbl-click</kbd> for a card · drag a node's edge <kbd>port</kbd> to connect · <kbd>dbl-click</kbd> a frame to interact · <kbd>Del</kbd> removes selected
+  </div>
+
+  <!-- Themed iframe-creation modal (replaces the native prompt) -->
+  <div id="frame-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="frame-modal-title">
+      <h2 id="frame-modal-title">Embed a web page</h2>
+      <label class="modal-label" for="frame-url">URL</label>
+      <input id="frame-url" type="text" placeholder="https://example.com"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="modal-note">Many sites block embedding (X-Frame-Options / CSP) and will show blank.</p>
+      <div class="modal-actions">
+        <button class="btn" id="frame-cancel">Cancel</button>
+        <button class="btn primary" id="frame-add">Add frame</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

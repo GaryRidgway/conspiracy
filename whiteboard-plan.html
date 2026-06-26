@@ -1,0 +1,851 @@
+<title>Infinite Whiteboard — 30/60/90 Plan</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Comfortable slate dark mode — soft ground, clear elevation, high-contrast text */
+    --bg:        #13151B;
+    --surface:   #1B1E27;
+    --surface2:  #232734;
+    --border:    #313747;
+    --border2:   #3C4356;
+
+    --accent:      #3DDBB6;
+    --accent-soft: #2A9C82;
+    --code:        #74E6CA;
+
+    --text:   #ECEFF4;
+    --text-2: #B4BCCE;
+    --text-3: #ABB3C5;
+
+    --phase-30: #FF8A7A;
+    --phase-60: #F8CF5F;
+    --phase-90: #3DDBB6;
+
+    --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+  }
+
+  html {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    /* full-bleed dark; content centered to 940px via padding, no reliance on <html> bg */
+    padding: 3.5rem max(2rem, calc((100% - 940px) / 2)) 6rem;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    color: var(--code);
+    background: rgba(61, 219, 182, 0.08);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
+  /* ── Header ── */
+  header { margin-bottom: 3rem; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.9rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 750;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    line-height: 1.1;
+    text-wrap: balance;
+    margin-bottom: 1.1rem;
+  }
+
+  .subtitle {
+    font-size: 1.1rem;
+    color: var(--text-2);
+    max-width: 60ch;
+    line-height: 1.7;
+  }
+
+  /* ── Track heading ── */
+  .track-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 0.85rem;
+    margin: 3.5rem 0 1.75rem;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .track-tag {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--bg);
+    background: var(--accent);
+    padding: 0.28rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .track-heading h2 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  .track-heading .track-sub {
+    font-size: 0.95rem;
+    color: var(--text-3);
+  }
+
+  /* ── Phase bar ── */
+  .phase-bar {
+    display: flex;
+    margin: 0 0 3rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .phase-bar-item {
+    flex: 1;
+    padding: 1rem 1.3rem;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+
+  .phase-bar-item:last-child { border-right: none; }
+
+  .phase-bar-item::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+  }
+
+  .phase-bar-item.p30::after { background: var(--phase-30); }
+  .phase-bar-item.p60::after { background: var(--phase-60); }
+  .phase-bar-item.p90::after { background: var(--phase-90); }
+
+  .phase-bar-pct {
+    font-family: var(--font-mono);
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .p30 .phase-bar-pct { color: var(--phase-30); }
+  .p60 .phase-bar-pct { color: var(--phase-60); }
+  .p90 .phase-bar-pct { color: var(--phase-90); }
+
+  .phase-bar-label {
+    font-size: 0.84rem;
+    color: var(--text-2);
+  }
+
+  /* ── Phase section ── */
+  .phase {
+    margin-bottom: 3.25rem;
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    gap: 0 2.75rem;
+    padding-left: 1.4rem;
+    border-left: 2px solid var(--border2);
+    position: relative;
+  }
+
+  .phase::before {
+    content: '';
+    position: absolute;
+    left: -3px; top: 0;
+    width: 4px; height: 2.6rem;
+    border-radius: 2px;
+  }
+
+  .phase.p30::before { background: var(--phase-30); }
+  .phase.p60::before { background: var(--phase-60); }
+  .phase.p90::before { background: var(--phase-90); }
+
+  .phase-num {
+    font-family: var(--font-mono);
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    margin-bottom: 0.4rem;
+  }
+
+  .p30 .phase-num { color: var(--phase-30); }
+  .p60 .phase-num { color: var(--phase-60); }
+  .p90 .phase-num { color: var(--phase-90); }
+
+  .phase-title {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--text);
+    margin-bottom: 0.7rem;
+    line-height: 1.35;
+  }
+
+  .phase-intent {
+    font-size: 0.92rem;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .feedback-type {
+    margin-top: 1.3rem;
+    padding: 0.8rem 0.95rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .feedback-type-label {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+
+  .feedback-type-value {
+    font-size: 0.88rem;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .phase-section { margin-bottom: 1.9rem; }
+
+  .phase-section-heading {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 0.9rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .deliverable-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .deliverable-list > li {
+    font-size: 0.97rem;
+    color: var(--text);
+    padding-left: 1.3rem;
+    position: relative;
+    line-height: 1.55;
+  }
+
+  .deliverable-list > li::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0.6em;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+  }
+
+  .deliverable-list .note {
+    display: block;
+    font-size: 0.86rem;
+    color: var(--text-2);
+    margin-top: 0.3rem;
+    line-height: 1.55;
+  }
+
+  .decision-row {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.8rem 0.95rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.6rem;
+  }
+
+  .decision-q {
+    font-size: 0.9rem;
+    color: var(--text);
+    flex: 1;
+    line-height: 1.55;
+  }
+
+  .decision-tag {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    align-self: start;
+    margin-top: 0.15rem;
+    height: fit-content;
+  }
+
+  .tag-arch  { background: rgba(122,170,248,0.13); color: #9CC2FF; border: 1px solid rgba(122,170,248,0.3); }
+  .tag-ux    { background: rgba(248,184,122,0.13); color: #FBC98C; border: 1px solid rgba(248,184,122,0.3); }
+  .tag-data  { background: rgba(116,230,202,0.13); color: #74E6CA; border: 1px solid rgba(116,230,202,0.3); }
+  .tag-perf  { background: rgba(212,122,248,0.13); color: #E2B0FF; border: 1px solid rgba(212,122,248,0.3); }
+
+  .milestone-box {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 1rem 1.15rem;
+    font-size: 0.94rem;
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  .milestone-box strong {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+
+  /* ── Architecture section ── */
+  .arch-intro {
+    font-size: 1rem;
+    color: var(--text-2);
+    line-height: 1.7;
+    margin-bottom: 1.75rem;
+    max-width: 68ch;
+  }
+
+  .arch-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .arch-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.15rem 1.25rem;
+  }
+
+  .arch-card h3 {
+    font-size: 0.95rem;
+    font-weight: 650;
+    color: var(--text);
+    margin-bottom: 0.55rem;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .arch-card h3 .k {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(61,219,182,0.1);
+    border: 1px solid rgba(61,219,182,0.25);
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+  }
+
+  .arch-card p {
+    font-size: 0.88rem;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .arch-card p + p { margin-top: 0.6rem; }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    margin-bottom: 1.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    color: var(--text-2);
+  }
+  pre .key  { color: #9CC2FF; }
+  pre .str  { color: var(--code); }
+  pre .num  { color: #FBC98C; }
+  pre .cm   { color: var(--text-3); font-style: italic; }
+
+  /* Budget table */
+  .table-wrap { overflow-x: auto; margin-bottom: 1.5rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  caption {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 0.85rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 500;
+  }
+  td { color: var(--text); }
+  td.num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    text-align: right;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  .callout {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--phase-60);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    font-size: 0.92rem;
+    color: var(--text-2);
+    line-height: 1.65;
+  }
+  .callout strong { color: var(--text); font-weight: 650; }
+
+  /* ── Future scope ── */
+  .future-section {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .future-section h2 {
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 1.4rem;
+  }
+
+  .future-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 0.85rem;
+  }
+
+  .future-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.15rem;
+  }
+
+  .future-card-title {
+    font-size: 0.92rem;
+    font-weight: 650;
+    color: var(--text);
+    margin-bottom: 0.4rem;
+  }
+
+  .future-card-desc {
+    font-size: 0.85rem;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 720px) {
+    .phase { grid-template-columns: 1fr; }
+    .phase-meta { margin-bottom: 1.75rem; }
+    .phase-bar { flex-direction: column; }
+    .phase-bar-item { border-right: none; border-bottom: 1px solid var(--border); }
+    .phase-bar-item:last-child { border-bottom: none; }
+    .arch-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<header>
+  <p class="eyebrow">Product Planning Document</p>
+  <h1>Infinite Whiteboard<br>Application</h1>
+  <p class="subtitle">A single-page spatial canvas with embedded iframes, connected cards, and cloud-backed persistence. This plan sequences the build so each phase produces something real to react to — then layers in a sparse, low-cost sync model so boards follow you across devices.</p>
+</header>
+
+<!-- ════════ TRACK A ════════ -->
+<div class="track-heading">
+  <span class="track-tag">Track A</span>
+  <h2>Build the Whiteboard</h2>
+  <span class="track-sub">— local-first, JSON data model</span>
+</div>
+
+<div class="phase-bar">
+  <div class="phase-bar-item p30">
+    <span class="phase-bar-pct">30%</span>
+    <span class="phase-bar-label">Canvas foundation</span>
+  </div>
+  <div class="phase-bar-item p60">
+    <span class="phase-bar-pct">60%</span>
+    <span class="phase-bar-label">iframes &amp; connections</span>
+  </div>
+  <div class="phase-bar-item p90">
+    <span class="phase-bar-pct">90%</span>
+    <span class="phase-bar-label">Polish &amp; export</span>
+  </div>
+</div>
+
+<!-- ═══ 30% ═══ -->
+<section class="phase p30">
+  <div class="phase-meta">
+    <div class="phase-num">30%</div>
+    <div class="phase-title">Canvas Foundation &amp; Card MVP</div>
+    <div class="phase-intent">Concept fleshed out but not finished. Validate the core interaction model before building anything complex on top of it.</div>
+    <div class="feedback-type">
+      <div class="feedback-type-label">Feedback focus</div>
+      <div class="feedback-type-value">Direction &amp; feel — is pan/zoom natural? Is the data model extensible? Major pivots are still cheap here.</div>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="phase-section">
+      <div class="phase-section-heading">Deliverables</div>
+      <ul class="deliverable-list">
+        <li>Infinite pan canvas — scroll or drag in all four directions
+          <span class="note">A CSS transform on a large positioned container; wheel + pointer-drag events</span>
+        </li>
+        <li>Card component — title, body, absolute position on canvas
+          <span class="note">Draggable to reposition; resizing is a stretch goal at this phase</span>
+        </li>
+        <li>Card create / edit / delete
+          <span class="note">Inline editing, not a modal, to stay spatially grounded</span>
+        </li>
+        <li>The JSON data model
+          <span class="note">Define the board shape once: <code>{ cards, iframes, connections, viewport }</code> — this exact shape becomes the cloud document in Track&nbsp;B, so design it carefully now</span>
+        </li>
+        <li>Auto-save on every change
+          <span class="note">Debounced write to <code>localStorage['whiteboard']</code> — swapped for Firestore later with no model change</span>
+        </li>
+        <li>Restore the board on page load</li>
+      </ul>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">Key decisions to resolve</div>
+      <div class="decision-row">
+        <span class="decision-q">DOM-positioned elements vs. a <code>&lt;canvas&gt;</code> renderer — DOM wins, because iframes cannot render inside a canvas.</span>
+        <span class="decision-tag tag-arch">arch</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">Store positions as canvas-world coordinates so panning the viewport never dirties saved data.</span>
+        <span class="decision-tag tag-data">data</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">Store cards as a <strong>map keyed by ID</strong>, not an array — this is what makes field-level cloud writes possible later (see Architecture).</span>
+        <span class="decision-tag tag-data">data</span>
+      </div>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">End-of-phase milestone</div>
+      <div class="milestone-box">
+        <strong>Demo target</strong>
+        A blank canvas where cards can be created, dragged anywhere, edited in place, and survive a refresh — including the viewport position.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 60% ═══ -->
+<section class="phase p60">
+  <div class="phase-meta">
+    <div class="phase-num">60%</div>
+    <div class="phase-title">iframes, Arrows &amp; Interaction</div>
+    <div class="phase-intent">All features working in rough form. This is the biggest review round — gather full input on the complete feature set before hardening anything.</div>
+    <div class="feedback-type">
+      <div class="feedback-type-label">Feedback focus</div>
+      <div class="feedback-type-value">Feature completeness &amp; feel — do connections feel automatic? Is the iframe zoom/interact model right? Structural change is still possible.</div>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="phase-section">
+      <div class="phase-section-heading">Deliverables</div>
+      <ul class="deliverable-list">
+        <li>iframe node — embeds a URL, draggable and resizable on the canvas
+          <span class="note">Default <code>sandbox="allow-scripts allow-same-origin allow-forms"</code></span>
+        </li>
+        <li>iframe zoom / interact mode
+          <span class="note">Toggle between canvas mode (drag the iframe as a node) and interact mode (forward pointer events into the page), via a <code>pointer-events</code> switch with a clear visual indicator</span>
+        </li>
+        <li>Arrow connections between any two nodes
+          <span class="note">A single SVG overlay layer; arrows anchor to edge midpoints and re-route as nodes move</span>
+        </li>
+        <li>Connection UX — hover a node edge to reveal a port handle, drag from port to a target
+          <span class="note">Matches the model people already know from Miro / FigJam</span>
+        </li>
+        <li>iframes, arrows, and new fields all persisted into the JSON model</li>
+        <li>A "fit to content" button or minimap for spatial orientation</li>
+      </ul>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">Key decisions to resolve</div>
+      <div class="decision-row">
+        <span class="decision-q">One full-viewport <code>&lt;svg&gt;</code> overlay for arrows; paths recompute on node move.</span>
+        <span class="decision-tag tag-arch">arch</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">iframe interact toggle — double-click, or a dedicated button in the node header? Reduces accidental activation while dragging.</span>
+        <span class="decision-tag tag-ux">ux</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">Arrow shape — bezier curves are simpler than elbow routing and read clearly at most zoom levels.</span>
+        <span class="decision-tag tag-arch">arch</span>
+      </div>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">End-of-phase milestone</div>
+      <div class="milestone-box">
+        <strong>Demo target</strong>
+        A populated board: several cards, two or more live interactive iframes, and visible arrows connecting nodes — all persisting through a refresh.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 90% ═══ -->
+<section class="phase p90">
+  <div class="phase-meta">
+    <div class="phase-num">90%</div>
+    <div class="phase-title">Polish, Export &amp; URL Controls</div>
+    <div class="phase-intent">Final-stage review. No new features, no scope changes — catch missed details and confirm earlier feedback was addressed.</div>
+    <div class="feedback-type">
+      <div class="feedback-type-label">Feedback focus</div>
+      <div class="feedback-type-value">Quality only — missing details, regressions, performance. Major direction changes are off the table.</div>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="phase-section">
+      <div class="phase-section-heading">Deliverables</div>
+      <ul class="deliverable-list">
+        <li>JSON export / import — download the board as a <code>.json</code> file, restore from one
+          <span class="note">A portable backup that's independent of the cloud — same shape as the Firestore document</span>
+        </li>
+        <li>iframe URL control — edit a node's <code>src</code> from its header, no delete-and-recreate</li>
+        <li>Canvas zoom (pinch / Ctrl+scroll), with zoom level stored in the viewport state
+          <span class="note">Pulled forward into the 60% build — cursor-centered, clamped 10–400%</span>
+        </li>
+        <li>Keyboard basics — Tab between nodes, Delete to remove, Escape to deselect</li>
+        <li>Performance pass — cull nodes outside ~1.5× the viewport for boards of 50+ nodes</li>
+        <li>Design pass — revisit the full visual language: color scheme, type scale, spacing, card styling
+          <span class="note">Deferred from earlier phases by choice. Current palette is gold-accented (<code>#FFC629</code>) on slate; treat as provisional until this pass</span>
+        </li>
+      </ul>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">Key decisions to resolve</div>
+      <div class="decision-row">
+        <span class="decision-q">Import strategy — "replace board" vs "add at an offset". Offset is the safer default; it never overwrites.</span>
+        <span class="decision-tag tag-ux">ux</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">Zoom range — cap out at ~10% (overview) and ~400% (detail); past that, DOM text blurs.</span>
+        <span class="decision-tag tag-ux">ux</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-q">Culling — render only nodes within 1.5× the viewport bounds, updated on pan/zoom.</span>
+        <span class="decision-tag tag-perf">perf</span>
+      </div>
+    </div>
+    <div class="phase-section">
+      <div class="phase-section-heading">End-of-phase milestone</div>
+      <div class="milestone-box">
+        <strong>Demo target</strong>
+        Export a board, reload to a blank state, import the file, and have every card, iframe, and connection return exactly as left — at the right viewport.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ ARCHITECTURE ════════ -->
+<div class="track-heading">
+  <span class="track-tag">Reference</span>
+  <h2>Storage &amp; Sync Architecture</h2>
+  <span class="track-sub">— Firebase, kept sparse</span>
+</div>
+
+<p class="arch-intro">The data lives in <strong>one place</strong>: a single Firebase Firestore document per board, mirrored to a local cache so the app works offline. Because boards are rarely co-edited and a little lag is fine, sync can be made deliberately cheap — comfortably inside Firebase's free tier.</p>
+
+<div class="arch-grid">
+  <div class="arch-card">
+    <h3>Single source of truth <span class="k">store</span></h3>
+    <p>One Firestore document holds the whole board. Firestore's offline persistence keeps a local mirror, so the app runs offline and syncs on reconnect — still one logical data home, no second store to reconcile.</p>
+  </div>
+  <div class="arch-card">
+    <h3>Cards as a keyed map <span class="k">model</span></h3>
+    <p>Store nodes as <code>cards: { id: {…} }</code>, never as an array. Map keys are addressable as field paths; array indices are not. This single choice is what unlocks conflict-free writes below.</p>
+  </div>
+  <div class="arch-card">
+    <h3>Write on commit, by field path <span class="k">writes</span></h3>
+    <p>Update the screen locally during a drag; write to Firestore <em>once</em> on release. Debounce text edits to one write a couple seconds after typing stops.</p>
+    <p>Target the exact field — <code>update("cards.cardA.x", …)</code> — so two people editing <em>different</em> cards never clobber each other. Same field, same instant still wins-last — the case you've ruled out.</p>
+  </div>
+  <div class="arch-card">
+    <h3>Version-sentinel polling <span class="k">reads</span></h3>
+    <p>No live listeners. Keep a tiny <code>{ version }</code> doc; poll just that one document on a timer. If the number hasn't moved, do nothing. Only a bump triggers a real fetch.</p>
+    <p>Idle sync costs one read per poll, no matter how big the board is. Cached re-reads aren't billed at all.</p>
+  </div>
+</div>
+
+<pre><span class="cm">// One board document — designed at 30%, reused verbatim in the cloud</span>
+{
+  <span class="key">"version"</span>: <span class="num">47</span>,            <span class="cm">// bumped on every commit; the poll sentinel</span>
+  <span class="key">"viewport"</span>: { <span class="key">"x"</span>: <span class="num">-1200</span>, <span class="key">"y"</span>: <span class="num">340</span>, <span class="key">"zoom"</span>: <span class="num">1.0</span> },
+  <span class="key">"cards"</span>: {                  <span class="cm">// a MAP keyed by id — not an array</span>
+    <span class="key">"c_a1"</span>: { <span class="key">"x"</span>: <span class="num">120</span>, <span class="key">"y"</span>: <span class="num">80</span>, <span class="key">"title"</span>: <span class="str">"Idea"</span>, <span class="key">"body"</span>: <span class="str">"…"</span> },
+    <span class="key">"c_b2"</span>: { <span class="key">"x"</span>: <span class="num">480</span>, <span class="key">"y"</span>: <span class="num">210</span>, <span class="key">"title"</span>: <span class="str">"Notes"</span>, <span class="key">"body"</span>: <span class="str">"…"</span> }
+  },
+  <span class="key">"iframes"</span>: {
+    <span class="key">"f_x9"</span>: { <span class="key">"x"</span>: <span class="num">900</span>, <span class="key">"y"</span>: <span class="num">60</span>, <span class="key">"w"</span>: <span class="num">640</span>, <span class="key">"h"</span>: <span class="num">400</span>, <span class="key">"src"</span>: <span class="str">"https://…"</span> }
+  },
+  <span class="key">"connections"</span>: {
+    <span class="key">"cn_1"</span>: { <span class="key">"from"</span>: <span class="str">"c_a1"</span>, <span class="key">"to"</span>: <span class="str">"f_x9"</span> }
+  }
+}</pre>
+
+<div class="table-wrap">
+  <table>
+    <caption>Typical daily usage vs. free-tier ceilings</caption>
+    <thead>
+      <tr><th>Activity</th><th>Cost</th><th style="text-align:right">Free tier / day</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Idle, polling the sentinel every 30s for 24h</td><td>~2,880 reads</td><td class="num">50,000</td></tr>
+      <tr><td>Opening a 50-node board</td><td>~51 reads / session</td><td class="num">50,000</td></tr>
+      <tr><td>Editing 100 cards in a session</td><td>~100 writes</td><td class="num">20,000</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout"><strong>Two ceilings to remember.</strong> A field-path update still counts as <strong>one whole-document write</strong> — partial writes save conflicts, not cost. And a Firestore document maxes at <strong>1&nbsp;MiB</strong> (thousands of text cards); only a very large board would need splitting into per-node documents later. Start on the free <strong>Spark</strong> plan; if you ever move to pay-as-you-go, set a budget alert so there are no surprises.</div>
+
+<!-- ════════ TRACK B ════════ -->
+<div class="track-heading">
+  <span class="track-tag">Track B</span>
+  <h2>Cloud &amp; Sharing</h2>
+  <span class="track-sub">— layered on, not a rewrite</span>
+</div>
+
+<section class="phase p30">
+  <div class="phase-meta">
+    <div class="phase-num">30%</div>
+    <div class="phase-title">Swap the storage layer</div>
+    <div class="phase-intent">Point save/load at Firestore instead of localStorage. The data model doesn't change.</div>
+  </div>
+  <div class="phase-body">
+    <ul class="deliverable-list">
+      <li>Firebase project + Firestore; enable offline persistence</li>
+      <li>"Sign in with Google" via Firebase Auth — one-click identity</li>
+      <li>Write-on-commit with field-path updates; version bump on every change</li>
+    </ul>
+  </div>
+</section>
+
+<section class="phase p60">
+  <div class="phase-meta">
+    <div class="phase-num">60%</div>
+    <div class="phase-title">Cross-device sync</div>
+    <div class="phase-intent">The same board, current on every device you sign in from.</div>
+  </div>
+  <div class="phase-body">
+    <ul class="deliverable-list">
+      <li>Version-sentinel polling loop, on a timer and on window focus</li>
+      <li>Merge remote changes into the local view without losing in-progress edits</li>
+      <li>Storage-quota / write-failure handling with a non-blocking notice</li>
+    </ul>
+  </div>
+</section>
+
+<section class="phase p90">
+  <div class="phase-meta">
+    <div class="phase-num">90%</div>
+    <div class="phase-title">Sharing</div>
+    <div class="phase-intent">Hand a board to someone else, read-only or editable.</div>
+  </div>
+  <div class="phase-body">
+    <ul class="deliverable-list">
+      <li>Share a board by link; per-board access rules in Firestore</li>
+      <li>Viewer vs. editor permission, enforced by security rules</li>
+      <li>"Make a copy" so a shared board can be forked without touching the original</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Future enhancements -->
+<div class="future-section">
+  <h2>Further out</h2>
+  <div class="future-grid">
+    <div class="future-card">
+      <div class="future-card-title">Per-node documents</div>
+      <div class="future-card-desc">If a board outgrows the 1 MiB limit, split nodes into a subcollection. The keyed-map model makes this a mechanical change.</div>
+    </div>
+    <div class="future-card">
+      <div class="future-card-title">Live co-editing</div>
+      <div class="future-card-desc">If real-time multiplayer ever matters, a CRDT (Yjs) wraps the same model. Deliberately out of scope while "rarely simultaneous" holds.</div>
+    </div>
+    <div class="future-card">
+      <div class="future-card-title">iframe presets</div>
+      <div class="future-card-desc">Saved URL lists per iframe node — quick-switch buttons so one frame acts as a browsable panel.</div>
+    </div>
+    <div class="future-card">
+      <div class="future-card-title">More node types</div>
+      <div class="future-card-desc">Images, code blocks, sticky notes — each extends the same base node schema.</div>
+    </div>
+    <div class="future-card">
+      <div class="future-card-title">Board history</div>
+      <div class="future-card-desc">Periodic snapshots keyed alongside the board — undo that survives a refresh.</div>
+    </div>
+    <div class="future-card">
+      <div class="future-card-title">Themed confirm dialog</div>
+      <div class="future-card-desc">Replace the native <code>confirm()</code> on destructive actions — starting with "Clear board" — with an in-theme modal, reusing the iframe-creation modal pattern.</div>
+    </div>
+  </div>
+</div>
