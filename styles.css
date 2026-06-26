@@ -138,9 +138,17 @@ html, body {
 }
 .card:hover .copy-link { opacity: 1; }
 
-/* on iframes: in the header flex row, always visible */
-.iframe-header .copy-link { flex: none; opacity: 0.7; }
-.iframe-header .copy-link:hover { opacity: 1; }
+/* on iframes: a boxed button matching ✎ and ⛶ in the header row */
+.iframe-header .copy-link {
+  flex: none;
+  width: auto; height: auto;
+  padding: 0.22rem 0.4rem;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.iframe-header .copy-link:hover { color: var(--text); background: var(--border); }
 
 .card-body {
   flex: 1;
