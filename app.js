@@ -34,17 +34,26 @@
   // ════════════════════════════════════════════════════════
   //  PERSISTENCE — debounced auto-save, restore on load
   // ════════════════════════════════════════════════════════
+  function isPlainBoardObject(d) {
+    return !!d && typeof d === 'object' && !Array.isArray(d);
+  }
+
+  // Shallow-merge arbitrary data onto a blank board so missing/future fields
+  // stay valid. Shared by localStorage load and JSON import.
+  function normalizeBoard(data) {
+    return Object.assign(blankBoard(), data, {
+      viewport: Object.assign({ x: 0, y: 0, zoom: 1 }, data && data.viewport),
+      cards: (data && data.cards) || {},
+      iframes: (data && data.iframes) || {},
+      connections: (data && data.connections) || {}
+    });
+  }
+
   function loadBoard() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return blankBoard();
-      const data = JSON.parse(raw);
-      return Object.assign(blankBoard(), data, {
-        viewport: Object.assign({ x: 0, y: 0, zoom: 1 }, data.viewport),
-        cards: data.cards || {},
-        iframes: data.iframes || {},
-        connections: data.connections || {}
-      });
+      return normalizeBoard(JSON.parse(raw));
     } catch (e) {
       console.warn('Could not parse saved board, starting fresh.', e);
       return blankBoard();
@@ -821,6 +830,59 @@
     connEls.forEach((c) => c.g.remove()); connEls.clear();
     selected = null; interactiveId = null;
     commit();
+  });
+
+  // ── JSON export / import — a portable backup, same shape as the cloud doc ──
+  function boardIsEmpty() {
+    return !Object.keys(board.cards).length &&
+           !Object.keys(board.iframes).length &&
+           !Object.keys(board.connections).length;
+  }
+
+  function exportBoard() {
+    const blob = new Blob([JSON.stringify(board, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'whiteboard.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // Replace the whole board (matches the 90% milestone: import restores
+  // every node, connection, and the viewport exactly as saved).
+  function replaceBoard(data) {
+    board = normalizeBoard(data);
+    nodeEls.forEach((el) => el.remove()); nodeEls.clear();
+    connEls.forEach((c) => c.g.remove()); connEls.clear();
+    selected = null; interactiveId = null;
+    renderAll();
+    commit();
+  }
+
+  function importBoardFromFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data;
+      try { data = JSON.parse(reader.result); }
+      catch { alert('Import failed: that file is not valid JSON.'); return; }
+      if (!isPlainBoardObject(data)) { alert('Import failed: not a whiteboard file.'); return; }
+      if (!boardIsEmpty() && !confirm('Replace the current board with the imported file?')) return;
+      replaceBoard(data);
+    };
+    reader.onerror = () => alert('Import failed: could not read the file.');
+    reader.readAsText(file);
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', exportBoard);
+  const importInput = document.getElementById('importFile');
+  document.getElementById('importBtn').addEventListener('click', () => importInput.click());
+  importInput.addEventListener('change', () => {
+    const file = importInput.files && importInput.files[0];
+    if (file) importBoardFromFile(file);
+    importInput.value = '';     // let the same file be re-imported later
   });
 
   document.addEventListener('keydown', (e) => {

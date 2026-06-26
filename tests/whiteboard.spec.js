@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
@@ -265,6 +266,57 @@ test('Clear empties the whole board', async ({ page }) => {
   await page.click('#clearBoard');
   await expect(page.locator('.node')).toHaveCount(0);
   await expectSaved(page, '"cards":{}');
+});
+
+test('Export downloads the board as JSON', async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'ExportMe' });
+  await expectSaved(page, 'ExportMe');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#exportBtn'),
+  ]);
+  expect(download.suggestedFilename()).toBe('whiteboard.json');
+  const data = JSON.parse(readFileSync(await download.path(), 'utf8'));
+  expect(Object.values(data.cards).map((c) => c.title)).toContain('ExportMe');
+});
+
+test('Import replaces the board and restores the viewport', async ({ page }) => {
+  await makeCardAt(page, 300, 300, { title: 'Original' });
+
+  const imported = {
+    schema: 1, version: 9,
+    viewport: { x: -150, y: 75, zoom: 1 },
+    cards: { c_imp: { x: 220, y: 140, title: 'Imported', body: 'hi' } },
+    iframes: {}, connections: {},
+  };
+  page.once('dialog', (d) => d.accept());   // confirm the replace
+  await page.locator('#importFile').setInputFiles({
+    name: 'board.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(imported)),
+  });
+
+  await expect(page.locator('.card-title')).toHaveText('Imported');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+  // viewport applied immediately (no need to wait for the debounced save)
+  const t = await page.evaluate(() => document.getElementById('world').style.transform);
+  expect(t).toContain('translate(-150px, 75px)');
+});
+
+test('Import rejects invalid JSON and leaves the board untouched', async ({ page }) => {
+  await makeCardAt(page, 300, 300, { title: 'Keep' });
+
+  const [dialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.locator('#importFile').setInputFiles({
+      name: 'bad.json', mimeType: 'application/json',
+      buffer: Buffer.from('not json {{{'),
+    }),
+  ]);
+  expect(dialog.message()).toContain('Import failed');
+  await dialog.accept();
+  await expect(page.locator('.card-title')).toHaveText('Keep');
+  await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
