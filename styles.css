@@ -224,10 +224,12 @@ html, body {
 #status .save.dirty { color: var(--phase-60, #F8CF5F); }
 #status .save.saved { color: var(--accent); }
 
-/* ── Hint (bottom-right) ── */
+/* ── Hint (bottom-center) ── */
 #hint {
   position: fixed;
-  bottom: 0.9rem; right: 1rem;
+  bottom: 0.9rem; left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 14rem);
   z-index: 10;
   font-size: 0.72rem;
   color: var(--text-3);
@@ -248,6 +250,41 @@ html, body {
   border-radius: 4px;
   padding: 0.05em 0.35em;
 }
+
+/* ── Zoom widget (bottom-right) — always controls the canvas ── */
+#zoombar {
+  position: fixed;
+  bottom: 0.9rem; right: 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+}
+.zoom-btn, .zoom-val {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.zoom-btn:hover, .zoom-val:hover { color: var(--text); background: var(--surface2); }
+.zoom-btn {
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.4rem 0.7rem;
+}
+.zoom-val {
+  font-size: 0.74rem;
+  min-width: 3.4em;
+  text-align: center;
+}
+#zoomFit { border-right: 0; font-size: 0.9rem; }
 
 /* ════════════════════════════════════════════════════════
    60% — iframes, connections, ports, resize
@@ -443,6 +480,22 @@ html, body {
 
 /* interact mode: frame receives pointer events; show a clear indicator */
 .iframe-node.interactive { border-color: var(--accent); }
+.iframe-node.interactive::after {
+  content: 'interacting · click out to exit';
+  position: absolute;
+  left: 0; bottom: 100%;
+  margin-bottom: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1A1305;
+  background: var(--accent);
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .iframe-node.interactive .iframe-frame { pointer-events: auto; }
 /* while zooming (Ctrl/⌘ held), let the wheel reach the canvas, not the frame */
 body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none; }

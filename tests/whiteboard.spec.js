@@ -426,6 +426,49 @@ test('Ctrl+wheel zooms and clamps to 10–400%', async ({ page }) => {
   expect(await scale()).toBeGreaterThan(1);
 });
 
+const worldScale = (page) => page.evaluate(() => {
+  const m = document.getElementById('world').style.transform.match(/scale\(([^)]+)\)/);
+  return m ? parseFloat(m[1]) : 1;
+});
+
+test('zoom widget zooms the canvas and resets, with a live % readout', async ({ page }) => {
+  await expect(page.locator('#zoomReset')).toHaveText('100%');
+
+  await page.click('#zoomIn');
+  expect(await worldScale(page)).toBeGreaterThan(1);
+  await expect(page.locator('#zoomReset')).not.toHaveText('100%');
+
+  await page.click('#zoomReset');
+  expect(await worldScale(page)).toBeCloseTo(1, 5);
+  await expect(page.locator('#zoomReset')).toHaveText('100%');
+
+  await page.click('#zoomOut');
+  expect(await worldScale(page)).toBeLessThan(1);
+});
+
+test('using a canvas zoom control exits iframe interact mode', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const frame = page.locator('.node.iframe-node');
+  const wrap = await frame.locator('.iframe-wrap').boundingBox();
+  await page.mouse.dblclick(center(wrap).x, center(wrap).y);
+  await expect(frame).toHaveClass(/interactive/);
+
+  await page.click('#zoomIn');                 // a canvas gesture
+  await expect(frame).not.toHaveClass(/interactive/);
+});
+
+test('panning the canvas exits iframe interact mode', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const frame = page.locator('.node.iframe-node');
+  const wrap = await frame.locator('.iframe-wrap').boundingBox();
+  await page.mouse.dblclick(center(wrap).x, center(wrap).y);
+  await expect(frame).toHaveClass(/interactive/);
+
+  // drag empty canvas (top-left corner is clear of the centered frame)
+  await drag(page, { x: 60, y: 200 }, { x: 220, y: 320 });
+  await expect(frame).not.toHaveClass(/interactive/);
+});
+
 test('zoom keeps the world point under the cursor fixed', async ({ page }) => {
   const node = await makeCardAt(page, 500, 350, { title: 'Anchor' });
   const before = await node.boundingBox();

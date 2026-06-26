@@ -83,13 +83,15 @@
   const world = document.getElementById('world');
   const coordsEl = document.getElementById('coords');
   const saveStateEl = document.getElementById('saveState');
+  const zoomValEl = document.getElementById('zoomReset');
 
   function applyViewport() {
     const { x, y, zoom } = board.viewport;
     world.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
     viewport.style.backgroundPosition = `${x}px ${y}px`;
     viewport.style.backgroundSize = `${28 * zoom}px ${28 * zoom}px`;
-    coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}  ·  ${Math.round(zoom * 100)}%`;
+    coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
+    if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
   }
 
   function setSaveState(state) {
@@ -103,6 +105,19 @@
   function toWorld(screenX, screenY) {
     const { x, y, zoom } = board.viewport;
     return { x: (screenX - x) / zoom, y: (screenY - y) / zoom };
+  }
+
+  // Zoom to a new level while keeping the screen point (cx, cy) fixed.
+  function zoomAround(nextZoom, cx, cy) {
+    const zoom = board.viewport.zoom;
+    const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+    if (next === zoom) return;
+    const w = toWorld(cx, cy);
+    board.viewport.zoom = next;
+    board.viewport.x = cx - w.x * next;
+    board.viewport.y = cy - w.y * next;
+    applyViewport();
+    commit();
   }
 
   // ════════════════════════════════════════════════════════
@@ -357,6 +372,12 @@
     interactiveId = on ? id : null;
     const el = nodeEls.get(id);
     if (el) el.classList.toggle('interactive', on);
+  }
+
+  // Drop out of interact mode — called on any canvas gesture (pan, wheel,
+  // zoom control) so the user is never trapped with frames swallowing input.
+  function exitInteract() {
+    if (interactiveId) setInteractive(interactiveId, false);
   }
 
   function renderIframe(id) {
@@ -713,23 +734,18 @@
 
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
+    exitInteract();
     // Ctrl+scroll, and trackpad pinch (which the browser reports as a
     // wheel event with ctrlKey set), zoom about the cursor. Plain
     // scroll / two-finger swipe pans.
     if (e.ctrlKey) {
-      const zoom = board.viewport.zoom;
-      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * Math.exp(-e.deltaY * ZOOM_SPEED)));
-      if (next === zoom) return;
-      const w = toWorld(e.clientX, e.clientY);     // world point under the cursor
-      board.viewport.zoom = next;
-      board.viewport.x = e.clientX - w.x * next;    // keep that point fixed on screen
-      board.viewport.y = e.clientY - w.y * next;
+      zoomAround(board.viewport.zoom * Math.exp(-e.deltaY * ZOOM_SPEED), e.clientX, e.clientY);
     } else {
       board.viewport.x -= e.deltaX;
       board.viewport.y -= e.deltaY;
+      applyViewport();
+      commit();
     }
-    applyViewport();
-    commit();
   }, { passive: false });
 
   viewport.addEventListener('dblclick', (e) => {
@@ -808,7 +824,20 @@
     if (getNode(id)) { frameNode(id); selectNode(id); }
   }
 
+  // Step zoom / reset, centered on the visible area. Used by the zoom widget.
+  function zoomStep(dir) {
+    exitInteract();
+    const r = visibleRect();
+    zoomAround(board.viewport.zoom * (dir > 0 ? 1.25 : 1 / 1.25), r.x + r.w / 2, r.y + r.h / 2);
+  }
+  function zoomTo100() {
+    exitInteract();
+    const r = visibleRect();
+    zoomAround(1, r.x + r.w / 2, r.y + r.h / 2);
+  }
+
   function fitToContent() {
+    exitInteract();
     const ids = [...nodeEls.keys()];
     if (!ids.length) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -885,7 +914,15 @@
 
   document.getElementById('fitContent').addEventListener('click', fitToContent);
 
+  // On-screen zoom widget — always zooms the canvas, regardless of where the
+  // cursor is, so it never conflicts with an interactive iframe.
+  document.getElementById('zoomIn').addEventListener('click', () => zoomStep(1));
+  document.getElementById('zoomOut').addEventListener('click', () => zoomStep(-1));
+  document.getElementById('zoomReset').addEventListener('click', zoomTo100);
+  document.getElementById('zoomFit').addEventListener('click', fitToContent);
+
   document.getElementById('resetView').addEventListener('click', () => {
+    exitInteract();
     board.viewport.x = 0; board.viewport.y = 0; board.viewport.zoom = 1;
     applyViewport();
     commit();
