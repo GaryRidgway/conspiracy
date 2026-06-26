@@ -285,6 +285,7 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" contenteditable="plaintext-only" spellcheck="false"></div>
+          <button class="copy-link" title="Copy link to this card">🔗</button>
           <button class="card-delete" title="Delete card">×</button>
         </div>
         <div class="card-body" contenteditable="plaintext-only" spellcheck="false"></div>`;
@@ -325,6 +326,10 @@
     titleEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); bodyEl.focus(); }
     });
+
+    const copyBtn = el.querySelector('.copy-link');
+    copyBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyNodeLink(id, copyBtn); });
 
     delBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteNode(id); });
@@ -367,6 +372,7 @@
         <div class="iframe-header">
           <span class="iframe-label"></span>
           <button class="iframe-edit" title="Edit URL">✎</button>
+          <button class="copy-link" title="Copy link to this frame">🔗</button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out">−</button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
@@ -475,6 +481,10 @@
       e.stopPropagation();
       openFrameModal({ type: 'edit', id, src: board.iframes[id].src });
     });
+
+    const copyBtn = el.querySelector('.copy-link');
+    copyBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyNodeLink(id, copyBtn); });
 
     // content-zoom stepper
     const czoom = el.querySelector('.iframe-czoom');
@@ -759,6 +769,45 @@
     commit();
   }
 
+  // ── Linking to nodes ──
+  // Copy a #node=<id> deep link to the clipboard; opening that link frames
+  // the node (see focusFromHash). Inline links inside cards are a future,
+  // WYSIWYG-dependent enhancement; this is the navigation primitive.
+  function nodeLink(id) {
+    return location.origin + location.pathname + '#node=' + encodeURIComponent(id);
+  }
+  function copyNodeLink(id, btn) {
+    const flash = () => {
+      if (!btn) return;
+      const prev = btn.textContent;
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = prev; }, 900);
+    };
+    const url = nodeLink(id);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(flash, () => fallbackCopy(url, flash));
+    } else {
+      fallbackCopy(url, flash);
+    }
+  }
+  function fallbackCopy(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); if (done) done(); } catch (e) { /* ignore */ }
+    ta.remove();
+  }
+  // Frame (and select) the node named in the URL hash, e.g. #node=c_a1
+  function focusFromHash() {
+    const m = location.hash.match(/^#node=(.+)$/);
+    if (!m) return;
+    const id = decodeURIComponent(m[1]);
+    if (getNode(id)) { frameNode(id); selectNode(id); }
+  }
+
   function fitToContent() {
     const ids = [...nodeEls.keys()];
     if (!ids.length) return;
@@ -947,4 +996,6 @@
   // ════════════════════════════════════════════════════════
   renderAll();
   setSaveState('saved');
+  focusFromHash();
+  window.addEventListener('hashchange', focusFromHash);
 })();

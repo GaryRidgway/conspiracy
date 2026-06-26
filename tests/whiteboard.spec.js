@@ -341,6 +341,34 @@ test('Import rejects invalid JSON and leaves the board untouched', async ({ page
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
+test('copy-link puts a #node=<id> deep link on the clipboard', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const node = await makeCardAt(page, 350, 300, { title: 'Linkable' });
+  const id = await node.getAttribute('data-id');
+
+  await node.hover();
+  await node.locator('.copy-link').click();
+
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clip).toContain('#node=' + id);
+});
+
+test('opening #node=<id> frames and selects that node', async ({ page }) => {
+  // make a node far from origin so framing visibly changes the viewport
+  const node = await makeCardAt(page, 1100, 650, { title: 'Target' });
+  const id = await node.getAttribute('data-id');
+  await expectSaved(page, 'Target');
+
+  await page.goto('/#node=' + id);
+  // framed: world is zoomed in; node is selected
+  await expect(page.locator('.node.card.selected')).toHaveCount(1);
+  const scale = await page.evaluate(() => {
+    const m = document.getElementById('world').style.transform.match(/scale\(([^)]+)\)/);
+    return m ? parseFloat(m[1]) : 1;
+  });
+  expect(scale).toBeGreaterThan(1);
+});
+
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });

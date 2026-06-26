@@ -114,6 +114,34 @@ html, body {
 .card:hover .card-delete { opacity: 1; }
 .card-delete:hover { background: rgba(255,138,122,0.14); color: var(--danger); }
 
+/* copy-link button — shared base */
+.copy-link {
+  width: 22px; height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 5px;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.copy-link:hover { background: var(--surface2); color: var(--text); }
+
+/* on cards: pinned top-right, just left of the ×, revealed on hover */
+.card .copy-link {
+  position: absolute;
+  top: 0.45rem;
+  right: 2.05rem;
+  opacity: 0;
+}
+.card:hover .copy-link { opacity: 1; }
+
+/* on iframes: in the header flex row, always visible */
+.iframe-header .copy-link { flex: none; opacity: 0.7; }
+.iframe-header .copy-link:hover { opacity: 1; }
+
 .card-body {
   flex: 1;
   font-size: 0.85rem;
