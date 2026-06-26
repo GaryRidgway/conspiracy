@@ -373,8 +373,8 @@ html, body {
 }
 .czoom-btn:hover, .czoom-val:hover { color: var(--text); background: var(--border); }
 
-/* zoom-to-frame button */
-.iframe-zoom {
+/* zoom-to-frame and edit-URL buttons */
+.iframe-zoom, .iframe-edit {
   flex: none;
   font-size: 0.85rem;
   line-height: 1;
@@ -386,7 +386,7 @@ html, body {
   cursor: pointer;
   transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
-.iframe-zoom:hover { color: var(--text); background: var(--border); }
+.iframe-zoom:hover, .iframe-edit:hover { color: var(--text); background: var(--border); }
 
 /* the delete × uses the card rule (absolute + hover-only); in the iframe
    header it belongs in the flex row and should stay visible */

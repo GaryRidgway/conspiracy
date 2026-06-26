@@ -150,6 +150,28 @@ test('+ Frame embeds a URL with sandbox; label + src persist', async ({ page }) 
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
 });
 
+test('edit a frame URL in place from its header', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const frame = page.locator('.node.iframe-node');
+  await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL);
+
+  await frame.locator('.iframe-edit').click();
+  await expect(page.locator('#frame-modal')).toBeVisible();
+  await expect(page.locator('#frame-url')).toHaveValue(EMBED_URL);   // prefilled
+  await expect(page.locator('#frame-add')).toHaveText('Save');
+
+  await page.fill('#frame-url', 'https://example.org/');
+  await page.click('#frame-add');
+  await expect(page.locator('#frame-modal')).toBeHidden();
+
+  await expect(frame.locator('iframe')).toHaveAttribute('src', 'https://example.org/');
+  await expect(frame.locator('.iframe-label')).toHaveText('example.org');
+
+  await expectSaved(page, 'example.org');
+  await page.reload();
+  await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', 'https://example.org/');
+});
+
 test('iframe interact mode toggles on double-click and off on Escape', async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');

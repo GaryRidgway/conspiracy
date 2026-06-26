@@ -366,6 +366,7 @@
       el.innerHTML = `
         <div class="iframe-header">
           <span class="iframe-label"></span>
+          <button class="iframe-edit" title="Edit URL">✎</button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out">−</button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
@@ -467,6 +468,13 @@
 
     zoomBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
     zoomBtn.addEventListener('click', (e) => { e.stopPropagation(); frameNode(id); });
+
+    const editBtn = el.querySelector('.iframe-edit');
+    editBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFrameModal({ type: 'edit', id, src: board.iframes[id].src });
+    });
 
     // content-zoom stepper
     const czoom = el.querySelector('.iframe-czoom');
@@ -781,14 +789,22 @@
     createCard(c.x - 120, c.y - 24);
   });
 
-  // ── Themed iframe-creation modal (replaces the native prompt) ──
+  // ── Themed modal — creates a new frame, or edits an existing frame's URL ──
   const frameModal = document.getElementById('frame-modal');
   const frameUrl = document.getElementById('frame-url');
+  const frameModalTitle = document.getElementById('frame-modal-title');
+  const frameAddBtn = document.getElementById('frame-add');
+  let frameModalMode = { type: 'create' };
 
-  function openFrameModal() {
+  function openFrameModal(mode) {
+    frameModalMode = mode;
+    const isEdit = mode.type === 'edit';
+    frameModalTitle.textContent = isEdit ? 'Edit frame URL' : 'Embed a web page';
+    frameAddBtn.textContent = isEdit ? 'Save' : 'Add frame';
     frameModal.classList.remove('hidden');
-    frameUrl.value = '';
+    frameUrl.value = isEdit ? (mode.src || '') : '';
     frameUrl.focus();
+    frameUrl.select();
   }
   function closeFrameModal() {
     frameModal.classList.add('hidden');
@@ -796,12 +812,18 @@
   function submitFrameModal() {
     const src = normalizeUrl(frameUrl.value);
     if (!src) { frameUrl.focus(); return; }
+    const mode = frameModalMode;
     closeFrameModal();
-    const c = toWorld(innerWidth / 2, innerHeight / 2);
-    createIframe(c.x - 240, c.y - 160, src);
+    if (mode.type === 'edit') {
+      const data = board.iframes[mode.id];
+      if (data) { data.src = src; renderIframe(mode.id); commit(); }
+    } else {
+      const c = toWorld(innerWidth / 2, innerHeight / 2);
+      createIframe(c.x - 240, c.y - 160, src);
+    }
   }
 
-  document.getElementById('addFrame').addEventListener('click', openFrameModal);
+  document.getElementById('addFrame').addEventListener('click', () => openFrameModal({ type: 'create' }));
   document.getElementById('frame-add').addEventListener('click', submitFrameModal);
   document.getElementById('frame-cancel').addEventListener('click', closeFrameModal);
   frameUrl.addEventListener('keydown', (e) => {
