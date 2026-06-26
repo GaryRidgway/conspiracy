@@ -285,7 +285,7 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" contenteditable="plaintext-only" spellcheck="false"></div>
-          <button class="copy-link" title="Copy link to this card">🔗</button>
+          <button class="copy-link" title="Copy link to this card">⧉</button>
           <button class="card-delete" title="Delete card">×</button>
         </div>
         <div class="card-body" contenteditable="plaintext-only" spellcheck="false"></div>`;
@@ -372,7 +372,7 @@
         <div class="iframe-header">
           <span class="iframe-label"></span>
           <button class="iframe-edit" title="Edit URL">✎</button>
-          <button class="copy-link" title="Copy link to this frame">🔗</button>
+          <button class="copy-link" title="Copy link to this frame">⧉</button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out">−</button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
