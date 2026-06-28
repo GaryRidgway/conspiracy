@@ -477,6 +477,36 @@ html, body {
   overflow: hidden;                 /* clips the scaled frame to the node box */
   border-radius: 0 0 10px 10px;
 }
+
+/* lazy-load placeholder, shown until the frame's src is loaded */
+.frame-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  text-align: center;
+  padding: 0.5rem;
+  background: #0E1016;
+  cursor: pointer;
+}
+.iframe-node.loaded .frame-placeholder { display: none; }
+.frame-placeholder .ph-host {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--text-2);
+  word-break: break-all;
+}
+.frame-placeholder .ph-note {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
 .iframe-frame {
   /* width/height/transform are set in JS (layoutFrame): the frame renders at
      a fixed logical width and is scaled to fit the box. */

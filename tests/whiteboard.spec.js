@@ -369,6 +369,57 @@ test('opening #node=<id> frames and selects that node', async ({ page }) => {
   expect(scale).toBeGreaterThan(1);
 });
 
+test('Tab and Shift+Tab cycle selection between nodes', async ({ page }) => {
+  await makeCardAt(page, 250, 300, { title: 'A' });
+  await makeCardAt(page, 620, 300, { title: 'B' });
+  await page.keyboard.press('Escape');   // clear the post-create selection
+
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.node.selected')).toHaveCount(1);
+  const first = await page.locator('.node.selected').getAttribute('data-id');
+
+  await page.keyboard.press('Tab');
+  const second = await page.locator('.node.selected').getAttribute('data-id');
+  expect(second).not.toBe(first);
+
+  await page.keyboard.press('Shift+Tab');
+  expect(await page.locator('.node.selected').getAttribute('data-id')).toBe(first);
+});
+
+test('off-screen iframes are not loaded until brought into view', async ({ page }) => {
+  await page.evaluate((url) => {
+    localStorage.setItem('whiteboard', JSON.stringify({
+      schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
+      cards: {}, connections: {},
+      iframes: { f_far: { x: 4000, y: 4000, w: 480, h: 320, src: url, logicalWidth: 1440 } },
+    }));
+  }, EMBED_URL);
+  await page.reload();
+
+  await expect(page.locator('.node.iframe-node')).toHaveCount(1);
+  await expect(page.locator('.node.iframe-node')).not.toHaveClass(/loaded/);
+  expect(await page.locator('.node.iframe-node iframe').getAttribute('src')).toBeNull();
+
+  await page.goto('/#node=f_far');   // deep-link frames it into view
+  await expect(page.locator('.node.iframe-node')).toHaveClass(/loaded/);
+  await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
+});
+
+test('iframes too small on screen stay unloaded until fit/zoomed', async ({ page }) => {
+  await page.evaluate((url) => {
+    localStorage.setItem('whiteboard', JSON.stringify({
+      schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 0.1 },
+      cards: {}, connections: {},
+      iframes: { f_tiny: { x: 50, y: 50, w: 480, h: 320, src: url, logicalWidth: 1440 } },
+    }));
+  }, EMBED_URL);
+  await page.reload();
+  await expect(page.locator('.node.iframe-node')).not.toHaveClass(/loaded/);   // 48px wide < 120
+
+  await page.click('#zoomFit');
+  await expect(page.locator('.node.iframe-node')).toHaveClass(/loaded/);
+});
+
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });

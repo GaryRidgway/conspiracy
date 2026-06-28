@@ -674,7 +674,9 @@
           <span class="note">Pulled forward into the 60% build — cursor-centered, clamped 10–400%</span>
         </li>
         <li>Keyboard basics — Tab between nodes, Delete to remove, Escape to deselect</li>
-        <li>Performance pass — cull nodes outside ~1.5× the viewport for boards of 50+ nodes</li>
+        <li>Performance pass — cull nodes outside ~1.5× the viewport for boards of 50+ nodes
+          <span class="note">Shipped as iframe lazy-loading: heavy embeds load only when on-screen (within 1.5× the viewport) and large enough (&ge;120px); off-screen/tiny frames stay as click-to-load placeholders. Cards are cheap DOM and aren't culled yet.</span>
+        </li>
         <li>Design pass — revisit the full visual language: color scheme, type scale, spacing, card styling
           <span class="note">Deferred from earlier phases by choice. Current palette is gold-accented (<code>#FFC629</code>) on slate; treat as provisional until this pass</span>
         </li>

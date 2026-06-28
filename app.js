@@ -17,6 +17,11 @@
   // a crisp thumbnail; zoomed in it sharpens to a normal desktop view instead
   // of a magnified narrow/mobile layout.
   const IFRAME_LOGICAL_WIDTH = 1440;
+  // Lazy-load iframes: only load the src once a frame is on-screen (within a
+  // margin) AND large enough on screen to be worth rendering. Heavy embeds
+  // (e.g. Google Docs) off-screen or shrunk to a dot stay as placeholders.
+  const FRAME_MIN_LOAD_PX = 120;   // skip loading if narrower than this on screen
+  const FRAME_LOAD_MARGIN = 0.5;   // load within 1.5× the viewport
 
   function blankBoard() {
     return {
@@ -92,6 +97,7 @@
     viewport.style.backgroundSize = `${28 * zoom}px ${28 * zoom}px`;
     coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
     if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
+    scheduleFrameEval();   // pan/zoom can bring frames into (or out of) loadable range
   }
 
   function setSaveState(state) {
@@ -404,6 +410,10 @@
           <button class="card-delete" title="Delete frame">×</button>
         </div>
         <div class="iframe-wrap">
+          <div class="frame-placeholder" title="Click to load">
+            <span class="ph-host"></span>
+            <span class="ph-note">click to load</span>
+          </div>
           <iframe class="iframe-frame"
                   sandbox="allow-scripts allow-same-origin allow-forms"
                   referrerpolicy="no-referrer"></iframe>
@@ -419,12 +429,48 @@
     el.style.width = data.w + 'px';
     el.style.height = data.h + 'px';
 
-    const frame = el.querySelector('.iframe-frame');
-    if (frame.getAttribute('src') !== data.src) frame.setAttribute('src', data.src);
+    // src is set lazily by evaluateFrameLoading(), not here
     el.querySelector('.iframe-label').textContent = labelFor(data.src);
+    el.querySelector('.ph-host').textContent = labelFor(data.src);
     el.querySelector('.czoom-val').textContent = frameZoomPct(data) + '%';
     layoutFrame(el);
     return el;
+  }
+
+  // ── Lazy iframe loading ──
+  function loadFrame(id) {
+    const el = nodeEls.get(id);
+    const data = board.iframes[id];
+    if (!el || !data) return;
+    const frame = el.querySelector('.iframe-frame');
+    if (frame.getAttribute('src') !== data.src) frame.setAttribute('src', data.src);
+    el.classList.add('loaded');
+  }
+
+  function frameShouldLoad(data) {
+    const z = board.viewport.zoom;
+    const w = data.w * z, h = data.h * z;
+    if (w < FRAME_MIN_LOAD_PX) return false;          // too small on screen
+    const left = data.x * z + board.viewport.x;
+    const top = data.y * z + board.viewport.y;
+    const mx = innerWidth * FRAME_LOAD_MARGIN, my = innerHeight * FRAME_LOAD_MARGIN;
+    return left < innerWidth + mx && left + w > -mx &&  // intersects expanded viewport
+           top < innerHeight + my && top + h > -my;
+  }
+
+  function evaluateFrameLoading() {
+    for (const id of Object.keys(board.iframes)) {
+      const el = nodeEls.get(id);
+      if (!el || el.classList.contains('loaded')) continue;
+      if (frameShouldLoad(board.iframes[id])) loadFrame(id);
+    }
+  }
+
+  let frameEvalQueued = false;
+  function scheduleFrameEval() {
+    if (frameEvalQueued) return;
+    frameEvalQueued = true;
+    requestAnimationFrame(() => { frameEvalQueued = false; evaluateFrameLoading(); });
   }
 
   // Per-iframe content-zoom bounds, expressed as logical render widths.
@@ -517,6 +563,12 @@
     delBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteNode(id); });
 
+    // click the placeholder to force-load even when small/off-screen
+    el.querySelector('.frame-placeholder').addEventListener('click', (e) => {
+      e.stopPropagation();
+      loadFrame(id);
+    });
+
     makeResizable(id, el, handle);
   }
 
@@ -539,6 +591,7 @@
         el.style.height = data.h + 'px';
         layoutFrame(el);
         redrawConnectionsFor(id);
+        scheduleFrameEval();
         moved = true;
       };
       const onUp = () => {
@@ -568,6 +621,7 @@
     commit();
     const el = renderIframe(id);
     selectNode(id);
+    scheduleFrameEval();
     return el;
   }
 
@@ -894,7 +948,15 @@
     closeFrameModal();
     if (mode.type === 'edit') {
       const data = board.iframes[mode.id];
-      if (data) { data.src = src; renderIframe(mode.id); commit(); }
+      if (data) {
+        data.src = src;
+        const el = nodeEls.get(mode.id);
+        el.classList.remove('loaded');                 // reset so the new URL lazy-loads
+        el.querySelector('.iframe-frame').removeAttribute('src');
+        renderIframe(mode.id);                          // refresh label + placeholder host
+        scheduleFrameEval();                            // reload if currently in view
+        commit();
+      }
     } else {
       const c = toWorld(innerWidth / 2, innerHeight / 2);
       createIframe(c.x - 240, c.y - 160, src);
@@ -993,6 +1055,44 @@
     importInput.value = '';     // let the same file be re-imported later
   });
 
+  // Nodes in reading order (top-to-bottom, then left-to-right) for Tab nav.
+  function orderedNodeIds() {
+    return [...nodeEls.keys()]
+      .map((id) => ({ id, g: nodeGeom(id) }))
+      .filter((o) => o.g)
+      .sort((a, b) => (a.g.y - b.g.y) || (a.g.x - b.g.x))
+      .map((o) => o.id);
+  }
+
+  // Pan (keeping zoom) just enough to bring a node fully into the visible area.
+  function ensureNodeVisible(id) {
+    const g = nodeGeom(id);
+    if (!g) return;
+    const z = board.viewport.zoom;
+    const left = g.x * z + board.viewport.x, top = g.y * z + board.viewport.y;
+    const right = left + g.w * z, bottom = top + g.h * z;
+    const r = visibleRect();
+    let dx = 0, dy = 0;
+    if (left < r.x) dx = r.x - left + 20;
+    else if (right > r.x + r.w) dx = (r.x + r.w) - right - 20;
+    if (top < r.y) dy = r.y - top + 20;
+    else if (bottom > r.y + r.h) dy = (r.y + r.h) - bottom - 20;
+    if (dx || dy) { board.viewport.x += dx; board.viewport.y += dy; applyViewport(); commit(); }
+  }
+
+  function tabToNode(dir) {
+    const order = orderedNodeIds();
+    if (!order.length) return;
+    let i;
+    if (selected && selected.kind === 'node' && order.includes(selected.id)) {
+      i = (order.indexOf(selected.id) + dir + order.length) % order.length;
+    } else {
+      i = dir > 0 ? 0 : order.length - 1;
+    }
+    selectNode(order[i]);
+    ensureNodeVisible(order[i]);
+  }
+
   document.addEventListener('keydown', (e) => {
     // close the modal first, whatever else is going on
     if (e.key === 'Escape' && !frameModal.classList.contains('hidden')) {
@@ -1004,6 +1104,11 @@
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
 
+    if (e.key === 'Tab' && !editing && frameModal.classList.contains('hidden')) {
+      e.preventDefault();
+      tabToNode(e.shiftKey ? -1 : 1);
+      return;
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !editing) {
       e.preventDefault();
       if (selected.kind === 'node') deleteNode(selected.id);
