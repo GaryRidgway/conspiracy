@@ -344,15 +344,19 @@
       if (e.key === 'Enter') { e.preventDefault(); bodyEl.focus(); }
     });
 
-    // rich-text editing: floating toolbar on focus, ⌘/Ctrl-click to follow links
+    // rich-text editing: floating toolbar on focus.
     bodyEl.addEventListener('focus', () => { activeBody = { id, el: bodyEl }; showTextToolbar(el); });
     bodyEl.addEventListener('blur', () => { setTimeout(hideTextToolbarIfIdle, 150); });
-    bodyEl.addEventListener('click', (e) => {
-      const a = e.target.closest('a.node-link');
-      if (a && (e.metaKey || e.ctrlKey)) {
+    // Follow a link on plain click when NOT editing this card; while editing,
+    // require ⌘/Ctrl (plain click places the caret). Handled on pointerdown so
+    // we can suppress focus/edit before it happens.
+    bodyEl.addEventListener('pointerdown', (e) => {
+      const a = e.target.closest('a.node-link, a[href]');
+      if (!a) return;
+      const editing = document.activeElement === bodyEl;
+      if (!editing || e.metaKey || e.ctrlKey) {
         e.preventDefault();
-        const nid = a.dataset.node;
-        if (getNode(nid)) { frameNode(nid); selectNode(nid); }
+        followLink(a);
       }
     });
 
@@ -405,7 +409,7 @@
       el.dataset.id = id;
       el.innerHTML = `
         <div class="iframe-header">
-          <span class="iframe-label"></span>
+          <span class="iframe-label" title="Double-click to rename" spellcheck="false"></span>
           <button class="iframe-edit" title="Edit URL"><span class="icon icon-edit"></span></button>
           <button class="copy-link" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
@@ -438,11 +442,22 @@
     el.style.height = data.h + 'px';
 
     // src is set lazily by evaluateFrameLoading(), not here
-    el.querySelector('.iframe-label').textContent = labelFor(data.src);
+    const labelEl = el.querySelector('.iframe-label');
+    if (document.activeElement !== labelEl) labelEl.textContent = data.title || labelFor(data.src);
     el.querySelector('.ph-host').textContent = labelFor(data.src);
     el.querySelector('.czoom-val').textContent = frameZoomPct(data) + '%';
     layoutFrame(el);
     return el;
+  }
+
+  // Default iframe titles: "Webpage 1", "Webpage 2", …
+  function nextWebpageNumber() {
+    let max = 0;
+    for (const f of Object.values(board.iframes)) {
+      const m = /^Webpage (\d+)$/.exec(f.title || '');
+      if (m) max = Math.max(max, +m[1]);
+    }
+    return max + 1;
   }
 
   // ── Lazy iframe loading ──
@@ -533,6 +548,8 @@
 
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
+      const lbl = e.target.closest('.iframe-label');
+      if (lbl && lbl.isContentEditable) return;   // editing the title, don't drag
       startNodeDrag(id, el, e);
     });
 
@@ -540,6 +557,26 @@
     el.addEventListener('dblclick', (e) => {
       if (e.target.closest('.iframe-header') || e.target.closest('.resize-handle')) return;
       setInteractive(id, !el.classList.contains('interactive'));
+    });
+
+    // Rename the frame: double-click the title to edit it inline.
+    const labelEl = el.querySelector('.iframe-label');
+    labelEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      labelEl.setAttribute('contenteditable', 'plaintext-only');
+      labelEl.focus();
+      document.execCommand('selectAll', false);
+    });
+    labelEl.addEventListener('input', () => { board.iframes[id].title = labelEl.textContent; commit(); });
+    labelEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); }
+    });
+    labelEl.addEventListener('blur', () => {
+      labelEl.removeAttribute('contenteditable');
+      const t = labelEl.textContent.trim();
+      board.iframes[id].title = t;
+      labelEl.textContent = t || labelFor(board.iframes[id].src);
+      commit();
     });
     toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
     toggle.addEventListener('click', (e) => {
@@ -624,7 +661,8 @@
     const id = newId('f_');
     board.iframes[id] = {
       x: Math.round(worldX), y: Math.round(worldY),
-      w: 480, h: 320, src, logicalWidth: IFRAME_LOGICAL_WIDTH
+      w: 480, h: 320, src, logicalWidth: IFRAME_LOGICAL_WIDTH,
+      title: 'Webpage ' + nextWebpageNumber()
     };
     commit();
     const el = renderIframe(id);
@@ -1182,6 +1220,18 @@
     return out.innerHTML;
   }
 
+  // Follow a link inside a card body: node links frame their target;
+  // external (http) links open in a new tab.
+  function followLink(a) {
+    const nid = a.dataset.node;
+    if (nid) {
+      if (getNode(nid)) { frameNode(nid); selectNode(nid); }
+      return;
+    }
+    const href = a.getAttribute('href');
+    if (href && /^https?:/i.test(href)) window.open(href, '_blank', 'noopener');
+  }
+
   function saveCardBody(id, bodyEl) {
     const data = board.cards[id];
     if (!data) return;
@@ -1201,7 +1251,8 @@
   function nodeTitle(id) {
     const n = getNode(id);
     if (!n) return 'node';
-    return n.type === 'card' ? cardSnippet(n.data) : labelFor(n.data.src);
+    if (n.type === 'card') return cardSnippet(n.data);
+    return n.data.title || labelFor(n.data.src);
   }
   function nodeKind(id) {
     const n = getNode(id);

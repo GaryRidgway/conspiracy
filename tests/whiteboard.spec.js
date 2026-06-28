@@ -182,6 +182,38 @@ test('node picker lists cards and matches by ID', async ({ page }) => {
   await expect(source.locator('.card-body a.node-link')).toHaveAttribute('data-node', targetId);
 });
 
+test('plain-clicking a card link follows it when not editing', async ({ page }) => {
+  await makeCardAt(page, 250, 280, { title: 'Src' });
+  const target = await makeCardAt(page, 800, 600, { title: 'Tgt' });
+  const targetId = await target.getAttribute('data-id');
+
+  const source = page.locator('.node.card', { hasText: 'Src' }).first();
+  await source.locator('.card-body').click();
+  await page.click('#tt-link');
+  await page.fill('#np-filter', 'Tgt');
+  await page.click('.np-item');
+  await page.keyboard.press('Escape');   // stop editing the card
+
+  await source.locator('.card-body a.node-link').click();   // plain click
+  await expect(page.locator(`.node.card[data-id="${targetId}"]`)).toHaveClass(/selected/);
+});
+
+test('iframes get default "Webpage N" titles and are renamable', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  await addFrame(page, EMBED_URL);
+  const frames = page.locator('.node.iframe-node');
+  await expect(frames.nth(0).locator('.iframe-label')).toHaveText('Webpage 1');
+  await expect(frames.nth(1).locator('.iframe-label')).toHaveText('Webpage 2');
+
+  const label = frames.nth(1).locator('.iframe-label');   // top-most (the two stack)
+  await label.dblclick();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('My Frame');
+  await page.keyboard.press('Enter');
+  await expect(label).toHaveText('My Frame');
+  await expectSaved(page, 'My Frame');
+});
+
 test('delete a card via the × button', async ({ page }) => {
   await makeCardAt(page, 350, 350, { title: 'ToDelete' });
   await page.locator('.node.card').hover();
@@ -205,7 +237,8 @@ test('+ Frame embeds a URL with sandbox; label + src persist', async ({ page }) 
   await expect(frame).toHaveCount(1);
   await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL);
   await expect(frame.locator('iframe')).toHaveAttribute('sandbox', /allow-scripts/);
-  await expect(frame.locator('.iframe-label')).toHaveText('localhost');
+  await expect(frame.locator('.iframe-label')).toHaveText('Webpage 1');   // default title
+  await expect(frame.locator('.ph-host')).toHaveText('localhost');        // hostname in placeholder
 
   await expectSaved(page, EMBED_URL);
   await page.reload();
@@ -227,7 +260,7 @@ test('edit a frame URL in place from its header', async ({ page }) => {
   await expect(page.locator('#frame-modal')).toBeHidden();
 
   await expect(frame.locator('iframe')).toHaveAttribute('src', 'https://example.org/');
-  await expect(frame.locator('.iframe-label')).toHaveText('example.org');
+  await expect(frame.locator('.iframe-label')).toHaveText('Webpage 1');   // title unchanged by URL edit
 
   await expectSaved(page, 'example.org');
   await page.reload();
