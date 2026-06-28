@@ -412,15 +412,33 @@ test('deleting a node removes its connections', async ({ page }) => {
   await expect(page.locator('#connections g.conn')).toHaveCount(0);
 });
 
-test('Clear empties the whole board', async ({ page }) => {
+test('Clear requires typing CLEAR, then empties the whole board', async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'A' });
   await makeCardAt(page, 500, 400, { title: 'B' });
   await expect(page.locator('.node.card')).toHaveCount(2);
 
-  page.once('dialog', (d) => d.accept()); // confirm()
   await page.click('#clearBoard');
+  await expect(page.locator('#clear-modal')).toBeVisible();
+  // confirm button is disabled until the exact word is typed
+  await expect(page.locator('#clear-confirm-btn')).toBeDisabled();
+  await page.fill('#clear-confirm', 'clear');          // wrong case → still disabled
+  await expect(page.locator('#clear-confirm-btn')).toBeDisabled();
+  await page.fill('#clear-confirm', 'CLEAR');
+  await expect(page.locator('#clear-confirm-btn')).toBeEnabled();
+
+  await page.click('#clear-confirm-btn');
+  await expect(page.locator('#clear-modal')).toBeHidden();
   await expect(page.locator('.node')).toHaveCount(0);
   await expectSaved(page, '"cards":{}');
+});
+
+test('Clear modal can be cancelled without clearing', async ({ page }) => {
+  await makeCardAt(page, 300, 300, { title: 'Keep' });
+  await page.click('#clearBoard');
+  await page.fill('#clear-confirm', 'CLEAR');
+  await page.click('#clear-cancel');
+  await expect(page.locator('#clear-modal')).toBeHidden();
+  await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
 test('Export downloads the board as JSON', async ({ page }) => {

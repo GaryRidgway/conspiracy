@@ -1052,17 +1052,40 @@
     commit();
   });
 
-  document.getElementById('clearBoard').addEventListener('click', () => {
-    const empty = !Object.keys(board.cards).length &&
-                  !Object.keys(board.iframes).length;
-    if (empty) return;
-    if (!confirm('Delete everything on this board?')) return;
+  // ── Clear board (typed-CLEAR confirmation modal) ──
+  const clearModal = document.getElementById('clear-modal');
+  const clearInput = document.getElementById('clear-confirm');
+  const clearConfirmBtn = document.getElementById('clear-confirm-btn');
+
+  function doClearBoard() {
     board.cards = {}; board.iframes = {}; board.connections = {};
     nodeEls.forEach((el) => el.remove()); nodeEls.clear();
     connEls.forEach((c) => c.g.remove()); connEls.clear();
     selected = null; interactiveId = null;
     commit();
+  }
+  function openClearModal() {
+    if (boardIsEmpty()) return;            // nothing to clear
+    clearModal.classList.remove('hidden');
+    clearInput.value = '';
+    clearConfirmBtn.disabled = true;
+    clearInput.focus();
+  }
+  function closeClearModal() { clearModal.classList.add('hidden'); }
+  function confirmClear() {
+    if (clearInput.value !== 'CLEAR') return;
+    closeClearModal();
+    doClearBoard();
+  }
+
+  document.getElementById('clearBoard').addEventListener('click', openClearModal);
+  clearInput.addEventListener('input', () => { clearConfirmBtn.disabled = clearInput.value !== 'CLEAR'; });
+  clearInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmClear(); }
   });
+  clearConfirmBtn.addEventListener('click', confirmClear);
+  document.getElementById('clear-cancel').addEventListener('click', closeClearModal);
+  clearModal.addEventListener('pointerdown', (e) => { if (e.target === clearModal) closeClearModal(); });
 
   // ── JSON export / import — a portable backup, same shape as the cloud doc ──
   function boardIsEmpty() {
@@ -1156,10 +1179,15 @@
   }
 
   document.addEventListener('keydown', (e) => {
-    // close the modal first, whatever else is going on
+    // close any open modal first, whatever else is going on
     if (e.key === 'Escape' && !frameModal.classList.contains('hidden')) {
       e.preventDefault();
       closeFrameModal();
+      return;
+    }
+    if (e.key === 'Escape' && !clearModal.classList.contains('hidden')) {
+      e.preventDefault();
+      closeClearModal();
       return;
     }
     const ae = document.activeElement;

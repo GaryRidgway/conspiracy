@@ -69,6 +69,21 @@
     </div>
   </div>
 
+  <!-- Clear-board confirmation: requires typing CLEAR -->
+  <div id="clear-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clear-modal-title">
+      <h2 id="clear-modal-title">Clear the board?</h2>
+      <p class="modal-note">This permanently deletes every card, frame, and connection.</p>
+      <label class="modal-label" for="clear-confirm">Type <strong>CLEAR</strong> to confirm</label>
+      <input id="clear-confirm" type="text" placeholder="CLEAR"
+             autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="modal-actions">
+        <button class="btn" id="clear-cancel">Cancel</button>
+        <button class="btn danger" id="clear-confirm-btn" disabled>Clear board</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

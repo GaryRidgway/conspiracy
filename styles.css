@@ -189,6 +189,17 @@ html, body {
   color: #1A1305;
 }
 .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #2A0A06;
+}
+.btn.danger:hover { filter: brightness(1.08); }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+}
 
 /* ── Status (bottom-left): coords + save state ── */
 #status {
