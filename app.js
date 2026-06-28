@@ -438,9 +438,9 @@
           <button class="iframe-edit icon-btn" title="Edit URL"><span class="icon icon-edit"></span></button>
           <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
-            <button class="czoom-btn icon-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
+            <button class="czoom-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
-            <button class="czoom-btn icon-btn czoom-in" title="Zoom content in"><span class="icon icon-add"></span></button>
+            <button class="czoom-btn czoom-in" title="Zoom content in"><span class="icon icon-add"></span></button>
           </span>
           <button class="iframe-zoom icon-btn" title="Zoom canvas to this frame"><span class="icon icon-center_focus_strong"></span></button>
           <button class="iframe-toggle" title="Toggle interact mode">interact</button>

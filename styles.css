@@ -105,7 +105,7 @@ html, body {
   color: var(--text-3);
 }
 
-/* shared header icon button for both node types */
+/* shared header icon button for both node types — boxed */
 .icon-btn {
   flex: none;
   display: inline-flex;
@@ -113,16 +113,20 @@ html, body {
   justify-content: center;
   width: 24px; height: 24px;
   padding: 0;
-  border: none;
-  background: transparent;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
   color: var(--text-3);
   border-radius: 5px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.icon-btn:hover { background: var(--surface2); color: var(--text); }
+.icon-btn:hover { background: var(--border); color: var(--text); }
 .icon-btn .icon { width: 18px; height: 18px; }
-.card-delete:hover { background: rgba(255,138,122,0.14); color: var(--danger); }
+.card-delete:hover {
+  background: rgba(255,138,122,0.14);
+  color: var(--danger);
+  border-color: rgba(255,138,122,0.4);
+}
 
 .card-body {
   flex: 1;
@@ -361,7 +365,7 @@ html, body {
 }
 .iframe-node.dragging .iframe-header { cursor: grabbing; }
 
-/* interact toggle — a borderless labeled button (matches the icon buttons) */
+/* interact toggle — a boxed labeled button */
 .iframe-toggle {
   flex: none;
   font-family: var(--font-mono);
@@ -369,30 +373,49 @@ html, body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
-  background: transparent;
-  border: none;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
   border-radius: 5px;
   padding: 0.25rem 0.45rem;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.iframe-toggle:hover { color: var(--text); background: var(--surface2); }
+.iframe-toggle:hover { color: var(--text); background: var(--border); }
 
-/* content-zoom stepper ( − 100% + ) — borderless, ± are .icon-btn */
-.iframe-czoom { flex: none; display: inline-flex; align-items: center; }
-.czoom-val {
+/* content-zoom stepper ( − 100% + ) — one boxed pill */
+.iframe-czoom {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.czoom-btn, .czoom-val {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
   color: var(--text-3);
   background: transparent;
-  border: none;
-  border-radius: 5px;
+  border: 0;
   cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.czoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.35rem;
+}
+.czoom-btn .icon { width: 16px; height: 16px; }
+.czoom-val {
+  font-size: 0.62rem;
   min-width: 2.6em;
   text-align: center;
-  padding: 0.15rem 0.1rem;
+  border-left: 1px solid var(--border2);
+  border-right: 1px solid var(--border2);
+  padding: 0 0.1rem;
 }
-.czoom-val:hover { color: var(--text); background: var(--surface2); }
+.czoom-btn:hover, .czoom-val:hover { color: var(--text); background: var(--border); }
 
 .iframe-wrap {
   flex: 1;
@@ -464,6 +487,7 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .iframe-node.interactive .iframe-toggle {
   color: var(--accent);
   background: rgba(255, 198, 41, 0.12);
+  border-color: var(--accent);
 }
 
 /* ── Resize handle (bottom-right corner) ── */
