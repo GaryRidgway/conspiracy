@@ -682,6 +682,9 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   flex-direction: column;
 }
 .np-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   text-align: left;
   border: none;
   background: transparent;
@@ -690,12 +693,33 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   padding: 0.4rem 0.5rem;
   border-radius: 5px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-family: var(--font-body);
+  width: 100%;
 }
 .np-item:hover { background: var(--surface2); }
+.np-type {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--text-3);
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+}
+.np-item .np-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-id {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-3);
+}
 .np-empty { color: var(--text-3); font-size: 0.8rem; padding: 0.4rem 0.5rem; }
 
 /* inline links inside card bodies */

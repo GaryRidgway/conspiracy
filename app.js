@@ -1190,10 +1190,22 @@
     commit();
   }
 
+  // A card's label: its title, else a short snippet of its body text.
+  function cardSnippet(data) {
+    if (data.title && data.title.trim()) return data.title.trim();
+    const tmp = document.createElement('div');
+    tmp.innerHTML = sanitizeHtml(data.body || '');
+    const t = (tmp.textContent || '').trim().replace(/\s+/g, ' ');
+    return t ? t.slice(0, 40) : '(untitled)';
+  }
   function nodeTitle(id) {
     const n = getNode(id);
     if (!n) return 'node';
-    return n.type === 'card' ? (n.data.title || 'Untitled') : labelFor(n.data.src);
+    return n.type === 'card' ? cardSnippet(n.data) : labelFor(n.data.src);
+  }
+  function nodeKind(id) {
+    const n = getNode(id);
+    return n ? (n.type === 'card' ? 'Card' : 'Frame') : '';
   }
 
   // ── floating toolbar ──
@@ -1254,19 +1266,28 @@
   function closeNodePicker() { nodePicker.classList.add('hidden'); }
 
   function renderPickerList(filter) {
-    const f = filter.toLowerCase();
+    // accept a pasted "#node=ID" / full deep link, else plain text/id
+    const raw = (filter || '').trim();
+    const hash = raw.match(/#node=([^\s&]+)/);
+    const f = (hash ? decodeURIComponent(hash[1]) : raw).toLowerCase();
+
     npList.innerHTML = '';
     const ids = [...nodeEls.keys()].filter((id) => !activeBody || id !== activeBody.id);
     let any = false;
     for (const id of ids) {
-      const label = nodeTitle(id);
-      if (f && !label.toLowerCase().includes(f)) continue;
+      const kind = nodeKind(id);
+      const primary = nodeTitle(id);
+      const hay = (kind + ' ' + primary + ' ' + id).toLowerCase();  // match label OR id
+      if (f && !hay.includes(f)) continue;
       any = true;
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'np-item';
       item.dataset.id = id;
-      item.textContent = label;
+      item.innerHTML = '<span class="np-type"></span><span class="np-label"></span><span class="np-id"></span>';
+      item.querySelector('.np-type').textContent = kind;
+      item.querySelector('.np-label').textContent = primary;
+      item.querySelector('.np-id').textContent = id;
       item.addEventListener('mousedown', (e) => e.preventDefault());
       item.addEventListener('click', () => insertNodeLink(id));
       npList.appendChild(item);

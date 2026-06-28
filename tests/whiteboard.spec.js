@@ -165,6 +165,23 @@ test('rich text: insert a node link and ⌘/Ctrl-click to jump', async ({ page }
   await expect(page.locator(`.node.card[data-id="${targetId}"]`)).toHaveClass(/selected/);
 });
 
+test('node picker lists cards and matches by ID', async ({ page }) => {
+  await makeCardAt(page, 250, 280, { title: 'Src' });
+  const target = await makeCardAt(page, 700, 560, { title: 'Tgt' });
+  const targetId = await target.getAttribute('data-id');
+
+  const source = page.locator('.node.card', { hasText: 'Src' }).first();
+  await source.locator('.card-body').click();
+  await page.click('#tt-link');
+  await expect(page.locator('#node-picker')).toBeVisible();
+  await expect(page.locator('.np-item .np-type').first()).toHaveText('Card');
+
+  await page.fill('#np-filter', targetId);          // filter by raw ID
+  await expect(page.locator('.np-item')).toHaveCount(1);
+  await page.click('.np-item');
+  await expect(source.locator('.card-body a.node-link')).toHaveAttribute('data-node', targetId);
+});
+
 test('delete a card via the × button', async ({ page }) => {
   await makeCardAt(page, 350, 350, { title: 'ToDelete' });
   await page.locator('.node.card').hover();
