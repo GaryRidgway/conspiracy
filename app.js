@@ -328,8 +328,8 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" title="Double-click to rename" spellcheck="false"></div>
-          <button class="copy-link" title="Copy link to this card"><span class="icon icon-tag"></span></button>
-          <button class="card-delete" title="Delete card"><span class="icon icon-delete"></span></button>
+          <button class="copy-link icon-btn" title="Copy link to this card"><span class="icon icon-tag"></span></button>
+          <button class="card-delete icon-btn" title="Delete card"><span class="icon icon-delete"></span></button>
         </div>
         <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
       world.appendChild(el);
@@ -435,16 +435,16 @@
       el.innerHTML = `
         <div class="iframe-header">
           <span class="iframe-label" title="Double-click to rename" spellcheck="false"></span>
-          <button class="iframe-edit" title="Edit URL"><span class="icon icon-edit"></span></button>
-          <button class="copy-link" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
+          <button class="iframe-edit icon-btn" title="Edit URL"><span class="icon icon-edit"></span></button>
+          <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
-            <button class="czoom-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
+            <button class="czoom-btn icon-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
-            <button class="czoom-btn czoom-in" title="Zoom content in"><span class="icon icon-add"></span></button>
+            <button class="czoom-btn icon-btn czoom-in" title="Zoom content in"><span class="icon icon-add"></span></button>
           </span>
-          <button class="iframe-zoom" title="Zoom canvas to this frame"><span class="icon icon-center_focus_strong"></span></button>
+          <button class="iframe-zoom icon-btn" title="Zoom canvas to this frame"><span class="icon icon-center_focus_strong"></span></button>
           <button class="iframe-toggle" title="Toggle interact mode">interact</button>
-          <button class="card-delete" title="Delete frame"><span class="icon icon-delete"></span></button>
+          <button class="card-delete icon-btn" title="Delete frame"><span class="icon icon-delete"></span></button>
         </div>
         <div class="iframe-wrap">
           <div class="frame-placeholder" title="Click to load">
