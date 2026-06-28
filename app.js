@@ -1278,6 +1278,33 @@
   // ── floating toolbar ──
   let activeBody = null;        // { id, el } of the card body being edited
   let savedRange = null;        // selection captured when opening the picker
+  let editingLink = null;       // an existing node-link the picker will re-target
+
+  // The node-link the caret/selection is currently on (so the link button
+  // edits it instead of inserting a new one), or null.
+  function nodeLinkAtSelection(bodyEl) {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    if (!bodyEl.contains(r.startContainer)) return null;
+    const isLink = (n) => (n && n.nodeType === 1 && n.matches && n.matches('a.node-link')) ? n : null;
+    // 1) selection inside a chip (rare — chips are contenteditable=false)
+    const startEl = r.startContainer.nodeType === 3 ? r.startContainer.parentElement : r.startContainer;
+    const anc = startEl && startEl.closest && startEl.closest('a.node-link');
+    if (anc && bodyEl.contains(anc)) return anc;
+    // 2) element container: chip selected, or sitting at / just before the offset
+    const fromEl = (cont, off) => cont && cont.nodeType === 1
+      ? (isLink(cont.childNodes[off]) || isLink(cont.childNodes[off - 1])) : null;
+    // 3) text container: chip is the adjacent sibling of the caret
+    const fromText = (cont, off) => {
+      if (!cont || cont.nodeType !== 3) return null;
+      if (off === 0) return isLink(cont.previousSibling);
+      if (off === cont.length) return isLink(cont.nextSibling);
+      return null;
+    };
+    return fromEl(r.startContainer, r.startOffset) || fromEl(r.endContainer, r.endOffset)
+        || fromText(r.startContainer, r.startOffset) || fromText(r.endContainer, r.endOffset);
+  }
   const textToolbar = document.getElementById('text-toolbar');
   const nodePicker = document.getElementById('node-picker');
   const npFilter = document.getElementById('np-filter');
@@ -1317,6 +1344,8 @@
     e.preventDefault();
     const sel = window.getSelection();
     savedRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    // if the caret/selection is on an existing link, the picker re-targets it
+    editingLink = activeBody ? nodeLinkAtSelection(activeBody.el) : null;
   });
   ttLink.addEventListener('click', () => openNodePicker());
 
@@ -1328,9 +1357,10 @@
     nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
     nodePicker.style.top = (r.bottom + 6) + 'px';
     npFilter.value = '';
+    npFilter.placeholder = editingLink ? 'Change link target…' : 'Card, frame, or paste an ID…';
     npFilter.focus();
   }
-  function closeNodePicker() { nodePicker.classList.add('hidden'); }
+  function closeNodePicker() { nodePicker.classList.add('hidden'); editingLink = null; }
 
   function renderPickerList(filter) {
     // accept a pasted "#node=ID" / full deep link, else plain text/id
@@ -1379,6 +1409,19 @@
   function insertNodeLink(targetId) {
     if (!activeBody) return;
     const bodyEl = activeBody.el;
+
+    // Editing an existing link: just re-target it (and refresh an auto label).
+    if (editingLink && bodyEl.contains(editingLink)) {
+      const oldId = editingLink.dataset.node;
+      const wasAutoLabel = editingLink.textContent === nodeTitle(oldId);
+      editingLink.dataset.node = targetId;
+      editingLink.setAttribute('href', '#node=' + encodeURIComponent(targetId));
+      if (wasAutoLabel) editingLink.textContent = nodeTitle(targetId);
+      closeNodePicker();
+      saveCardBody(activeBody.id, bodyEl);
+      return;
+    }
+
     bodyEl.focus();
     const sel = window.getSelection();
     if (savedRange) { sel.removeAllRanges(); sel.addRange(savedRange); }

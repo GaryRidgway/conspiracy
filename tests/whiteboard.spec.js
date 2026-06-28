@@ -182,6 +182,44 @@ test('node picker lists cards and matches by ID', async ({ page }) => {
   await expect(source.locator('.card-body a.node-link')).toHaveAttribute('data-node', targetId);
 });
 
+test('rich text: clicking the link icon on an existing link re-targets it', async ({ page }) => {
+  await makeCardAt(page, 250, 280, { title: 'Src' });
+  await makeCardAt(page, 700, 300, { title: 'First' });
+  await makeCardAt(page, 700, 600, { title: 'Second' });
+  const id1 = await page.locator('.node.card', { hasText: 'First' }).getAttribute('data-id');
+  const id2 = await page.locator('.node.card', { hasText: 'Second' }).getAttribute('data-id');
+
+  const source = page.locator('.node.card', { hasText: 'Src' }).first();
+  await source.locator('.card-body').click();
+  await page.click('#tt-link');
+  await page.fill('#np-filter', 'First');
+  await page.click('.np-item');
+
+  const link = source.locator('.card-body a.node-link');
+  await expect(link).toHaveAttribute('data-node', id1);
+  await expect(link).toHaveText('First');
+
+  // put the selection on the link, then edit it via the link icon
+  await link.evaluate((a) => {
+    const body = a.closest('.card-body');
+    body.focus();
+    const r = document.createRange();
+    r.selectNode(a);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  });
+  await page.click('#tt-link');
+  await expect(page.locator('#node-picker')).toBeVisible();
+  await expect(page.locator('#np-filter')).toHaveAttribute('placeholder', /Change link target/);
+  await page.fill('#np-filter', 'Second');
+  await page.click('.np-item');
+
+  await expect(link).toHaveAttribute('data-node', id2);
+  await expect(link).toHaveText('Second');   // auto label updated to the new target
+  await expect(source.locator('.card-body a.node-link')).toHaveCount(1);   // re-targeted, not duplicated
+});
+
 test('plain-clicking a card link follows it when not editing', async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Src' });
   const target = await makeCardAt(page, 800, 600, { title: 'Tgt' });
