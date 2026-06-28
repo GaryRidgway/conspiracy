@@ -66,8 +66,7 @@
   }
 
   let saveTimer = null;
-  function commit() {
-    board.version++;
+  function scheduleSave() {
     setSaveState('dirty');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -79,6 +78,75 @@
         setSaveState('error');
       }
     }, 400);
+  }
+  // commit() is the single mutation chokepoint. opts.coalesce groups rapid
+  // text edits into one undo step.
+  function commit(opts) {
+    board.version++;
+    recordUndo(opts && opts.coalesce);
+    scheduleSave();
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  UNDO / REDO — content snapshots (cards/iframes/connections).
+  //  Viewport changes aren't tracked; text edits coalesce.
+  // ════════════════════════════════════════════════════════
+  const MAX_HISTORY = 80;
+  const undoStack = [];
+  const redoStack = [];
+  let lastContent = null;     // last recorded content snapshot (string)
+  let coalesceBase = null;    // pre-burst snapshot while a text edit is in flight
+  let coalesceTimer = null;
+
+  function contentSnapshot() {
+    return JSON.stringify({ cards: board.cards, iframes: board.iframes, connections: board.connections });
+  }
+  function pushUndo(snap) {
+    undoStack.push(snap);
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+    redoStack.length = 0;
+  }
+  function flushCoalesce() {
+    if (!coalesceTimer) return;
+    clearTimeout(coalesceTimer); coalesceTimer = null;
+    pushUndo(coalesceBase);
+    coalesceBase = null;
+  }
+  function recordUndo(coalesce) {
+    const snap = contentSnapshot();
+    if (lastContent === null) { lastContent = snap; return; }  // first commit: seed baseline
+    if (snap === lastContent) return;                          // no content change (e.g. pan/zoom)
+    if (coalesce) {
+      if (!coalesceTimer) coalesceBase = lastContent;          // remember pre-burst state
+      clearTimeout(coalesceTimer);
+      coalesceTimer = setTimeout(flushCoalesce, 600);
+    } else {
+      flushCoalesce();                                          // finalize any pending text burst
+      pushUndo(lastContent);
+    }
+    lastContent = snap;
+  }
+  function applyContentSnapshot(snapStr) {
+    const data = JSON.parse(snapStr);
+    board.cards = data.cards || {};
+    board.iframes = data.iframes || {};
+    board.connections = data.connections || {};
+    rerenderAll();
+    lastContent = snapStr;
+    board.version++;
+    scheduleSave();
+  }
+  function undo() {
+    flushCoalesce();
+    if (!undoStack.length) return;
+    redoStack.push(contentSnapshot());
+    applyContentSnapshot(undoStack.pop());
+  }
+  function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(contentSnapshot());
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+    applyContentSnapshot(redoStack.pop());
   }
 
   // ════════════════════════════════════════════════════════
@@ -363,7 +431,7 @@
 
     // Title: double-click to rename (shared with iframe titles); Enter → body.
     makeRenamable(titleEl, {
-      onInput: (v) => { board.cards[id].title = v; commit(); },
+      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true }); },
       onCommit: (v) => { board.cards[id].title = v; commit(); },
       onEnter: () => bodyEl.focus(),
     });
@@ -587,7 +655,7 @@
     // Title: double-click to rename (shared with card titles).
     const labelEl = el.querySelector('.iframe-label');
     makeRenamable(labelEl, {
-      onInput: (v) => { board.iframes[id].title = v; commit(); },
+      onInput: (v) => { board.iframes[id].title = v; commit({ coalesce: true }); },
       onCommit: (v) => {
         board.iframes[id].title = v;
         labelEl.textContent = v || labelFor(board.iframes[id].src);
@@ -814,6 +882,15 @@
     // connections after nodes exist so geometry is available
     for (const id of Object.keys(board.connections)) renderConnection(id);
     applyViewport();
+  }
+
+  // Tear down and rebuild all node/connection DOM from the current board
+  // (used by import and undo/redo). Viewport is left as-is.
+  function rerenderAll() {
+    nodeEls.forEach((el) => el.remove()); nodeEls.clear();
+    connEls.forEach((c) => c.g.remove()); connEls.clear();
+    selected = null; interactiveId = null;
+    renderAll();
   }
 
   // ════════════════════════════════════════════════════════
@@ -1110,11 +1187,8 @@
   // every node, connection, and the viewport exactly as saved).
   function replaceBoard(data) {
     board = normalizeBoard(data);
-    nodeEls.forEach((el) => el.remove()); nodeEls.clear();
-    connEls.forEach((c) => c.g.remove()); connEls.clear();
-    selected = null; interactiveId = null;
-    renderAll();
-    commit();
+    rerenderAll();
+    commit();   // recorded as one undo step, so an import can be undone
   }
 
   function importBoardFromFile(file) {
@@ -1193,6 +1267,19 @@
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+
+    // Undo / redo — only at the board level when NOT editing text (otherwise
+    // let the browser handle native text undo inside the field).
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (!editing && e.ctrlKey && e.key.toLowerCase() === 'y') {  // Windows redo
+      e.preventDefault();
+      redo();
+      return;
+    }
 
     if (e.key === 'Tab' && !editing && frameModal.classList.contains('hidden')) {
       e.preventDefault();
@@ -1281,7 +1368,7 @@
     if (!data) return;
     data.body = sanitizeHtml(bodyEl.innerHTML);
     redrawConnectionsFor(id);   // body height may have changed
-    commit();
+    commit({ coalesce: true });
   }
 
   // A card's label: its title, else a short snippet of its body text.
@@ -1483,6 +1570,7 @@
   //  BOOT
   // ════════════════════════════════════════════════════════
   renderAll();
+  lastContent = contentSnapshot();   // baseline for undo history
   setSaveState('saved');
   focusFromHash();
   window.addEventListener('hashchange', focusFromHash);

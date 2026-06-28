@@ -571,6 +571,45 @@ test('iframes too small on screen stay unloaded until fit/zoomed', async ({ page
   await expect(page.locator('.node.iframe-node')).toHaveClass(/loaded/);
 });
 
+test('undo/redo a card creation', async ({ page }) => {
+  await makeCardAt(page, 350, 300);        // no title typed → single create step
+  await page.keyboard.press('Escape');     // stop editing the empty title
+  await expect(page.locator('.node.card')).toHaveCount(1);
+
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('.node.card')).toHaveCount(0);
+
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+});
+
+test('undo restores a moved card to its position', async ({ page }) => {
+  const node = await makeCardAt(page, 320, 320, { title: 'M' });
+  await page.keyboard.press('Escape');
+  const before = await node.evaluate((el) => el.style.left);
+
+  const hb = await page.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.5, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.5 + 160, y: hb.y + hb.height / 2 + 90 });
+  expect(await node.evaluate((el) => el.style.left)).not.toBe(before);
+
+  await page.keyboard.press('ControlOrMeta+z');
+  expect(await page.locator('.node.card').evaluate((el) => el.style.left)).toBe(before);
+});
+
+test('undo restores a deleted card', async ({ page }) => {
+  await makeCardAt(page, 320, 320, { title: 'Restore me' });
+  await page.keyboard.press('Escape');
+  const hb = await page.locator('.card-header').boundingBox();
+  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);   // select
+  await page.keyboard.press('Delete');
+  await expect(page.locator('.node.card')).toHaveCount(0);
+
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+  await expect(page.locator('.card-title')).toHaveText('Restore me');
+});
+
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });
