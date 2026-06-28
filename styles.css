@@ -711,25 +711,32 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .card-body b, .card-body strong { font-weight: 700; color: var(--text); }
 
 /* ════════════════════════════════════════════════════════
-   Material Symbols icons
+   Material Symbols icons — self-hosted SVGs, masked so they
+   take currentColor (recolor + hover work like a font icon)
    ════════════════════════════════════════════════════════ */
-.material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
-  font-weight: normal;
-  font-style: normal;
-  font-size: 18px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
+.icon {
   display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  width: 18px;
+  height: 18px;
+  flex: none;
   vertical-align: middle;
-  -webkit-font-smoothing: antialiased;
-  user-select: none;
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
 }
+.icon-format_bold          { --icon: url("icons/format_bold.svg"); }
+.icon-format_italic        { --icon: url("icons/format_italic.svg"); }
+.icon-format_list_bulleted { --icon: url("icons/format_list_bulleted.svg"); }
+.icon-format_list_numbered { --icon: url("icons/format_list_numbered.svg"); }
+.icon-add_link             { --icon: url("icons/add_link.svg"); }
+.icon-link                 { --icon: url("icons/link.svg"); }
+.icon-edit                 { --icon: url("icons/edit.svg"); }
+.icon-center_focus_strong  { --icon: url("icons/center_focus_strong.svg"); }
+.icon-fit_screen           { --icon: url("icons/fit_screen.svg"); }
+.icon-remove               { --icon: url("icons/remove.svg"); }
+.icon-add                  { --icon: url("icons/add.svg"); }
+.icon-delete               { --icon: url("icons/delete.svg"); }
+.icon-check                { --icon: url("icons/check.svg"); }
 
 /* center icons within their buttons */
 .card-delete, .copy-link, .iframe-edit, .iframe-zoom,
@@ -738,5 +745,4 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   align-items: center;
   justify-content: center;
 }
-/* the zoom widget's buttons get a slightly larger glyph */
-.zoom-btn .material-symbols-outlined { font-size: 20px; }
+.zoom-btn .icon { width: 20px; height: 20px; }

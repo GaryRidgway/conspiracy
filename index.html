@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Infinite Whiteboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -36,19 +33,19 @@
   </div>
 
   <div id="zoombar">
-    <button class="zoom-btn" id="zoomOut" title="Zoom out"><span class="material-symbols-outlined">remove</span></button>
+    <button class="zoom-btn" id="zoomOut" title="Zoom out"><span class="icon icon-remove"></span></button>
     <button class="zoom-val" id="zoomReset" title="Reset to 100%">100%</button>
-    <button class="zoom-btn" id="zoomIn" title="Zoom in"><span class="material-symbols-outlined">add</span></button>
-    <button class="zoom-btn" id="zoomFit" title="Fit to content"><span class="material-symbols-outlined">fit_screen</span></button>
+    <button class="zoom-btn" id="zoomIn" title="Zoom in"><span class="icon icon-add"></span></button>
+    <button class="zoom-btn" id="zoomFit" title="Fit to content"><span class="icon icon-fit_screen"></span></button>
   </div>
 
   <!-- Floating rich-text toolbar (positioned above the focused card) -->
   <div id="text-toolbar" class="hidden">
-    <button type="button" class="tt-btn" data-cmd="bold" title="Bold"><span class="material-symbols-outlined">format_bold</span></button>
-    <button type="button" class="tt-btn" data-cmd="italic" title="Italic"><span class="material-symbols-outlined">format_italic</span></button>
-    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list"><span class="material-symbols-outlined">format_list_bulleted</span></button>
-    <button type="button" class="tt-btn" data-cmd="insertOrderedList" title="Numbered list"><span class="material-symbols-outlined">format_list_numbered</span></button>
-    <button type="button" class="tt-btn" id="tt-link" title="Link to a node"><span class="material-symbols-outlined">add_link</span></button>
+    <button type="button" class="tt-btn" data-cmd="bold" title="Bold"><span class="icon icon-format_bold"></span></button>
+    <button type="button" class="tt-btn" data-cmd="italic" title="Italic"><span class="icon icon-format_italic"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list"><span class="icon icon-format_list_bulleted"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertOrderedList" title="Numbered list"><span class="icon icon-format_list_numbered"></span></button>
+    <button type="button" class="tt-btn" id="tt-link" title="Link to a node"><span class="icon icon-add_link"></span></button>
   </div>
 
   <!-- Node picker popup (for inserting an inline link) -->
