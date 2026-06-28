@@ -130,6 +130,20 @@ test('rich text: bold formatting is applied and saved as HTML', async ({ page })
   await expectSaved(page, '<b>hello</b>');
 });
 
+test('rich text: bulleted and numbered lists', async ({ page }) => {
+  const node = await makeCardAt(page, 350, 300, { title: 'Lists' });
+  await node.locator('.card-body').click();
+  await page.keyboard.type('item');
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.click('#text-toolbar [data-cmd="insertOrderedList"]');
+  await expectSaved(page, '<ol>');
+
+  await node.locator('.card-body').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.click('#text-toolbar [data-cmd="insertUnorderedList"]');
+  await expectSaved(page, '<ul>');
+});
+
 test('rich text: insert a node link and ⌘/Ctrl-click to jump', async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Source' });
   const target = await makeCardAt(page, 700, 600, { title: 'Target' });

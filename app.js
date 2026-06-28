@@ -306,8 +306,8 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" contenteditable="plaintext-only" spellcheck="false"></div>
-          <button class="copy-link" title="Copy link to this card">⧉</button>
-          <button class="card-delete" title="Delete card">×</button>
+          <button class="copy-link" title="Copy link to this card"><span class="material-symbols-outlined">link</span></button>
+          <button class="card-delete" title="Delete card"><span class="material-symbols-outlined">delete</span></button>
         </div>
         <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
       world.appendChild(el);
@@ -406,16 +406,16 @@
       el.innerHTML = `
         <div class="iframe-header">
           <span class="iframe-label"></span>
-          <button class="iframe-edit" title="Edit URL">✎</button>
-          <button class="copy-link" title="Copy link to this frame">⧉</button>
+          <button class="iframe-edit" title="Edit URL"><span class="material-symbols-outlined">edit</span></button>
+          <button class="copy-link" title="Copy link to this frame"><span class="material-symbols-outlined">link</span></button>
           <span class="iframe-czoom">
-            <button class="czoom-btn czoom-out" title="Zoom content out">−</button>
+            <button class="czoom-btn czoom-out" title="Zoom content out"><span class="material-symbols-outlined">remove</span></button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
-            <button class="czoom-btn czoom-in" title="Zoom content in">+</button>
+            <button class="czoom-btn czoom-in" title="Zoom content in"><span class="material-symbols-outlined">add</span></button>
           </span>
-          <button class="iframe-zoom" title="Zoom canvas to this frame">⛶</button>
+          <button class="iframe-zoom" title="Zoom canvas to this frame"><span class="material-symbols-outlined">center_focus_strong</span></button>
           <button class="iframe-toggle" title="Toggle interact mode">interact</button>
-          <button class="card-delete" title="Delete frame">×</button>
+          <button class="card-delete" title="Delete frame"><span class="material-symbols-outlined">delete</span></button>
         </div>
         <div class="iframe-wrap">
           <div class="frame-placeholder" title="Click to load">
@@ -856,10 +856,10 @@
   }
   function copyNodeLink(id, btn) {
     const flash = () => {
-      if (!btn) return;
-      const prev = btn.textContent;
-      btn.textContent = '✓';
-      setTimeout(() => { btn.textContent = prev; }, 900);
+      const icon = btn && btn.querySelector('.material-symbols-outlined');
+      if (!icon) return;
+      icon.textContent = 'check';
+      setTimeout(() => { icon.textContent = 'link'; }, 900);
     };
     const url = nodeLink(id);
     if (navigator.clipboard && navigator.clipboard.writeText) {

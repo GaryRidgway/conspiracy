@@ -709,3 +709,34 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .card-body a[href^="http"] { color: var(--accent); }
 .card-body ul, .card-body ol { padding-left: 1.2rem; margin: 0.2rem 0; }
 .card-body b, .card-body strong { font-weight: 700; color: var(--text); }
+
+/* ════════════════════════════════════════════════════════
+   Material Symbols icons
+   ════════════════════════════════════════════════════════ */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  vertical-align: middle;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* center icons within their buttons */
+.card-delete, .copy-link, .iframe-edit, .iframe-zoom,
+.czoom-btn, .zoom-btn, .tt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* the zoom widget's buttons get a slightly larger glyph */
+.zoom-btn .material-symbols-outlined { font-size: 20px; }
