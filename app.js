@@ -306,7 +306,7 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" contenteditable="plaintext-only" spellcheck="false"></div>
-          <button class="copy-link" title="Copy link to this card"><span class="icon icon-link"></span></button>
+          <button class="copy-link" title="Copy link to this card"><span class="icon icon-tag"></span></button>
           <button class="card-delete" title="Delete card"><span class="icon icon-delete"></span></button>
         </div>
         <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
@@ -407,7 +407,7 @@
         <div class="iframe-header">
           <span class="iframe-label"></span>
           <button class="iframe-edit" title="Edit URL"><span class="icon icon-edit"></span></button>
-          <button class="copy-link" title="Copy link to this frame"><span class="icon icon-link"></span></button>
+          <button class="copy-link" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
@@ -858,8 +858,8 @@
     const flash = () => {
       const icon = btn && btn.querySelector('.icon');
       if (!icon) return;
-      icon.classList.replace('icon-link', 'icon-check');
-      setTimeout(() => { icon.classList.replace('icon-check', 'icon-link'); }, 900);
+      icon.classList.replace('icon-tag', 'icon-check');
+      setTimeout(() => { icon.classList.replace('icon-check', 'icon-tag'); }, 900);
     };
     const url = nodeLink(id);
     if (navigator.clipboard && navigator.clipboard.writeText) {
