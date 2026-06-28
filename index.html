@@ -39,6 +39,20 @@
     <button class="zoom-btn" id="zoomFit" title="Fit to content">⤢</button>
   </div>
 
+  <!-- Floating rich-text toolbar (positioned above the focused card) -->
+  <div id="text-toolbar" class="hidden">
+    <button type="button" class="tt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" class="tt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list">•</button>
+    <button type="button" class="tt-btn" id="tt-link" title="Link to a node">@</button>
+  </div>
+
+  <!-- Node picker popup (for inserting an inline link) -->
+  <div id="node-picker" class="hidden">
+    <input id="np-filter" type="text" placeholder="Link to…" autocomplete="off" spellcheck="false">
+    <div id="np-list"></div>
+  </div>
+
   <!-- Themed iframe-creation modal (replaces the native prompt) -->
   <div id="frame-modal" class="modal-overlay hidden">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="frame-modal-title">

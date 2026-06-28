@@ -309,7 +309,7 @@
           <button class="copy-link" title="Copy link to this card">⧉</button>
           <button class="card-delete" title="Delete card">×</button>
         </div>
-        <div class="card-body" contenteditable="plaintext-only" spellcheck="false"></div>`;
+        <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
       world.appendChild(el);
       nodeEls.set(id, el);
       wireCard(id, el);
@@ -321,7 +321,7 @@
     const titleEl = el.querySelector('.card-title');
     const bodyEl = el.querySelector('.card-body');
     if (document.activeElement !== titleEl) titleEl.textContent = data.title || '';
-    if (document.activeElement !== bodyEl) bodyEl.textContent = data.body || '';
+    if (document.activeElement !== bodyEl) bodyEl.innerHTML = sanitizeHtml(data.body || '');
     return el;
   }
 
@@ -339,13 +339,21 @@
     });
 
     titleEl.addEventListener('input', () => { board.cards[id].title = titleEl.textContent; commit(); });
-    bodyEl.addEventListener('input', () => {
-      board.cards[id].body = bodyEl.textContent;
-      redrawConnectionsFor(id);           // body growth changes the card's height
-      commit();
-    });
+    bodyEl.addEventListener('input', () => saveCardBody(id, bodyEl));
     titleEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); bodyEl.focus(); }
+    });
+
+    // rich-text editing: floating toolbar on focus, ⌘/Ctrl-click to follow links
+    bodyEl.addEventListener('focus', () => { activeBody = { id, el: bodyEl }; showTextToolbar(el); });
+    bodyEl.addEventListener('blur', () => { setTimeout(hideTextToolbarIfIdle, 150); });
+    bodyEl.addEventListener('click', (e) => {
+      const a = e.target.closest('a.node-link');
+      if (a && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const nid = a.dataset.node;
+        if (getNode(nid)) { frameNode(nid); selectNode(nid); }
+      }
     });
 
     const copyBtn = el.querySelector('.copy-link');
@@ -1132,6 +1140,185 @@
   window.addEventListener('keydown', onModifier);
   window.addEventListener('keyup', onModifier);
   window.addEventListener('blur', () => document.body.classList.remove('zoom-modifier'));
+
+  // ════════════════════════════════════════════════════════
+  //  RICH TEXT — card bodies are sanitized HTML, edited with a
+  //  mini toolbar (bold / italic / list) and inline node links.
+  // ════════════════════════════════════════════════════════
+  const ALLOWED_TAGS = new Set(['B', 'I', 'EM', 'STRONG', 'U', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'A']);
+
+  function sanitizeHtml(html) {
+    const src = document.createElement('div');
+    src.innerHTML = html || '';
+    const out = document.createElement('div');
+    const copy = (from, to) => {
+      from.childNodes.forEach((n) => {
+        if (n.nodeType === 3) {
+          to.appendChild(document.createTextNode(n.nodeValue));
+        } else if (n.nodeType === 1 && ALLOWED_TAGS.has(n.tagName)) {
+          const el = document.createElement(n.tagName.toLowerCase());
+          if (n.tagName === 'A') {
+            const href = n.getAttribute('href') || '';
+            const isNode = n.classList.contains('node-link');
+            if (/^#node=/.test(href) || /^https?:\/\//i.test(href)) el.setAttribute('href', href);
+            if (isNode) {
+              el.className = 'node-link';
+              const dn = n.getAttribute('data-node');
+              if (dn) el.setAttribute('data-node', dn);
+              el.setAttribute('contenteditable', 'false');
+            } else if (/^https?:\/\//i.test(href)) {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener noreferrer');
+            }
+          }
+          copy(n, el);
+          to.appendChild(el);
+        } else if (n.nodeType === 1 && !/^(SCRIPT|STYLE)$/.test(n.tagName)) {
+          copy(n, to);     // drop the tag, keep its sanitized children
+        }
+      });
+    };
+    copy(src, out);
+    return out.innerHTML;
+  }
+
+  function saveCardBody(id, bodyEl) {
+    const data = board.cards[id];
+    if (!data) return;
+    data.body = sanitizeHtml(bodyEl.innerHTML);
+    redrawConnectionsFor(id);   // body height may have changed
+    commit();
+  }
+
+  function nodeTitle(id) {
+    const n = getNode(id);
+    if (!n) return 'node';
+    return n.type === 'card' ? (n.data.title || 'Untitled') : labelFor(n.data.src);
+  }
+
+  // ── floating toolbar ──
+  let activeBody = null;        // { id, el } of the card body being edited
+  let savedRange = null;        // selection captured when opening the picker
+  const textToolbar = document.getElementById('text-toolbar');
+  const nodePicker = document.getElementById('node-picker');
+  const npFilter = document.getElementById('np-filter');
+  const npList = document.getElementById('np-list');
+
+  function showTextToolbar(cardEl) {
+    const r = cardEl.getBoundingClientRect();
+    textToolbar.classList.remove('hidden');
+    const tw = textToolbar.offsetWidth, th = textToolbar.offsetHeight;
+    const left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
+    let top = r.top - th - 8;
+    if (top < 8) top = r.bottom + 8;
+    textToolbar.style.left = left + 'px';
+    textToolbar.style.top = top + 'px';
+  }
+  function hideTextToolbarIfIdle() {
+    const ae = document.activeElement;
+    if (ae && (ae.closest('#text-toolbar') || ae.closest('#node-picker'))) return;
+    if (ae && ae.classList && ae.classList.contains('card-body')) return;
+    textToolbar.classList.add('hidden');
+    closeNodePicker();
+    activeBody = null;
+  }
+
+  document.execCommand('styleWithCSS', false, false);  // prefer <b>/<i> over inline styles
+  textToolbar.querySelectorAll('[data-cmd]').forEach((btn) => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());  // keep the selection
+    btn.addEventListener('click', () => {
+      document.execCommand(btn.dataset.cmd, false);
+      if (activeBody) saveCardBody(activeBody.id, activeBody.el);
+    });
+  });
+
+  // ── inline node links ──
+  const ttLink = document.getElementById('tt-link');
+  ttLink.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const sel = window.getSelection();
+    savedRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  });
+  ttLink.addEventListener('click', () => openNodePicker());
+
+  function openNodePicker() {
+    if (!activeBody) return;
+    renderPickerList('');
+    nodePicker.classList.remove('hidden');
+    const r = ttLink.getBoundingClientRect();
+    nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
+    nodePicker.style.top = (r.bottom + 6) + 'px';
+    npFilter.value = '';
+    npFilter.focus();
+  }
+  function closeNodePicker() { nodePicker.classList.add('hidden'); }
+
+  function renderPickerList(filter) {
+    const f = filter.toLowerCase();
+    npList.innerHTML = '';
+    const ids = [...nodeEls.keys()].filter((id) => !activeBody || id !== activeBody.id);
+    let any = false;
+    for (const id of ids) {
+      const label = nodeTitle(id);
+      if (f && !label.toLowerCase().includes(f)) continue;
+      any = true;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'np-item';
+      item.dataset.id = id;
+      item.textContent = label;
+      item.addEventListener('mousedown', (e) => e.preventDefault());
+      item.addEventListener('click', () => insertNodeLink(id));
+      npList.appendChild(item);
+    }
+    if (!any) {
+      const empty = document.createElement('div');
+      empty.className = 'np-empty';
+      empty.textContent = 'No matching nodes';
+      npList.appendChild(empty);
+    }
+  }
+  npFilter.addEventListener('input', () => renderPickerList(npFilter.value));
+  npFilter.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeNodePicker(); if (activeBody) activeBody.el.focus(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = npList.querySelector('.np-item');
+      if (first) insertNodeLink(first.dataset.id);
+    }
+  });
+
+  function insertNodeLink(targetId) {
+    if (!activeBody) return;
+    const bodyEl = activeBody.el;
+    bodyEl.focus();
+    const sel = window.getSelection();
+    if (savedRange) { sel.removeAllRanges(); sel.addRange(savedRange); }
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+
+    const a = document.createElement('a');
+    a.className = 'node-link';
+    a.setAttribute('href', '#node=' + encodeURIComponent(targetId));
+    a.setAttribute('data-node', targetId);
+    a.setAttribute('contenteditable', 'false');
+    a.textContent = (range && !range.collapsed) ? range.toString() : nodeTitle(targetId);
+
+    if (range) {
+      range.deleteContents();
+      range.insertNode(a);
+      const space = document.createTextNode(' ');
+      a.after(space);
+      const after = document.createRange();
+      after.setStartAfter(space);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
+    } else {
+      bodyEl.appendChild(a);
+    }
+    closeNodePicker();
+    saveCardBody(activeBody.id, bodyEl);
+  }
 
   // ════════════════════════════════════════════════════════
   //  BOOT

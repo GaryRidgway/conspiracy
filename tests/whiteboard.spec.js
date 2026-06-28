@@ -120,6 +120,37 @@ test('dragging a card moves it and the new position persists', async ({ page }) 
   expect(await page.locator('.node.card').evaluate((el) => el.style.left)).toBe(left);
 });
 
+test('rich text: bold formatting is applied and saved as HTML', async ({ page }) => {
+  const node = await makeCardAt(page, 350, 300, { title: 'Rich' });
+  await node.locator('.card-body').click();
+  await page.keyboard.type('hello');
+  await page.keyboard.press('ControlOrMeta+A');
+  await expect(page.locator('#text-toolbar')).toBeVisible();
+  await page.click('#text-toolbar [data-cmd="bold"]');
+  await expectSaved(page, '<b>hello</b>');
+});
+
+test('rich text: insert a node link and ⌘/Ctrl-click to jump', async ({ page }) => {
+  await makeCardAt(page, 250, 280, { title: 'Source' });
+  const target = await makeCardAt(page, 700, 600, { title: 'Target' });
+  const targetId = await target.getAttribute('data-id');
+
+  const source = page.locator('.node.card', { hasText: 'Source' }).first();
+  await source.locator('.card-body').click();
+  await page.keyboard.type('go ');
+  await page.click('#tt-link');
+  await expect(page.locator('#node-picker')).toBeVisible();
+  await page.fill('#np-filter', 'Target');
+  await page.click('.np-item');
+
+  const link = source.locator('.card-body a.node-link');
+  await expect(link).toHaveCount(1);
+  await expect(link).toHaveAttribute('data-node', targetId);
+
+  await link.click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.locator(`.node.card[data-id="${targetId}"]`)).toHaveClass(/selected/);
+});
+
 test('delete a card via the × button', async ({ page }) => {
   await makeCardAt(page, 350, 350, { title: 'ToDelete' });
   await page.locator('.node.card').hover();
