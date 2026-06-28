@@ -292,6 +292,28 @@
   }
 
   // ════════════════════════════════════════════════════════
+  //  INLINE RENAME — shared by card titles and iframe titles:
+  //  double-click to edit, drag otherwise, commit on blur/Enter.
+  // ════════════════════════════════════════════════════════
+  function beginRename(labelEl) {
+    labelEl.setAttribute('contenteditable', 'plaintext-only');
+    labelEl.focus();
+    document.execCommand('selectAll', false);
+  }
+  function makeRenamable(labelEl, { onInput, onCommit, onEnter } = {}) {
+    labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); beginRename(labelEl); });
+    labelEl.addEventListener('input', () => { if (onInput) onInput(labelEl.textContent); });
+    labelEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); labelEl.blur(); if (onEnter) onEnter(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); labelEl.blur(); }
+    });
+    labelEl.addEventListener('blur', () => {
+      labelEl.removeAttribute('contenteditable');
+      if (onCommit) onCommit(labelEl.textContent.trim());
+    });
+  }
+
+  // ════════════════════════════════════════════════════════
   //  CARD NODE
   // ════════════════════════════════════════════════════════
   function renderCard(id) {
@@ -305,7 +327,7 @@
       el.dataset.id = id;
       el.innerHTML = `
         <div class="card-header">
-          <div class="card-title" contenteditable="plaintext-only" spellcheck="false"></div>
+          <div class="card-title" title="Double-click to rename" spellcheck="false"></div>
           <button class="copy-link" title="Copy link to this card"><span class="icon icon-tag"></span></button>
           <button class="card-delete" title="Delete card"><span class="icon icon-delete"></span></button>
         </div>
@@ -334,15 +356,18 @@
     el.addEventListener('pointerdown', () => selectNode(id), true);
 
     header.addEventListener('pointerdown', (e) => {
-      if (e.target === titleEl) return;   // let clicks into the title edit
+      if (e.target.closest('button')) return;
+      if (titleEl.isContentEditable) return;   // editing the title, don't drag
       startNodeDrag(id, el, e);
     });
 
-    titleEl.addEventListener('input', () => { board.cards[id].title = titleEl.textContent; commit(); });
-    bodyEl.addEventListener('input', () => saveCardBody(id, bodyEl));
-    titleEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); bodyEl.focus(); }
+    // Title: double-click to rename (shared with iframe titles); Enter → body.
+    makeRenamable(titleEl, {
+      onInput: (v) => { board.cards[id].title = v; commit(); },
+      onCommit: (v) => { board.cards[id].title = v; commit(); },
+      onEnter: () => bodyEl.focus(),
     });
+    bodyEl.addEventListener('input', () => saveCardBody(id, bodyEl));
 
     // rich-text editing: floating toolbar on focus.
     bodyEl.addEventListener('focus', () => { activeBody = { id, el: bodyEl }; showTextToolbar(el); });
@@ -374,7 +399,7 @@
     commit();
     const el = renderCard(id);
     selectNode(id);
-    requestAnimationFrame(() => el.querySelector('.card-title').focus());
+    requestAnimationFrame(() => beginRename(el.querySelector('.card-title')));
     return id;
   }
 
@@ -559,24 +584,15 @@
       setInteractive(id, !el.classList.contains('interactive'));
     });
 
-    // Rename the frame: double-click the title to edit it inline.
+    // Title: double-click to rename (shared with card titles).
     const labelEl = el.querySelector('.iframe-label');
-    labelEl.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      labelEl.setAttribute('contenteditable', 'plaintext-only');
-      labelEl.focus();
-      document.execCommand('selectAll', false);
-    });
-    labelEl.addEventListener('input', () => { board.iframes[id].title = labelEl.textContent; commit(); });
-    labelEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); }
-    });
-    labelEl.addEventListener('blur', () => {
-      labelEl.removeAttribute('contenteditable');
-      const t = labelEl.textContent.trim();
-      board.iframes[id].title = t;
-      labelEl.textContent = t || labelFor(board.iframes[id].src);
-      commit();
+    makeRenamable(labelEl, {
+      onInput: (v) => { board.iframes[id].title = v; commit(); },
+      onCommit: (v) => {
+        board.iframes[id].title = v;
+        labelEl.textContent = v || labelFor(board.iframes[id].src);
+        commit();
+      },
     });
     toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
     toggle.addEventListener('click', (e) => {

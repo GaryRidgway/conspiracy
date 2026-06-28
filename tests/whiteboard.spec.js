@@ -49,7 +49,7 @@ async function makeCardAt(page, x, y, { title, body } = {}) {
   await expect(page.locator('.node.card')).toHaveCount(before + 1);
   const node = page.locator('.node.card').last();
   if (title != null || body != null) {
-    await node.locator('.card-title').click();
+    await node.locator('.card-title').dblclick();   // double-click to rename
     if (title != null) await page.keyboard.type(title);
     if (body != null) { await page.keyboard.press('Enter'); await page.keyboard.type(body); }
     await page.keyboard.press('Escape');

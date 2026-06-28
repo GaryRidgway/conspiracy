@@ -90,7 +90,7 @@ html, body {
   margin: -0.1rem -0.25rem;
   word-break: break-word;
 }
-.card-title:focus { background: var(--surface2); cursor: text; }
+.card-title[contenteditable] { cursor: text; background: var(--surface2); }
 .card-title:empty::before {
   content: 'Untitled';
   color: var(--text-3);
