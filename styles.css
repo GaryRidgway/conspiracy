@@ -34,13 +34,15 @@ html, body {
   background-color: var(--bg);
   background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.1px);
   background-size: 28px 28px;
-  cursor: grab;
+  cursor: default;              /* empty-drag box-selects, so no grab hand */
   user-select: none;
   touch-action: none;
 }
-#viewport.panning { cursor: grabbing; }
+#viewport.selecting { cursor: crosshair; }
+/* grab hand only when actually panning (Space held or middle-mouse) */
 body.space-pan #viewport { cursor: grab; }
-body.space-pan #viewport.panning { cursor: grabbing; }
+body.space-pan #viewport.panning,
+#viewport.panning { cursor: grabbing; }
 
 /* rubber-band selection box */
 #selection-box {

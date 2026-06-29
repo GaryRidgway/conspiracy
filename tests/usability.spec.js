@@ -216,11 +216,28 @@ test('shift-click toggles a node in the selection', async ({ page }) => {
 });
 
 // Duplicate (Miro/FigJam: ⌘/Ctrl+D).
-test.fixme('duplicate a node with Cmd/Ctrl+D', async ({ page }) => {
+test('duplicate a node with Cmd/Ctrl+D', async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   const hb = await node.locator('.card-header').boundingBox();
   await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);
   await page.keyboard.press('ControlOrMeta+d');
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  // the copy is offset and becomes the new selection
+  await expect(page.locator('.node.card.selected')).toHaveCount(1);
+});
+
+test('duplicating a multi-selection copies the group and is one undo step', async ({ page }) => {
+  await addCardAt(page, 300, 300);
+  await addCardAt(page, 560, 320);
+  await page.mouse.click(60, 180);
+  await drag(page, { x: 180, y: 200 }, { x: 780, y: 520 });   // select both
+  await expect(page.locator('.node.card.selected')).toHaveCount(2);
+
+  await page.keyboard.press('ControlOrMeta+d');
+  await expect(page.locator('.node.card')).toHaveCount(4);
+  await expect(page.locator('.node.card.selected')).toHaveCount(2);   // copies selected
+
+  await page.keyboard.press('ControlOrMeta+z');                       // single undo
   await expect(page.locator('.node.card')).toHaveCount(2);
 });
 

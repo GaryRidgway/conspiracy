@@ -982,6 +982,39 @@
     commit();
   }
 
+  // Duplicate the current selection (nodes + connections between them),
+  // offset slightly, and select the copies. One undo step.
+  function duplicateSelection() {
+    const ids = [...selectedNodes];
+    if (!ids.length) return;
+    const OFF = 24;
+    const idMap = {};
+    for (const oldId of ids) {
+      const n = getNode(oldId);
+      if (!n) continue;
+      const data = JSON.parse(JSON.stringify(n.data));
+      data.x += OFF; data.y += OFF;
+      if (n.type === 'card') {
+        const nid = newId('c_');
+        board.cards[nid] = data; renderCard(nid); idMap[oldId] = nid;
+      } else {
+        const nid = newId('f_');
+        board.iframes[nid] = data; renderIframe(nid); idMap[oldId] = nid;
+      }
+    }
+    // carry over connections whose endpoints were both duplicated
+    for (const c of Object.values(board.connections)) {
+      if (idMap[c.from] && idMap[c.to]) {
+        const cid = newId('cn_');
+        board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
+        renderConnection(cid);
+      }
+    }
+    setSelection(Object.values(idMap));
+    scheduleFrameEval();
+    commit();
+  }
+
   // ════════════════════════════════════════════════════════
   //  RENDER ALL
   // ════════════════════════════════════════════════════════
@@ -1060,6 +1093,7 @@
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
     selectionBox.classList.remove('hidden');
+    viewport.classList.add('selecting');
     const onMove = (ev) => {
       const x = Math.min(sx, ev.clientX), y = Math.min(sy, ev.clientY);
       const w = Math.abs(ev.clientX - sx), h = Math.abs(ev.clientY - sy);
@@ -1076,6 +1110,7 @@
     };
     const onUp = () => {
       selectionBox.classList.add('hidden');
+      viewport.classList.remove('selecting');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -1470,6 +1505,11 @@
     if (!editing && e.ctrlKey && e.key.toLowerCase() === 'y') {  // Windows redo
       e.preventDefault();
       redo();
+      return;
+    }
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd' && selectedNodes.size) {
+      e.preventDefault();        // (also stops the browser's bookmark dialog)
+      duplicateSelection();
       return;
     }
 
