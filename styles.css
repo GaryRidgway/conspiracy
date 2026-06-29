@@ -39,6 +39,19 @@ html, body {
   touch-action: none;
 }
 #viewport.panning { cursor: grabbing; }
+body.space-pan #viewport { cursor: grab; }
+body.space-pan #viewport.panning { cursor: grabbing; }
+
+/* rubber-band selection box */
+#selection-box {
+  position: fixed;
+  z-index: 40;
+  border: 1px solid var(--accent);
+  background: rgba(255, 198, 41, 0.10);
+  border-radius: 2px;
+  pointer-events: none;
+}
+#selection-box.hidden { display: none; }
 
 /* ── World: the infinite plane that gets transformed ── */
 #world {

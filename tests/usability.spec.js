@@ -44,10 +44,11 @@ test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 //      lost", "no way to show all elements") — Fit must recover. ──
 test('recover from getting lost: Fit brings off-screen content into view', async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
-  // pan a long way so the card leaves the viewport
-  await drag(page, { x: 900, y: 600 }, { x: 120, y: 120 });
-  await drag(page, { x: 900, y: 600 }, { x: 120, y: 120 });
-
+  // scroll far away so the card leaves the viewport
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 400, deltaY: 400, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
   await page.click('#fitContent');
   const vp = page.viewportSize();
   const box = await node.boundingBox();
@@ -168,17 +169,50 @@ test('work is not lost across a reload', async ({ page }) => {
 
 // Box-select is the #1 "where did this go / why is this hard" complaint
 // (Miro: "select multiple by drawing a box… why has this disappeared").
-test.fixme('box-select: dragging on empty canvas rubber-bands a selection', async ({ page }) => {
+test('box-select: dragging on empty canvas rubber-bands a selection', async ({ page }) => {
   await addCardAt(page, 300, 300);
-  await addCardAt(page, 520, 320);
-  await page.mouse.click(60, 200);
-  await drag(page, { x: 200, y: 200 }, { x: 700, y: 500 });   // lasso around both
+  await addCardAt(page, 560, 320);
+  await page.mouse.click(60, 180);                            // deselect
+  await expect(page.locator('.node.card.selected')).toHaveCount(0);
+  await drag(page, { x: 180, y: 200 }, { x: 780, y: 520 });   // lasso around both
   await expect(page.locator('.node.card.selected')).toHaveCount(2);
 });
 
 // Multi-select + move together (Miro/FigJam standard).
-test.fixme('multiple selected nodes move together', async ({ page }) => {
-  // shift-click to add to selection, then drag one → all move by the same delta
+test('multiple selected nodes move together', async ({ page }) => {
+  await addCardAt(page, 300, 300);
+  await addCardAt(page, 560, 320);
+  await page.mouse.click(60, 180);
+  await drag(page, { x: 180, y: 200 }, { x: 780, y: 520 });   // select both
+  await expect(page.locator('.node.card.selected')).toHaveCount(2);
+
+  const cards = page.locator('.node.card');
+  const a0 = parseInt(await cards.nth(0).evaluate((el) => el.style.left), 10);
+  const b0 = parseInt(await cards.nth(1).evaluate((el) => el.style.left), 10);
+  const hb = await cards.nth(0).locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.5, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.5 + 120, y: hb.y + hb.height / 2 + 60 });
+  const a1 = parseInt(await cards.nth(0).evaluate((el) => el.style.left), 10);
+  const b1 = parseInt(await cards.nth(1).evaluate((el) => el.style.left), 10);
+  expect(a1 - a0).toBe(120);   // both moved by the same delta
+  expect(b1 - b0).toBe(120);
+});
+
+// Shift-click adds/removes individual nodes from the selection.
+test('shift-click toggles a node in the selection', async ({ page }) => {
+  await addCardAt(page, 300, 300);
+  await addCardAt(page, 560, 320);
+  await page.mouse.click(60, 180);
+  const cards = page.locator('.node.card');
+  const h0 = await cards.nth(0).locator('.card-header').boundingBox();
+  const h1 = await cards.nth(1).locator('.card-header').boundingBox();
+  await page.mouse.click(h0.x + h0.width * 0.5, h0.y + h0.height / 2);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(h1.x + h1.width * 0.5, h1.y + h1.height / 2);     // shift-add
+  await expect(page.locator('.node.card.selected')).toHaveCount(2);
+  await page.mouse.click(h1.x + h1.width * 0.5, h1.y + h1.height / 2);     // shift-remove
+  await page.keyboard.up('Shift');
+  await expect(page.locator('.node.card.selected')).toHaveCount(1);
 });
 
 // Duplicate (Miro/FigJam: ⌘/Ctrl+D).

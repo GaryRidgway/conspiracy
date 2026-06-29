@@ -307,30 +307,50 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  SELECTION — a node OR a connection
+  //  SELECTION — a set of nodes, or a single connection
   // ════════════════════════════════════════════════════════
-  let selected = null; // { kind: 'node' | 'conn', id }
+  const selectedNodes = new Set();   // node ids
+  let selectedConn = null;           // connection id, or null
 
+  function markNode(id, on) { const el = nodeEls.get(id); if (el) el.classList.toggle('selected', on); }
   function clearSelection() {
-    if (!selected) return;
-    if (selected.kind === 'node' && nodeEls.has(selected.id)) {
-      nodeEls.get(selected.id).classList.remove('selected');
-    } else if (selected.kind === 'conn' && connEls.has(selected.id)) {
-      connEls.get(selected.id).g.classList.remove('selected');
-    }
-    selected = null;
+    for (const id of selectedNodes) markNode(id, false);
+    selectedNodes.clear();
+    if (selectedConn && connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected');
+    selectedConn = null;
   }
-  function selectNode(id) {
-    clearSelection();
-    if (!id || !nodeEls.has(id)) return;
-    selected = { kind: 'node', id };
-    nodeEls.get(id).classList.add('selected');
+  // select a single node (default), or add it to the current selection
+  function selectNode(id, opts) {
+    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    if (!(opts && opts.add)) { for (const sid of selectedNodes) if (sid !== id) markNode(sid, false); selectedNodes.clear(); }
+    if (id && nodeEls.has(id)) { selectedNodes.add(id); markNode(id, true); }
+  }
+  function toggleNodeSelection(id) {
+    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    if (selectedNodes.has(id)) { selectedNodes.delete(id); markNode(id, false); }
+    else if (nodeEls.has(id)) { selectedNodes.add(id); markNode(id, true); }
+  }
+  // replace the node selection with exactly these ids (used by box-select)
+  function setSelection(ids) {
+    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    const next = new Set(ids);
+    for (const id of selectedNodes) if (!next.has(id)) markNode(id, false);
+    for (const id of next) if (!selectedNodes.has(id)) markNode(id, true);
+    selectedNodes.clear();
+    for (const id of next) if (nodeEls.has(id)) selectedNodes.add(id);
   }
   function selectConn(id) {
     clearSelection();
     if (!connEls.has(id)) return;
-    selected = { kind: 'conn', id };
+    selectedConn = id;
     connEls.get(id).g.classList.add('selected');
+  }
+  // pointerdown on a node: shift toggles; otherwise select just it — but keep
+  // an existing multi-selection intact when pressing on an already-selected
+  // node, so it can be dragged as a group.
+  function nodePointerSelect(id, e) {
+    if (e.shiftKey) toggleNodeSelection(id);
+    else if (!selectedNodes.has(id)) selectNode(id);
   }
 
   // ════════════════════════════════════════════════════════
@@ -347,25 +367,33 @@
     const ae = document.activeElement;
     if (ae && ae.blur && (ae.tagName === 'IFRAME' || ae.isContentEditable ||
         ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
-    selectNode(id);
+    // selection was set by the node's capture-phase pointerdown; if this node
+    // isn't in the selection (edge case), fall back to selecting just it.
+    if (!selectedNodes.has(id)) selectNode(id);
 
-    const data = getNode(id).data;
+    // move every selected node together
+    const movers = [...selectedNodes].map((nid) => {
+      const d = getNode(nid).data;
+      return { nid, d, ox: d.x, oy: d.y, el: nodeEls.get(nid) };
+    });
     const start = toWorld(e.clientX, e.clientY);
-    const ox = data.x, oy = data.y;
     let moved = false;
-    el.classList.add('dragging');
+    movers.forEach((m) => m.el.classList.add('dragging'));
 
     const onMove = (ev) => {
       const now = toWorld(ev.clientX, ev.clientY);
-      data.x = Math.round(ox + (now.x - start.x));
-      data.y = Math.round(oy + (now.y - start.y));
-      el.style.left = data.x + 'px';
-      el.style.top = data.y + 'px';
-      redrawConnectionsFor(id);
-      moved = true;
+      const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
+      for (const m of movers) {
+        m.d.x = m.ox + dx; m.d.y = m.oy + dy;
+        m.el.style.left = m.d.x + 'px';
+        m.el.style.top = m.d.y + 'px';
+        redrawConnectionsFor(m.nid);
+      }
+      if (dx || dy) moved = true;
+      scheduleFrameEval();
     };
     const onUp = () => {
-      el.classList.remove('dragging');
+      movers.forEach((m) => m.el.classList.remove('dragging'));
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -496,7 +524,7 @@
     const bodyEl = el.querySelector('.card-body');
     const delBtn = el.querySelector('.card-delete');
 
-    el.addEventListener('pointerdown', () => selectNode(id), true);
+    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
 
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
@@ -542,7 +570,7 @@
     commit();
     const el = renderCard(id);
     selectNode(id);
-    requestAnimationFrame(() => beginRename(el.querySelector('.card-title')));
+    beginRename(el.querySelector('.card-title'));   // element is already in the DOM
     return id;
   }
 
@@ -718,7 +746,7 @@
     const delBtn = el.querySelector('.card-delete');
     const handle = el.querySelector('.resize-handle');
 
-    el.addEventListener('pointerdown', () => selectNode(id), true);
+    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
 
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
@@ -930,7 +958,7 @@
     delete board.connections[id];
     const entry = connEls.get(id);
     if (entry) { entry.g.remove(); connEls.delete(id); }
-    if (selected && selected.kind === 'conn' && selected.id === id) selected = null;
+    if (selectedConn === id) selectedConn = null;
     commit();
   }
 
@@ -950,7 +978,7 @@
         if (ce) { ce.g.remove(); connEls.delete(cid); }
       }
     }
-    if (selected && selected.kind === 'node' && selected.id === id) selected = null;
+    selectedNodes.delete(id);
     commit();
   }
 
@@ -982,27 +1010,28 @@
     for (const id of Object.keys(board.cards)) renderCard(id);
     for (const id of Object.keys(board.iframes)) renderIframe(id);
     for (const id of Object.keys(board.connections)) renderConnection(id);
-    if (selected) {
-      const ok = selected.kind === 'node' ? nodeEls.has(selected.id) : connEls.has(selected.id);
-      if (!ok) selected = null;
-    }
+    for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
+    if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
     applyViewport();
   }
 
   // ════════════════════════════════════════════════════════
-  //  CANVAS PAN / WHEEL / DOUBLE-CLICK
+  //  CANVAS PAN / BOX-SELECT / WHEEL / DOUBLE-CLICK
   // ════════════════════════════════════════════════════════
-  viewport.addEventListener('pointerdown', (e) => {
-    if (e.target !== viewport && e.target !== world && e.target !== svg) return;
-    if (e.button !== 0) return;
-    clearSelection();
-    if (interactiveId) setInteractive(interactiveId, false);
-    viewport.classList.add('panning');
+  // Pan: hold Space + drag (anywhere), middle-mouse drag, or scroll/two-finger.
+  // Box-select: left-drag on empty canvas.
+  let spaceHeld = false;
+  const selectionBox = document.createElement('div');
+  selectionBox.id = 'selection-box';
+  selectionBox.className = 'hidden';
+  document.body.appendChild(selectionBox);
 
+  function startPan(e) {
+    exitInteract();
+    viewport.classList.add('panning');
     const startX = e.clientX, startY = e.clientY;
     const ox = board.viewport.x, oy = board.viewport.y;
     let moved = false;
-
     const onMove = (ev) => {
       board.viewport.x = ox + (ev.clientX - startX);
       board.viewport.y = oy + (ev.clientY - startY);
@@ -1019,7 +1048,68 @@
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+  }
+
+  function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+  function startBoxSelect(e) {
+    exitInteract();
+    if (!e.shiftKey) clearSelection();
+    const baseSel = new Set(selectedNodes);
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    selectionBox.classList.remove('hidden');
+    const onMove = (ev) => {
+      const x = Math.min(sx, ev.clientX), y = Math.min(sy, ev.clientY);
+      const w = Math.abs(ev.clientX - sx), h = Math.abs(ev.clientY - sy);
+      selectionBox.style.left = x + 'px'; selectionBox.style.top = y + 'px';
+      selectionBox.style.width = w + 'px'; selectionBox.style.height = h + 'px';
+      if (w > 3 || h > 3) moved = true;
+      const a = toWorld(x, y), b = toWorld(x + w, y + h);   // box in world coords
+      const sel = new Set(baseSel);
+      for (const id of nodeEls.keys()) {
+        const g = nodeGeom(id);
+        if (g && rectsOverlap(g.x, g.y, g.w, g.h, a.x, a.y, b.x - a.x, b.y - a.y)) sel.add(id);
+      }
+      setSelection([...sel]);
+    };
+    const onUp = () => {
+      selectionBox.classList.add('hidden');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      if (!moved && !e.shiftKey) clearSelection();   // a plain click on empty space
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
+  // Space-drag pans anywhere — capture phase so it beats node drag/select.
+  viewport.addEventListener('pointerdown', (e) => {
+    if (spaceHeld && e.button === 0) { e.preventDefault(); e.stopPropagation(); startPan(e); }
+  }, true);
+
+  // Empty-canvas gestures: middle-drag pans, left-drag box-selects.
+  viewport.addEventListener('pointerdown', (e) => {
+    if (e.target !== viewport && e.target !== world && e.target !== svg) return;
+    if (e.button === 1) { e.preventDefault(); startPan(e); return; }
+    if (e.button !== 0 || spaceHeld) return;
+    startBoxSelect(e);
   });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space') return;
+    const ae = document.activeElement;
+    if (ae && (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    e.preventDefault();                  // don't scroll / click a focused button
+    if (!spaceHeld) { spaceHeld = true; document.body.classList.add('space-pan'); }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') { spaceHeld = false; document.body.classList.remove('space-pan'); }
+  });
+  window.addEventListener('blur', () => { spaceHeld = false; document.body.classList.remove('space-pan'); });
 
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1234,7 +1324,7 @@
     board.cards = {}; board.iframes = {}; board.connections = {};
     nodeEls.forEach((el) => el.remove()); nodeEls.clear();
     connEls.forEach((c) => c.g.remove()); connEls.clear();
-    selected = null; interactiveId = null;
+    clearSelection(); interactiveId = null;
     commit();
   }
   function openClearModal() {
@@ -1338,9 +1428,10 @@
   function tabToNode(dir) {
     const order = orderedNodeIds();
     if (!order.length) return;
+    const cur = selectedNodes.size === 1 ? [...selectedNodes][0] : null;
     let i;
-    if (selected && selected.kind === 'node' && order.includes(selected.id)) {
-      i = (order.indexOf(selected.id) + dir + order.length) % order.length;
+    if (cur && order.includes(cur)) {
+      i = (order.indexOf(cur) + dir + order.length) % order.length;
     } else {
       i = dir > 0 ? 0 : order.length - 1;
     }
@@ -1387,10 +1478,10 @@
       tabToNode(e.shiftKey ? -1 : 1);
       return;
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !editing) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !editing && (selectedNodes.size || selectedConn)) {
       e.preventDefault();
-      if (selected.kind === 'node') deleteNode(selected.id);
-      else deleteConnection(selected.id);
+      if (selectedConn) deleteConnection(selectedConn);
+      for (const id of [...selectedNodes]) deleteNode(id);
     }
     if (e.key === 'Escape') {
       if (editing) ae.blur();
@@ -1691,7 +1782,7 @@
     board = loadBoardContent(id);
     undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
-    selected = null; interactiveId = null;
+    clearSelection(); interactiveId = null;
     reconcileToBoard();
     lastContent = contentSnapshot();
     updateHistoryButtons();

@@ -8,6 +8,7 @@ module.exports = defineConfig({
   testDir: './tests',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  workers: 4,           // cap parallelism — one dev server, avoids load-starved flakes
   retries: 0,
   reporter: [['list']],
   use: {
