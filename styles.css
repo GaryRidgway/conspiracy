@@ -183,6 +183,13 @@ html, body {
   transition: background 0.12s, border-color 0.12s;
 }
 .btn:hover { background: var(--border); }
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.5rem;
+}
+.btn-icon .icon { width: 18px; height: 18px; }
 .btn.primary {
   background: var(--accent-soft);
   border-color: var(--accent-soft);
@@ -719,6 +726,8 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .icon-add                  { --icon: url("icons/add.svg"); }
 .icon-delete               { --icon: url("icons/delete.svg"); }
 .icon-check                { --icon: url("icons/check.svg"); }
+.icon-undo                 { --icon: url("icons/undo.svg"); }
+.icon-redo                 { --icon: url("icons/redo.svg"); }
 
 /* center icons within the floating widgets (header buttons use .icon-btn) */
 .zoom-btn, .tt-btn {

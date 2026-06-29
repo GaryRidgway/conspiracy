@@ -571,6 +571,22 @@ test('iframes too small on screen stay unloaded until fit/zoomed', async ({ page
   await expect(page.locator('.node.iframe-node')).toHaveClass(/loaded/);
 });
 
+test('toolbar Undo/Redo buttons work and reflect availability', async ({ page }) => {
+  await expect(page.locator('#undoBtn')).toBeDisabled();
+  await expect(page.locator('#redoBtn')).toBeDisabled();
+
+  await makeCardAt(page, 350, 300);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#undoBtn')).toBeEnabled();
+
+  await page.click('#undoBtn');
+  await expect(page.locator('.node.card')).toHaveCount(0);
+  await expect(page.locator('#redoBtn')).toBeEnabled();
+
+  await page.click('#redoBtn');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+});
+
 test('undo/redo a card creation', async ({ page }) => {
   await makeCardAt(page, 350, 300);        // no title typed → single create step
   await page.keyboard.press('Escape');     // stop editing the empty title

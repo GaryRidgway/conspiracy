@@ -97,7 +97,13 @@
   let lastContent = null;     // last recorded content snapshot (string)
   let coalesceBase = null;    // pre-burst snapshot while a text edit is in flight
   let coalesceTimer = null;
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
 
+  function updateHistoryButtons() {
+    if (undoBtn) undoBtn.disabled = undoStack.length === 0 && !coalesceTimer;
+    if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+  }
   function contentSnapshot() {
     return JSON.stringify({ cards: board.cards, iframes: board.iframes, connections: board.connections });
   }
@@ -125,6 +131,7 @@
       pushUndo(lastContent);
     }
     lastContent = snap;
+    updateHistoryButtons();
   }
   function applyContentSnapshot(snapStr) {
     const data = JSON.parse(snapStr);
@@ -135,10 +142,11 @@
     lastContent = snapStr;
     board.version++;
     scheduleSave();
+    updateHistoryButtons();
   }
   function undo() {
     flushCoalesce();
-    if (!undoStack.length) return;
+    if (!undoStack.length) { updateHistoryButtons(); return; }
     redoStack.push(contentSnapshot());
     applyContentSnapshot(undoStack.pop());
   }
@@ -148,6 +156,8 @@
     if (undoStack.length > MAX_HISTORY) undoStack.shift();
     applyContentSnapshot(redoStack.pop());
   }
+  if (undoBtn) undoBtn.addEventListener('click', undo);
+  if (redoBtn) redoBtn.addEventListener('click', redo);
 
   // ════════════════════════════════════════════════════════
   //  VIEW LAYER
