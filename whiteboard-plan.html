@@ -708,33 +708,33 @@
 <div class="track-heading">
   <span class="track-tag">Reference</span>
   <h2>Storage &amp; Sync Architecture</h2>
-  <span class="track-sub">— Firebase, kept sparse</span>
+  <span class="track-sub">— your data, in your Google Drive</span>
 </div>
 
-<p class="arch-intro">The data lives in <strong>one place</strong>: a single Firebase Firestore document per board, mirrored to a local cache so the app works offline. Because boards are rarely co-edited and a little lag is fine, sync can be made deliberately cheap — comfortably inside Firebase's free tier.</p>
+<p class="arch-intro"><strong>The app never holds your data — there's no server.</strong> Each board is a single JSON file in the user's own Google Drive, mirrored to a local cache so the app works offline. The app keeps only a short-lived OAuth token to read/write <em>that one file</em> on your behalf. Delete the app tomorrow and your boards are still in your Drive, openable as plain JSON. Because boards are rarely co-edited and a little lag is fine, sync is just polling the file.</p>
 
 <div class="arch-grid">
   <div class="arch-card">
-    <h3>Single source of truth <span class="k">store</span></h3>
-    <p>One Firestore document holds the whole board. Firestore's offline persistence keeps a local mirror, so the app runs offline and syncs on reconnect — still one logical data home, no second store to reconcile.</p>
+    <h3>Your file, your Drive <span class="k">store</span></h3>
+    <p>One JSON file per board, in the user's Google Drive. Accessed via the narrow <code>drive.file</code> scope — the app can only touch files it created or that you explicitly open through Google's picker, never the rest of your Drive. No app database, no data on our side.</p>
   </div>
   <div class="arch-card">
     <h3>Cards as a keyed map <span class="k">model</span></h3>
-    <p>Store nodes as <code>cards: { id: {…} }</code>, never as an array. Map keys are addressable as field paths; array indices are not. This single choice is what unlocks conflict-free writes below.</p>
+    <p>Store nodes as <code>cards: { id: {…} }</code>, never as an array. Keyed maps make local merges and targeted updates clean, and keep the document diff-friendly.</p>
   </div>
   <div class="arch-card">
-    <h3>Write on commit, by field path <span class="k">writes</span></h3>
-    <p>Update the screen locally during a drag; write to Firestore <em>once</em> on release. Debounce text edits to one write a couple seconds after typing stops.</p>
-    <p>Target the exact field — <code>update("cards.cardA.x", …)</code> — so two people editing <em>different</em> cards never clobber each other. Same field, same instant still wins-last — the case you've ruled out.</p>
+    <h3>Write on commit <span class="k">writes</span></h3>
+    <p>Update the screen locally during a drag; write the file <em>once</em> on release. Debounce text edits to one write a couple seconds after typing stops.</p>
+    <p>Drive has no field-level patch, so each save rewrites the whole file and bumps <code>version</code>. Two simultaneous saves resolve last-write-wins — the laggy, small-group case you've accepted.</p>
   </div>
   <div class="arch-card">
     <h3>Version-sentinel polling <span class="k">reads</span></h3>
-    <p>No live listeners. Keep a tiny <code>{ version }</code> doc; poll just that one document on a timer. If the number hasn't moved, do nothing. Only a bump triggers a real fetch.</p>
-    <p>Idle sync costs one read per poll, no matter how big the board is. Cached re-reads aren't billed at all.</p>
+    <p>No live listeners. Poll the file's <code>modifiedTime</code> (or the <code>version</code> field) on a timer and on window focus. If it hasn't moved, do nothing; only a change triggers a real download.</p>
+    <p>Idle sync is a tiny metadata check — comfortably inside Drive's free quotas.</p>
   </div>
 </div>
 
-<pre><span class="cm">// One board document — designed at 30%, reused verbatim in the cloud</span>
+<pre><span class="cm">// One board file — lives in the user's Google Drive, not on our servers</span>
 {
   <span class="key">"version"</span>: <span class="num">47</span>,            <span class="cm">// bumped on every commit; the poll sentinel</span>
   <span class="key">"viewport"</span>: { <span class="key">"x"</span>: <span class="num">-1200</span>, <span class="key">"y"</span>: <span class="num">340</span>, <span class="key">"zoom"</span>: <span class="num">1.0</span> },
@@ -750,40 +750,29 @@
   }
 }</pre>
 
-<div class="table-wrap">
-  <table>
-    <caption>Typical daily usage vs. free-tier ceilings</caption>
-    <thead>
-      <tr><th>Activity</th><th>Cost</th><th style="text-align:right">Free tier / day</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Idle, polling the sentinel every 30s for 24h</td><td>~2,880 reads</td><td class="num">50,000</td></tr>
-      <tr><td>Opening a 50-node board</td><td>~51 reads / session</td><td class="num">50,000</td></tr>
-      <tr><td>Editing 100 cards in a session</td><td>~100 writes</td><td class="num">20,000</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<div class="callout"><strong>Two ceilings to remember.</strong> A field-path update still counts as <strong>one whole-document write</strong> — partial writes save conflicts, not cost. And a Firestore document maxes at <strong>1&nbsp;MiB</strong> (thousands of text cards); only a very large board would need splitting into per-node documents later. Start on the free <strong>Spark</strong> plan; if you ever move to pay-as-you-go, set a budget alert so there are no surprises.</div>
+<div class="callout"><strong>What this buys — and the trade-offs.</strong> No backend to run, no per-user database, no data on our side: just OAuth + the Drive API straight from the browser, and sharing is Google's own (share the file view/edit and collaborators open it in the app). In exchange: the app must be served from a registered <strong>https origin</strong> (localhost for dev) behind a one-time Google Cloud OAuth client; whole-file writes mean two simultaneous saves are <strong>last-write-wins</strong>; and the narrow <code>drive.file</code> scope keeps setup light by avoiding Google's heavy restricted-scope verification. Non-Chromium quirks don't apply here — any modern browser can do OAuth + Drive; the local-file fallback (export/import) remains for fully offline use.</div>
 
 <!-- ════════ TRACK B ════════ -->
 <div class="track-heading">
   <span class="track-tag">Track B</span>
-  <h2>Cloud &amp; Sharing</h2>
-  <span class="track-sub">— layered on, not a rewrite</span>
+  <h2>Your-Drive Sync &amp; Sharing</h2>
+  <span class="track-sub">— local-first, you own the file</span>
 </div>
 
 <section class="phase p30">
   <div class="phase-meta">
     <div class="phase-num">30%</div>
-    <div class="phase-title">Swap the storage layer</div>
-    <div class="phase-intent">Point save/load at Firestore instead of localStorage. The data model doesn't change.</div>
+    <div class="phase-title">Connect a board to your Drive</div>
+    <div class="phase-intent">Save/load a board as a JSON file in the user's own Google Drive. localStorage stays as the offline cache; the data model doesn't change.</div>
   </div>
   <div class="phase-body">
     <ul class="deliverable-list">
-      <li>Firebase project + Firestore; enable offline persistence</li>
-      <li>"Sign in with Google" via Firebase Auth — one-click identity</li>
-      <li>Write-on-commit with field-path updates; version bump on every change</li>
+      <li>Google Cloud OAuth client + Drive API enabled (one-time, by the deployer); served from a registered https origin
+        <span class="note">App ships with a config placeholder for the client ID + a short setup guide</span>
+      </li>
+      <li>"Sign in with Google" via Google Identity Services; narrow <code>drive.file</code> scope only</li>
+      <li>Create a new board file, or open an existing/shared one via the Google Picker</li>
+      <li>Write-on-commit: debounced whole-file save, <code>version</code> bumped each change</li>
     </ul>
   </div>
 </section>
@@ -791,14 +780,14 @@
 <section class="phase p60">
   <div class="phase-meta">
     <div class="phase-num">60%</div>
-    <div class="phase-title">Cross-device sync</div>
-    <div class="phase-intent">The same board, current on every device you sign in from.</div>
+    <div class="phase-title">Cross-device &amp; shared sync</div>
+    <div class="phase-intent">The same file, current on every device you open it from — and for the small group you've shared it with.</div>
   </div>
   <div class="phase-body">
     <ul class="deliverable-list">
-      <li>Version-sentinel polling loop, on a timer and on window focus</li>
+      <li>Poll <code>modifiedTime</code>/<code>version</code> on a timer and on window focus; download only on change</li>
       <li>Merge remote changes into the local view without losing in-progress edits</li>
-      <li>Storage-quota / write-failure handling with a non-blocking notice</li>
+      <li>Last-write-wins on simultaneous saves, with a non-blocking "updated elsewhere" notice; graceful offline / token-expiry handling</li>
     </ul>
   </div>
 </section>
@@ -806,14 +795,14 @@
 <section class="phase p90">
   <div class="phase-meta">
     <div class="phase-num">90%</div>
-    <div class="phase-title">Sharing</div>
-    <div class="phase-intent">Hand a board to someone else, read-only or editable.</div>
+    <div class="phase-title">Sharing &amp; ownership</div>
+    <div class="phase-intent">Hand a board to someone via Drive — and make it obvious the data is theirs.</div>
   </div>
   <div class="phase-body">
     <ul class="deliverable-list">
-      <li>Share a board by link; per-board access rules in Firestore</li>
-      <li>Viewer vs. editor permission, enforced by security rules</li>
-      <li>"Make a copy" so a shared board can be forked without touching the original</li>
+      <li>Share through Drive's own dialog (view vs. edit, enforced by Google — not us)</li>
+      <li>"Make a copy" → duplicate the Drive file so a shared board can be forked</li>
+      <li>"Your data lives in your Drive": open-in-Drive link, show the file, export still available</li>
     </ul>
   </div>
 </section>
