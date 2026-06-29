@@ -587,6 +587,23 @@ test('toolbar Undo/Redo buttons work and reflect availability', async ({ page })
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
+test('undoing a move keeps the same iframe element (no reload)', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const node = page.locator('.node.iframe-node');
+  await expect(node).toHaveClass(/loaded/);
+  await node.locator('iframe').evaluate((f) => { f.dataset.marker = 'KEEP'; });
+
+  const before = await node.evaluate((el) => el.style.left);
+  const hb = await node.locator('.iframe-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.4, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.4 + 140, y: hb.y + hb.height / 2 + 70 });
+  expect(await node.evaluate((el) => el.style.left)).not.toBe(before);
+
+  await page.click('#undoBtn');
+  expect(await node.evaluate((el) => el.style.left)).toBe(before);          // position restored
+  expect(await node.locator('iframe').evaluate((f) => f.dataset.marker)).toBe('KEEP');  // same element → not reloaded
+});
+
 test('undo/redo a card creation', async ({ page }) => {
   await makeCardAt(page, 350, 300);        // no title typed → single create step
   await page.keyboard.press('Escape');     // stop editing the empty title

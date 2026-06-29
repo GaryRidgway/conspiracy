@@ -138,7 +138,7 @@
     board.cards = data.cards || {};
     board.iframes = data.iframes || {};
     board.connections = data.connections || {};
-    rerenderAll();
+    reconcileToBoard();
     lastContent = snapStr;
     board.version++;
     scheduleSave();
@@ -553,6 +553,12 @@
     if (document.activeElement !== labelEl) labelEl.textContent = data.title || labelFor(data.src);
     el.querySelector('.ph-host').textContent = labelFor(data.src);
     el.querySelector('.czoom-val').textContent = frameZoomPct(data) + '%';
+    // if an already-loaded frame's src changed (e.g. undo of a URL edit), reload
+    // it — but a move/resize leaves src untouched so the page is preserved
+    const frame = el.querySelector('.iframe-frame');
+    if (el.classList.contains('loaded') && frame.getAttribute('src') !== data.src) {
+      frame.setAttribute('src', data.src);
+    }
     layoutFrame(el);
     return el;
   }
@@ -898,13 +904,28 @@
     applyViewport();
   }
 
-  // Tear down and rebuild all node/connection DOM from the current board
-  // (used by import and undo/redo). Viewport is left as-is.
-  function rerenderAll() {
-    nodeEls.forEach((el) => el.remove()); nodeEls.clear();
-    connEls.forEach((c) => c.g.remove()); connEls.clear();
-    selected = null; interactiveId = null;
-    renderAll();
+  // Sync the DOM to the current board WITHOUT tearing everything down:
+  // existing nodes are updated in place (so a moved iframe keeps its loaded
+  // page — no reload), only added/removed nodes are created/destroyed.
+  // Used by undo/redo and import. Viewport is left as-is.
+  function reconcileToBoard() {
+    for (const id of [...nodeEls.keys()]) {
+      if (!board.cards[id] && !board.iframes[id]) {
+        nodeEls.get(id).remove(); nodeEls.delete(id);
+        if (interactiveId === id) interactiveId = null;
+      }
+    }
+    for (const id of [...connEls.keys()]) {
+      if (!board.connections[id]) { connEls.get(id).g.remove(); connEls.delete(id); }
+    }
+    for (const id of Object.keys(board.cards)) renderCard(id);
+    for (const id of Object.keys(board.iframes)) renderIframe(id);
+    for (const id of Object.keys(board.connections)) renderConnection(id);
+    if (selected) {
+      const ok = selected.kind === 'node' ? nodeEls.has(selected.id) : connEls.has(selected.id);
+      if (!ok) selected = null;
+    }
+    applyViewport();
   }
 
   // ════════════════════════════════════════════════════════
@@ -1201,7 +1222,7 @@
   // every node, connection, and the viewport exactly as saved).
   function replaceBoard(data) {
     board = normalizeBoard(data);
-    rerenderAll();
+    reconcileToBoard();
     commit();   // recorded as one undo step, so an import can be undone
   }
 
