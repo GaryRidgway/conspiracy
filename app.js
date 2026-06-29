@@ -282,10 +282,14 @@
   function startNodeDrag(id, el, e) {
     if (e.button !== 0) return;
     e.preventDefault();
-    // dragging the node ends any text editing, so a follow-up ⌘/Ctrl+Z undoes
-    // the move (board-level) rather than going to native text undo in a field
+    // Return keyboard focus to the page so a follow-up ⌘/Ctrl+Z reaches us.
+    // An embedded page (e.g. Google Docs) can hold focus inside its <iframe>,
+    // which would otherwise swallow the shortcut; a focused text field would
+    // send it to native text undo. The drag's preventDefault keeps that focus,
+    // so blur it explicitly.
     const ae = document.activeElement;
-    if (ae && ae.blur && (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
+    if (ae && ae.blur && (ae.tagName === 'IFRAME' || ae.isContentEditable ||
+        ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
     selectNode(id);
 
     const data = getNode(id).data;

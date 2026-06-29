@@ -587,6 +587,25 @@ test('toolbar Undo/Redo buttons work and reflect availability', async ({ page })
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
+test('⌘/Ctrl+Z undoes an iframe move even when the frame had focus', async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const node = page.locator('.node.iframe-node');
+  await expect(node).toHaveClass(/loaded/);
+  const before = await node.evaluate((el) => el.style.left);
+
+  // simulate the embedded page grabbing keyboard focus (e.g. Google Docs)
+  await node.locator('iframe').evaluate((f) => f.focus());
+  expect(await page.evaluate(() => document.activeElement.tagName)).toBe('IFRAME');
+
+  const hb = await node.locator('.iframe-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.4, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.4 + 140, y: hb.y + hb.height / 2 + 70 });
+  expect(await page.evaluate(() => document.activeElement.tagName)).not.toBe('IFRAME');  // focus returned
+
+  await page.keyboard.press('ControlOrMeta+z');
+  expect(await node.evaluate((el) => el.style.left)).toBe(before);
+});
+
 test('undoing a move keeps the same iframe element (no reload)', async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
