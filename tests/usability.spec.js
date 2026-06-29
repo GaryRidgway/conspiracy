@@ -242,8 +242,16 @@ test('duplicating a multi-selection copies the group and is one undo step', asyn
 });
 
 // Copy / paste nodes (universal expectation).
-test.fixme('copy and paste a node', async ({ page }) => {
-  // select → Cmd/Ctrl+C → Cmd/Ctrl+V pastes a copy near the cursor
+test('copy and paste a node', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  const hb = await node.locator('.card-header').boundingBox();
+  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);   // select
+  await page.keyboard.press('ControlOrMeta+c');
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  await expect(page.locator('.node.card.selected')).toHaveCount(1);     // paste selected
+  await page.keyboard.press('ControlOrMeta+v');                         // paste again cascades
+  await expect(page.locator('.node.card')).toHaveCount(3);
 });
 
 // Right-click context menu (Miro/FigJam: add-here / duplicate / delete).
@@ -258,9 +266,10 @@ test.fixme('a blank board shows a centered "double-click to add a card" prompt',
 });
 
 // Select-all to grab/move everything (Miro "quick select all to move").
-test.fixme('Cmd/Ctrl+A selects every node', async ({ page }) => {
+test('Cmd/Ctrl+A selects every node', async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 520, 320);
+  await page.mouse.click(60, 180);                 // deselect + drop any edit focus
   await page.keyboard.press('ControlOrMeta+a');
   await expect(page.locator('.node.card.selected')).toHaveCount(2);
 });

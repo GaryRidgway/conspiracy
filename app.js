@@ -1015,6 +1015,52 @@
     commit();
   }
 
+  function selectAllNodes() { setSelection([...nodeEls.keys()]); }
+
+  // Internal clipboard (in-session, works across boards). Copy snapshots the
+  // selection + its internal connections; paste clones them with a cascading
+  // offset so repeated pastes don't stack exactly.
+  let clipboard = null;
+  let pasteCount = 0;
+
+  function copySelection() {
+    const ids = [...selectedNodes];
+    if (!ids.length) return;
+    const nodes = [];
+    for (const id of ids) {
+      const n = getNode(id);
+      if (n) nodes.push({ oldId: id, type: n.type, data: JSON.parse(JSON.stringify(n.data)) });
+    }
+    const idset = new Set(ids);
+    const conns = Object.values(board.connections)
+      .filter((c) => idset.has(c.from) && idset.has(c.to))
+      .map((c) => ({ from: c.from, to: c.to }));
+    clipboard = { nodes, conns };
+    pasteCount = 0;
+  }
+
+  function pasteClipboard() {
+    if (!clipboard || !clipboard.nodes.length) return;
+    const off = 24 * (++pasteCount);
+    const idMap = {};
+    for (const item of clipboard.nodes) {
+      const data = JSON.parse(JSON.stringify(item.data));
+      data.x += off; data.y += off;
+      if (item.type === 'card') { const nid = newId('c_'); board.cards[nid] = data; renderCard(nid); idMap[item.oldId] = nid; }
+      else { const nid = newId('f_'); board.iframes[nid] = data; renderIframe(nid); idMap[item.oldId] = nid; }
+    }
+    for (const c of clipboard.conns) {
+      if (idMap[c.from] && idMap[c.to]) {
+        const cid = newId('cn_');
+        board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
+        renderConnection(cid);
+      }
+    }
+    setSelection(Object.values(idMap));
+    scheduleFrameEval();
+    commit();
+  }
+
   // ════════════════════════════════════════════════════════
   //  RENDER ALL
   // ════════════════════════════════════════════════════════
@@ -1510,6 +1556,27 @@
     if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd' && selectedNodes.size) {
       e.preventDefault();        // (also stops the browser's bookmark dialog)
       duplicateSelection();
+      return;
+    }
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      selectAllNodes();
+      return;
+    }
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c' && selectedNodes.size) {
+      e.preventDefault();
+      copySelection();
+      return;
+    }
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x' && selectedNodes.size) {
+      e.preventDefault();
+      copySelection();
+      for (const id of [...selectedNodes]) deleteNode(id);
+      return;
+    }
+    if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && clipboard) {
+      e.preventDefault();
+      pasteClipboard();
       return;
     }
 
