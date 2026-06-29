@@ -597,6 +597,22 @@ test('undo restores a moved card to its position', async ({ page }) => {
   expect(await page.locator('.node.card').evaluate((el) => el.style.left)).toBe(before);
 });
 
+test('undo works right after dragging a card whose body was focused', async ({ page }) => {
+  await makeCardAt(page, 320, 320);
+  await page.locator('.card-body').click();       // focus the body (editing)
+  await page.keyboard.type('note');
+  const node = page.locator('.node.card');
+  const before = await node.evaluate((el) => el.style.left);
+
+  const hb = await page.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.5, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.5 + 150, y: hb.y + hb.height / 2 + 80 });
+  expect(await node.evaluate((el) => el.style.left)).not.toBe(before);
+
+  await page.keyboard.press('ControlOrMeta+z');   // should undo the move, not native text undo
+  expect(await node.evaluate((el) => el.style.left)).toBe(before);
+});
+
 test('undo restores a deleted card', async ({ page }) => {
   await makeCardAt(page, 320, 320, { title: 'Restore me' });
   await page.keyboard.press('Escape');

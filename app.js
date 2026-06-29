@@ -272,6 +272,10 @@
   function startNodeDrag(id, el, e) {
     if (e.button !== 0) return;
     e.preventDefault();
+    // dragging the node ends any text editing, so a follow-up ⌘/Ctrl+Z undoes
+    // the move (board-level) rather than going to native text undo in a field
+    const ae = document.activeElement;
+    if (ae && ae.blur && (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
     selectNode(id);
 
     const data = getNode(id).data;
