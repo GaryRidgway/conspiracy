@@ -13,6 +13,16 @@
 
   <div id="toolbar">
     <span class="brand">Infinite Whiteboard<span class="dot">.</span></span>
+    <div id="board-menu-wrap">
+      <button class="btn" id="boardMenuBtn" title="Switch boards"><span id="board-name">Board</span><span class="caret">▾</span></button>
+      <div id="board-menu" class="hidden">
+        <div id="board-list"></div>
+        <div class="board-menu-actions">
+          <button class="btn" id="newBoardBtn">+ New board</button>
+          <button class="btn" id="openDriveBtn" disabled title="Connect Google Drive (coming soon)">Open from Drive</button>
+        </div>
+      </div>
+    </div>
     <button class="btn primary" id="addCard">+ Card</button>
     <button class="btn" id="addFrame">+ Frame</button>
     <button class="btn btn-icon" id="undoBtn" title="Undo (⌘/Ctrl+Z)" disabled><span class="icon icon-undo"></span></button>

@@ -34,17 +34,24 @@
     };
   }
 
-  let board = loadBoard();
+  let board = blankBoard();   // the open board's content (set at boot)
+  let currentBoardId = null;
 
   // ════════════════════════════════════════════════════════
-  //  PERSISTENCE — debounced auto-save, restore on load
+  //  PERSISTENCE — a local library of boards (device-backed for
+  //  now; Drive boards slot in later). Each board's content lives
+  //  under its own key; the library lists them.
   // ════════════════════════════════════════════════════════
+  const LIB_KEY = 'whiteboard:library';
+  const CURRENT_KEY = 'whiteboard:current';
+  const boardKey = (id) => 'whiteboard:board:' + id;
+
   function isPlainBoardObject(d) {
     return !!d && typeof d === 'object' && !Array.isArray(d);
   }
 
   // Shallow-merge arbitrary data onto a blank board so missing/future fields
-  // stay valid. Shared by localStorage load and JSON import.
+  // stay valid. Shared by content load and JSON import.
   function normalizeBoard(data) {
     return Object.assign(blankBoard(), data, {
       viewport: Object.assign({ x: 0, y: 0, zoom: 1 }, data && data.viewport),
@@ -54,15 +61,64 @@
     });
   }
 
-  function loadBoard() {
+  function newBoardId() {
+    return 'b_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
+  function loadLibrary() {
+    try { const a = JSON.parse(localStorage.getItem(LIB_KEY)); return Array.isArray(a) ? a : []; }
+    catch { return []; }
+  }
+  function saveLibrary(lib) { try { localStorage.setItem(LIB_KEY, JSON.stringify(lib)); } catch (e) { /* quota */ } }
+  function libraryEntry(id) { return loadLibrary().find((b) => b.id === id) || null; }
+  function touchLibrary(id) {
+    const lib = loadLibrary();
+    const e = lib.find((b) => b.id === id);
+    if (e) { e.updatedAt = Date.now(); saveLibrary(lib); }
+  }
+
+  function loadBoardContent(id) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return blankBoard();
-      return normalizeBoard(JSON.parse(raw));
+      const raw = localStorage.getItem(boardKey(id));
+      return raw ? normalizeBoard(JSON.parse(raw)) : blankBoard();
     } catch (e) {
       console.warn('Could not parse saved board, starting fresh.', e);
       return blankBoard();
     }
+  }
+  function saveBoardContent(id, b) {
+    try { localStorage.setItem(boardKey(id), JSON.stringify(b)); } catch (e) { /* quota */ }
+  }
+
+  // Build/repair the library: migrate the legacy single-board key, then
+  // guarantee at least one board exists. Returns the library.
+  function ensureLibrary() {
+    let lib = loadLibrary();
+    const legacy = localStorage.getItem(STORAGE_KEY);   // pre-library single board
+    if (legacy !== null) {
+      const id = newBoardId();
+      saveBoardContent(id, normalizeBoard(safeParse(legacy)));
+      lib.unshift({ id, name: 'My board', mode: 'device', updatedAt: Date.now() });
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(CURRENT_KEY, id);   // open the just-migrated board
+      saveLibrary(lib);
+    }
+    if (!lib.length) {
+      const id = newBoardId();
+      saveBoardContent(id, blankBoard());
+      lib = [{ id, name: 'Untitled board', mode: 'device', updatedAt: Date.now() }];
+      saveLibrary(lib);
+    }
+    return lib;
+  }
+  function safeParse(s) { try { return JSON.parse(s); } catch { return {}; } }
+
+  function pickInitialBoardId(lib) {
+    const m = location.hash.match(/[#&]board=([^&]+)/);
+    const fromHash = m ? decodeURIComponent(m[1]) : null;
+    if (fromHash && lib.some((b) => b.id === fromHash)) return fromHash;
+    const cur = localStorage.getItem(CURRENT_KEY);
+    if (cur && lib.some((b) => b.id === cur)) return cur;
+    return lib[0].id;
   }
 
   let saveTimer = null;
@@ -71,7 +127,8 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(board));
+        saveBoardContent(currentBoardId, board);
+        touchLibrary(currentBoardId);
         setSaveState('saved');
       } catch (e) {
         console.error('Save failed', e);
@@ -1606,11 +1663,158 @@
   }
 
   // ════════════════════════════════════════════════════════
+  //  BOARD LIBRARY — picker dropdown, switch / new / rename / remove
+  // ════════════════════════════════════════════════════════
+  const boardMenuBtn = document.getElementById('boardMenuBtn');
+  const boardMenu = document.getElementById('board-menu');
+  const boardList = document.getElementById('board-list');
+  const boardNameLabel = document.getElementById('board-name');
+
+  function updateBoardMenuLabel() {
+    const e = libraryEntry(currentBoardId);
+    if (boardNameLabel) boardNameLabel.textContent = e ? e.name : 'Board';
+  }
+  function setHashBoard(id) {
+    // replaceState avoids a hashchange event and any history spam
+    history.replaceState(null, '', location.pathname + location.search + '#board=' + encodeURIComponent(id));
+  }
+
+  // Load a board's content into view (no save of the previous board).
+  function loadAndShow(id) {
+    currentBoardId = id;
+    localStorage.setItem(CURRENT_KEY, id);
+    board = loadBoardContent(id);
+    undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
+    if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
+    selected = null; interactiveId = null;
+    reconcileToBoard();
+    lastContent = contentSnapshot();
+    updateHistoryButtons();
+    setHashBoard(id);
+    setSaveState('saved');
+    updateBoardMenuLabel();
+    renderBoardMenu();
+    closeBoardMenu();
+  }
+  function saveCurrent() {
+    if (!currentBoardId) return;
+    flushCoalesce();
+    saveBoardContent(currentBoardId, board);
+    touchLibrary(currentBoardId);
+  }
+  function openBoard(id) {
+    if (id === currentBoardId) { closeBoardMenu(); return; }
+    saveCurrent();
+    loadAndShow(id);
+  }
+  function createBoard() {
+    saveCurrent();
+    const id = newBoardId();
+    saveBoardContent(id, blankBoard());
+    const lib = loadLibrary();
+    lib.unshift({ id, name: 'Board ' + (lib.length + 1), mode: 'device', updatedAt: Date.now() });
+    saveLibrary(lib);
+    loadAndShow(id);
+  }
+  function renameBoard(id, name) {
+    const lib = loadLibrary();
+    const e = lib.find((b) => b.id === id);
+    if (!e) return;
+    e.name = (name || '').trim() || 'Untitled board';
+    saveLibrary(lib);
+    updateBoardMenuLabel();
+  }
+  function removeBoard(id) {
+    const lib = loadLibrary();
+    const idx = lib.findIndex((b) => b.id === id);
+    if (idx === -1) return;
+    lib.splice(idx, 1);
+    saveLibrary(lib);
+    localStorage.removeItem(boardKey(id));   // device board: content is gone
+    if (id !== currentBoardId) { renderBoardMenu(); return; }
+    currentBoardId = null;                    // so we don't re-save the removed board
+    if (!lib.length) {
+      const nid = newBoardId();
+      saveBoardContent(nid, blankBoard());
+      lib.unshift({ id: nid, name: 'Untitled board', mode: 'device', updatedAt: Date.now() });
+      saveLibrary(lib);
+      loadAndShow(nid);
+    } else {
+      loadAndShow(lib[0].id);
+    }
+  }
+
+  function closeBoardMenu() { if (boardMenu) boardMenu.classList.add('hidden'); }
+  function renderBoardMenu() {
+    if (!boardList) return;
+    boardList.innerHTML = '';
+    for (const entry of loadLibrary()) {
+      const row = document.createElement('div');
+      row.className = 'board-row' + (entry.id === currentBoardId ? ' current' : '');
+      row.dataset.id = entry.id;
+      row.innerHTML =
+        '<span class="board-row-name" spellcheck="false"></span>' +
+        '<span class="board-badge"></span>' +
+        '<button class="board-rename icon-btn" title="Rename"><span class="icon icon-edit"></span></button>' +
+        '<button class="board-remove icon-btn" title="Remove board"><span class="icon icon-delete"></span></button>';
+      const nameEl = row.querySelector('.board-row-name');
+      nameEl.textContent = entry.name;
+      row.querySelector('.board-badge').textContent = entry.mode === 'drive' ? 'Drive' : 'Device';
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button') || nameEl.isContentEditable) return;
+        openBoard(entry.id);
+      });
+      // rename via the ✎ button (avoids click-to-switch vs dblclick conflict)
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); nameEl.blur(); }
+      });
+      nameEl.addEventListener('blur', () => {
+        nameEl.removeAttribute('contenteditable');
+        renameBoard(entry.id, nameEl.textContent);
+      });
+      row.querySelector('.board-rename').addEventListener('click', (e) => { e.stopPropagation(); beginRename(nameEl); });
+      const rm = row.querySelector('.board-remove');
+      rm.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (rm.dataset.armed) { removeBoard(entry.id); return; }
+        rm.dataset.armed = '1'; rm.classList.add('armed'); rm.title = 'Click again to delete';
+        setTimeout(() => { rm.removeAttribute('data-armed'); rm.classList.remove('armed'); rm.title = 'Remove board'; }, 2500);
+      });
+      boardList.appendChild(row);
+    }
+  }
+
+  if (boardMenuBtn) {
+    boardMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = boardMenu.classList.contains('hidden');
+      boardMenu.classList.toggle('hidden');
+      if (willOpen) renderBoardMenu();
+    });
+    document.addEventListener('click', (e) => {
+      if (!boardMenu.classList.contains('hidden') && !e.target.closest('#board-menu-wrap')) closeBoardMenu();
+    });
+    document.getElementById('newBoardBtn').addEventListener('click', createBoard);
+  }
+  function onBoardHashChange() {
+    const m = location.hash.match(/[#&]board=([^&]+)/);
+    const id = m ? decodeURIComponent(m[1]) : null;
+    if (id && id !== currentBoardId && loadLibrary().some((b) => b.id === id)) openBoard(id);
+  }
+
+  // ════════════════════════════════════════════════════════
   //  BOOT
   // ════════════════════════════════════════════════════════
+  const library = ensureLibrary();
+  currentBoardId = pickInitialBoardId(library);
+  localStorage.setItem(CURRENT_KEY, currentBoardId);
+  board = loadBoardContent(currentBoardId);
   renderAll();
   lastContent = contentSnapshot();   // baseline for undo history
   setSaveState('saved');
+  updateBoardMenuLabel();
+  renderBoardMenu();
   focusFromHash();
   window.addEventListener('hashchange', focusFromHash);
+  window.addEventListener('hashchange', onBoardHashChange);
 })();

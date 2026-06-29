@@ -170,6 +170,77 @@ html, body {
   letter-spacing: -0.01em;
 }
 #toolbar .brand .dot { color: var(--accent); }
+
+/* ── Board picker dropdown ── */
+#board-menu-wrap { position: relative; display: inline-flex; }
+#boardMenuBtn { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 16ch; }
+#boardMenuBtn #board-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#boardMenuBtn .caret { color: var(--text-3); }
+#board-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 26px rgba(0,0,0,0.5);
+}
+#board-menu.hidden { display: none; }
+#board-list { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.board-row:hover { background: var(--surface2); }
+.board-row.current { background: var(--surface2); }
+.board-row.current .board-row-name { color: var(--accent); }
+.board-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  outline: none;
+  border-radius: 4px;
+}
+.board-row-name[contenteditable] { overflow: visible; cursor: text; background: var(--bg); padding: 0 0.2rem; margin: 0 -0.2rem; }
+.board-badge {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+}
+.board-rename, .board-remove {
+  width: 22px; height: 22px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.board-row:hover .board-rename, .board-row:hover .board-remove { opacity: 0.6; }
+.board-rename:hover { opacity: 1; }
+.board-remove:hover { opacity: 1; background: rgba(255,138,122,0.14); color: var(--danger); border-color: rgba(255,138,122,0.4); }
+.board-remove.armed { opacity: 1; background: rgba(255,138,122,0.2); color: var(--danger); border-color: var(--danger); }
+.board-menu-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.board-menu-actions .btn { flex: 1; font-size: 0.78rem; }
 .btn {
   font-family: var(--font-body);
   font-size: 0.82rem;

@@ -4,7 +4,11 @@ import { readFileSync } from 'node:fs';
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
 // ── helpers ─────────────────────────────────────────────
-const board = (page) => page.evaluate(() => localStorage.getItem('whiteboard'));
+// the open board's content now lives under a per-board key
+const board = (page) => page.evaluate(() => {
+  const cur = localStorage.getItem('whiteboard:current');
+  return cur ? localStorage.getItem('whiteboard:board:' + cur) : null;
+});
 
 // Wait for the debounced auto-save to flush something into localStorage.
 async function expectSaved(page, substr) {
@@ -678,12 +682,51 @@ test('undo restores a deleted card', async ({ page }) => {
   await expect(page.locator('.card-title')).toHaveText('Restore me');
 });
 
+test('board picker: create, switch, and isolate content between boards', async ({ page }) => {
+  // start with one board; put a card on it
+  await makeCardAt(page, 350, 300, { title: 'On board one' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+
+  // create a second board → it opens empty
+  await page.click('#boardMenuBtn');
+  await page.click('#newBoardBtn');
+  await expect(page.locator('.node.card')).toHaveCount(0);
+
+  // put a different card on board two
+  await makeCardAt(page, 400, 320, { title: 'On board two' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node.card')).toHaveCount(1);
+
+  // the menu lists both boards; switch back to the first ("Untitled board")
+  await page.click('#boardMenuBtn');
+  await expect(page.locator('.board-row')).toHaveCount(2);
+  await page.locator('.board-row', { hasText: 'Untitled board' }).click();
+  await expect(page.locator('.node.card')).toHaveCount(1);
+  await expect(page.locator('.card-title')).toHaveText('On board one');
+});
+
+test('board picker: rename persists and shows in the toolbar', async ({ page }) => {
+  await page.click('#boardMenuBtn');
+  await page.locator('.board-row').first().locator('.board-rename').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('Planning');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#board-name')).toHaveText('Planning');
+
+  await page.reload();
+  await expect(page.locator('#board-name')).toHaveText('Planning');
+});
+
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });
   await page.click('#resetView');
   await expectSaved(page, '"viewport":{"x":0,"y":0,"zoom":1}');
-  const vp = await page.evaluate(() => JSON.parse(localStorage.getItem('whiteboard')).viewport);
+  const vp = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).viewport;
+  });
   expect(vp).toMatchObject({ x: 0, y: 0, zoom: 1 });
 });
 
