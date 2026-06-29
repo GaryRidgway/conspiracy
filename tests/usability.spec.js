@@ -26,10 +26,17 @@ async function drag(page, from, to) {
 }
 async function addCardAt(page, x, y) {
   const before = await page.locator('.node.card').count();
-  await page.mouse.dblclick(x, y);
+  await page.click('#addCard');            // appears at view centre, title editing
   await expect(page.locator('.node.card')).toHaveCount(before + 1);
   await page.keyboard.press('Escape');     // leave the auto title-edit
-  return page.locator('.node.card').last();
+  const node = page.locator('.node.card').last();
+  // reposition so its centre sits at screen (x, y)
+  const bb = await node.boundingBox();
+  const hb = await node.locator('.card-header').boundingBox();
+  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
+  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
+  return node;
 }
 
 let errors;
@@ -84,11 +91,11 @@ test('zoom stays within a sane range and Reset returns home', async ({ page }) =
 });
 
 // ── 4. Discoverability of "how do I add something" (empty-state "what do I
-//      do"). Both a button and double-click should create. ──
-test('creating a node is discoverable (button + double-click)', async ({ page }) => {
-  await expect(page.locator('#addCard')).toBeVisible();
+//      do"). The always-visible tool palette is the single obvious entry. ──
+test('creating a node is discoverable (tool palette button)', async ({ page }) => {
+  await expect(page.locator('#tools #addCard')).toBeVisible();
   await expect(page.locator('#hint')).toBeVisible();       // persistent guidance
-  await page.mouse.dblclick(500, 350);
+  await page.click('#addCard');
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 

@@ -1138,6 +1138,10 @@
     const baseSel = new Set(selectedNodes);
     const sx = e.clientX, sy = e.clientY;
     let moved = false;
+    // collapse to a zero-size rect at the start point BEFORE showing, so the
+    // previous selection's rectangle never flashes
+    selectionBox.style.left = sx + 'px'; selectionBox.style.top = sy + 'px';
+    selectionBox.style.width = '0px'; selectionBox.style.height = '0px';
     selectionBox.classList.remove('hidden');
     viewport.classList.add('selecting');
     const onMove = (ev) => {
@@ -1208,11 +1212,8 @@
     }
   }, { passive: false });
 
-  viewport.addEventListener('dblclick', (e) => {
-    if (e.target !== viewport && e.target !== world && e.target !== svg) return;
-    const w = toWorld(e.clientX, e.clientY);
-    createCard(w.x - 120, w.y - 24);
-  });
+  // (Cards are added from the left tool palette, not by double-clicking the
+  // canvas — double-click-create fired accidentally right after a box-select.)
 
   // ════════════════════════════════════════════════════════
   //  FIT TO CONTENT — zoom-out-only framing of all nodes

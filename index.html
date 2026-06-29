@@ -23,8 +23,6 @@
         </div>
       </div>
     </div>
-    <button class="btn primary" id="addCard">+ Card</button>
-    <button class="btn" id="addFrame">+ Frame</button>
     <button class="btn btn-icon" id="undoBtn" title="Undo (⌘/Ctrl+Z)" disabled><span class="icon icon-undo"></span></button>
     <button class="btn btn-icon" id="redoBtn" title="Redo (⌘/Ctrl+Shift+Z)" disabled><span class="icon icon-redo"></span></button>
     <button class="btn" id="fitContent">Fit</button>
@@ -35,13 +33,23 @@
     <button class="btn" id="clearBoard">Clear</button>
   </div>
 
+  <!-- Left floating palette: add items to the board -->
+  <div id="tools">
+    <button class="tool-btn" id="addCard" title="Add a card">
+      <span class="icon icon-add"></span><span class="tool-label">Card</span>
+    </button>
+    <button class="tool-btn" id="addFrame" title="Embed a web page">
+      <span class="icon icon-fit_screen"></span><span class="tool-label">Frame</span>
+    </button>
+  </div>
+
   <div id="status">
     <span id="coords">x: 0  y: 0</span>
     <span class="save" id="saveState">saved</span>
   </div>
 
   <div id="hint">
-    <kbd>drag</kbd> to box-select · <kbd>scroll</kbd> or <kbd>space</kbd>-drag to pan · <kbd>⌘/Ctrl+scroll</kbd> to zoom · <kbd>dbl-click</kbd> for a card · drag a <kbd>port</kbd> to connect · <kbd>Del</kbd> removes selected
+    <kbd>drag</kbd> to box-select · <kbd>scroll</kbd> or <kbd>space</kbd>-drag to pan · <kbd>⌘/Ctrl+scroll</kbd> to zoom · drag a <kbd>port</kbd> to connect · <kbd>Del</kbd> removes selected
   </div>
 
   <div id="zoombar">

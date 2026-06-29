@@ -44,20 +44,22 @@ async function connectionMidpoint(page) {
   });
 }
 
-// Create a card by double-clicking empty canvas at screen (x, y).
-// Focus the title explicitly rather than relying on the rAF auto-focus,
-// which a programmatic dblclick can outrun.
+// Create a card via the tool palette (it appears at the view centre, title
+// already in edit mode), then drag it so its centre sits at screen (x, y).
 async function makeCardAt(page, x, y, { title, body } = {}) {
   const before = await page.locator('.node.card').count();
-  await page.mouse.dblclick(x, y);
+  await page.click('#addCard');
   await expect(page.locator('.node.card')).toHaveCount(before + 1);
   const node = page.locator('.node.card').last();
-  if (title != null || body != null) {
-    await node.locator('.card-title').dblclick();   // double-click to rename
-    if (title != null) await page.keyboard.type(title);
-    if (body != null) { await page.keyboard.press('Enter'); await page.keyboard.type(body); }
-    await page.keyboard.press('Escape');
-  }
+  if (title != null) await page.keyboard.type(title);
+  if (body != null) { await page.keyboard.press('Enter'); await page.keyboard.type(body); }
+  await page.keyboard.press('Escape');               // leave title edit mode
+  // reposition: grab the header (left of the buttons) and move centre → (x, y)
+  const bb = await node.boundingBox();
+  const hb = await node.locator('.card-header').boundingBox();
+  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
+  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
   return node;
 }
 
@@ -579,7 +581,7 @@ test('toolbar Undo/Redo buttons work and reflect availability', async ({ page })
   await expect(page.locator('#undoBtn')).toBeDisabled();
   await expect(page.locator('#redoBtn')).toBeDisabled();
 
-  await makeCardAt(page, 350, 300);
+  await page.click('#addCard');             // single create step (no reposition)
   await page.keyboard.press('Escape');
   await expect(page.locator('#undoBtn')).toBeEnabled();
 
@@ -628,7 +630,7 @@ test('undoing a move keeps the same iframe element (no reload)', async ({ page }
 });
 
 test('undo/redo a card creation', async ({ page }) => {
-  await makeCardAt(page, 350, 300);        // no title typed → single create step
+  await page.click('#addCard');            // single create step (no reposition)
   await page.keyboard.press('Escape');     // stop editing the empty title
   await expect(page.locator('.node.card')).toHaveCount(1);
 
