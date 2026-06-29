@@ -142,6 +142,17 @@
     board.version++;
     recordUndo(opts && opts.coalesce);
     scheduleSave();
+    updateEmptyState();
+  }
+
+  // Show a centered prompt while the board has nothing on it, so a blank canvas
+  // tells the user where to start instead of looking broken.
+  let emptyHintEl = null;
+  function updateEmptyState() {
+    if (!emptyHintEl) emptyHintEl = document.getElementById('empty-hint');
+    if (!emptyHintEl) return;
+    const empty = !Object.keys(board.cards).length && !Object.keys(board.iframes).length;
+    emptyHintEl.classList.toggle('hidden', !empty);
   }
 
   // ════════════════════════════════════════════════════════
@@ -1092,6 +1103,7 @@
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
     applyViewport();
+    updateEmptyState();
   }
 
   // ════════════════════════════════════════════════════════
@@ -1581,6 +1593,14 @@
       return;
     }
 
+    // Shift+1 — zoom to fit all content (mirrors the Fit button). "1" reports
+    // as "!" with Shift on most layouts, so accept either.
+    if (!editing && e.shiftKey && (e.key === '1' || e.key === '!')) {
+      e.preventDefault();
+      fitToContent();
+      return;
+    }
+
     if (e.key === 'Tab' && !editing && frameModal.classList.contains('hidden')) {
       e.preventDefault();
       tabToNode(e.shiftKey ? -1 : 1);
@@ -2014,6 +2034,7 @@
   localStorage.setItem(CURRENT_KEY, currentBoardId);
   board = loadBoardContent(currentBoardId);
   renderAll();
+  updateEmptyState();
   lastContent = contentSnapshot();   // baseline for undo history
   setSaveState('saved');
   updateBoardMenuLabel();

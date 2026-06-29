@@ -268,8 +268,10 @@ test.fixme('right-click opens a context menu on the canvas and on a node', async
 });
 
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
-test.fixme('a blank board shows a centered "double-click to add a card" prompt', async ({ page }) => {
+test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
+  await addCardAt(page, 300, 300);
+  await expect(page.locator('#empty-hint')).toBeHidden();
 });
 
 // Select-all to grab/move everything (Miro "quick select all to move").
@@ -282,6 +284,15 @@ test('Cmd/Ctrl+A selects every node', async ({ page }) => {
 });
 
 // Keyboard zoom-to-fit (fast recovery; common shortcut Shift+1).
-test.fixme('Shift+1 zooms to fit all content', async ({ page }) => {
-  // mirrors the Fit button as a keyboard shortcut
+test('Shift+1 zooms to fit all content', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  await page.mouse.click(60, 180);                 // drop edit focus so the shortcut fires
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 400, deltaY: 400, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await page.keyboard.press('Shift+1');
+  const vp = page.viewportSize();
+  const box = await node.boundingBox();
+  expect(within(box, vp.width, vp.height)).toBe(true);
 });
