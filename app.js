@@ -1360,6 +1360,11 @@
       closeClearModal();
       return;
     }
+    if (e.key === 'Escape' && boardMenu && !boardMenu.classList.contains('hidden')) {
+      e.preventDefault();
+      closeBoardMenu();
+      return;
+    }
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
