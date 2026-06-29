@@ -1050,13 +1050,22 @@
     pasteCount = 0;
   }
 
-  function pasteClipboard() {
+  function pasteClipboard(anchor) {
     if (!clipboard || !clipboard.nodes.length) return;
-    const off = 24 * (++pasteCount);
+    // Keyboard paste cascades by a fixed offset; a context-menu "Paste here"
+    // drops the group's top-left at the cursor (anchor, in world units).
+    let dx, dy;
+    if (anchor) {
+      let minX = Infinity, minY = Infinity;
+      for (const item of clipboard.nodes) { minX = Math.min(minX, item.data.x); minY = Math.min(minY, item.data.y); }
+      dx = anchor.x - minX; dy = anchor.y - minY;
+    } else {
+      dx = dy = 24 * (++pasteCount);
+    }
     const idMap = {};
     for (const item of clipboard.nodes) {
       const data = JSON.parse(JSON.stringify(item.data));
-      data.x += off; data.y += off;
+      data.x += dx; data.y += dy;
       if (item.type === 'card') { const nid = newId('c_'); board.cards[nid] = data; renderCard(nid); idMap[item.oldId] = nid; }
       else { const nid = newId('f_'); board.iframes[nid] = data; renderIframe(nid); idMap[item.oldId] = nid; }
     }
@@ -1194,6 +1203,102 @@
     if (e.button === 1) { e.preventDefault(); startPan(e); return; }
     if (e.button !== 0 || spaceHeld) return;
     startBoxSelect(e);
+  });
+
+  // ════════════════════════════════════════════════════════
+  //  RIGHT-CLICK CONTEXT MENU
+  // ════════════════════════════════════════════════════════
+  const contextMenu = document.createElement('div');
+  contextMenu.id = 'context-menu';
+  contextMenu.className = 'hidden';
+  document.body.appendChild(contextMenu);
+  let ctxDispose = null;
+
+  function closeContextMenu() {
+    if (contextMenu.classList.contains('hidden')) return;
+    contextMenu.classList.add('hidden');
+    contextMenu.innerHTML = '';
+    if (ctxDispose) { ctxDispose(); ctxDispose = null; }
+  }
+
+  // items: array of 'sep' or { label, hint?, danger?, action }
+  function openContextMenu(x, y, items) {
+    contextMenu.innerHTML = '';
+    for (const it of items) {
+      if (it === 'sep') {
+        const s = document.createElement('div');
+        s.className = 'ctx-sep';
+        contextMenu.appendChild(s);
+        continue;
+      }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+      b.innerHTML = `<span class="ctx-label"></span>` + (it.hint ? `<span class="ctx-hint"></span>` : '');
+      b.querySelector('.ctx-label').textContent = it.label;
+      if (it.hint) b.querySelector('.ctx-hint').textContent = it.hint;
+      b.addEventListener('click', () => { closeContextMenu(); it.action(); });
+      contextMenu.appendChild(b);
+    }
+    contextMenu.classList.remove('hidden');
+    // position, clamped so the whole menu stays on-screen
+    const r = contextMenu.getBoundingClientRect();
+    contextMenu.style.left = Math.max(6, Math.min(x, innerWidth - r.width - 6)) + 'px';
+    contextMenu.style.top = Math.max(6, Math.min(y, innerHeight - r.height - 6)) + 'px';
+
+    const onDown = (e) => { if (!contextMenu.contains(e.target)) closeContextMenu(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeContextMenu(); } };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('wheel', closeContextMenu, { passive: true });
+    window.addEventListener('keydown', onKey, true);
+    ctxDispose = () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('wheel', closeContextMenu);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }
+
+  // A right-click can itself focus an always-editable card body, so we can't
+  // judge "was the user editing?" from activeElement after the fact — record it
+  // at pointerdown, before focus moves.
+  let ctxPreActive = null;
+  viewport.addEventListener('pointerdown', (e) => { if (e.button === 2) ctxPreActive = document.activeElement; }, true);
+
+  viewport.addEventListener('contextmenu', (e) => {
+    // if the user was already editing text (or is inside an interactive frame),
+    // leave the native menu alone for paste/spellcheck
+    const pa = ctxPreActive;
+    if (pa && (pa.tagName === 'IFRAME' ||
+        ((pa.isContentEditable || pa.tagName === 'INPUT' || pa.tagName === 'TEXTAREA') && pa.contains(e.target)))) return;
+    e.preventDefault();
+    const world = toWorld(e.clientX, e.clientY);
+    const nodeEl = e.target.closest && e.target.closest('.node');
+    const connG = e.target.closest && e.target.closest('.conn');
+    const items = [];
+
+    if (nodeEl) {
+      const id = nodeEl.dataset.id;
+      if (!selectedNodes.has(id)) selectNode(id);     // right-click grabs the node it's on
+      const many = selectedNodes.size > 1;
+      const isFrame = getNode(id) && getNode(id).type === 'iframe';
+      items.push({ label: many ? 'Duplicate selection' : 'Duplicate', hint: '⌘D', action: duplicateSelection });
+      items.push({ label: 'Copy', hint: '⌘C', action: copySelection });
+      items.push({ label: 'Cut', hint: '⌘X', action: () => { copySelection(); for (const nid of [...selectedNodes]) deleteNode(nid); } });
+      if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
+      items.push('sep');
+      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete frame' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
+    } else if (connG) {
+      const id = connG.dataset.id;
+      selectConn(id);
+      items.push({ label: 'Delete connection', hint: 'Del', danger: true, action: () => deleteConnection(id) });
+    } else {
+      items.push({ label: 'Add card here', action: () => createCard(world.x - 120, world.y - 24) });
+      items.push({ label: 'Add frame here', action: () => openFrameModal({ type: 'create', at: world }) });
+      if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
+      items.push('sep');
+      items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
+    }
+    openContextMenu(e.clientX, e.clientY, items);
   });
 
   window.addEventListener('keydown', (e) => {
@@ -1377,7 +1482,7 @@
         commit();
       }
     } else {
-      const c = toWorld(innerWidth / 2, innerHeight / 2);
+      const c = mode.at || toWorld(innerWidth / 2, innerHeight / 2);
       createIframe(c.x - 240, c.y - 160, src);
     }
   }

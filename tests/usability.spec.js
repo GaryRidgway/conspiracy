@@ -262,9 +262,34 @@ test('copy and paste a node', async ({ page }) => {
 });
 
 // Right-click context menu (Miro/FigJam: add-here / duplicate / delete).
-test.fixme('right-click opens a context menu on the canvas and on a node', async ({ page }) => {
+test('right-click opens a context menu on the canvas and on a node', async ({ page }) => {
+  const menu = page.locator('#context-menu');
+
+  // On empty canvas: add/select options, no node-specific actions.
   await page.mouse.click(500, 350, { button: 'right' });
-  await expect(page.locator('#context-menu')).toBeVisible();
+  await expect(menu).toBeVisible();
+  await expect(menu.getByText('Add card here')).toBeVisible();
+  await expect(menu.getByText('Select all')).toBeVisible();
+  // clicking an item runs it and closes the menu
+  await menu.getByText('Add card here').click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator('.node.card')).toHaveCount(1);
+  await page.keyboard.press('Escape');                 // leave the new card's rename
+
+  // On a node: duplicate/copy/cut/delete.
+  await page.locator('.node.card').first().click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByText('Duplicate')).toBeVisible();
+  await expect(menu.getByText('Delete card')).toBeVisible();
+  await menu.getByText('Duplicate').click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator('.node.card')).toHaveCount(2);
+
+  // Escape dismisses without acting
+  await page.mouse.click(500, 350, { button: 'right' });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
 });
 
 // Empty-state guidance centered on a blank board (NN/g: orient the user).

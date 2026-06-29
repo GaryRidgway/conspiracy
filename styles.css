@@ -203,6 +203,46 @@ body.space-pan #viewport.panning,
 #empty-hint .empty-sub { font-size: 0.85rem; font-weight: 400; color: var(--text-3); }
 #empty-hint strong { color: var(--accent); font-weight: 600; }
 
+/* ── Right-click context menu ── */
+#context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 184px;
+  padding: 0.3rem;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--font-body);
+  user-select: none;
+}
+#context-menu.hidden { display: none; }
+.ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.ctx-item:hover { background: var(--accent); color: #1a1205; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: var(--danger); color: #2a0d08; }
+.ctx-hint { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
+.ctx-item:hover .ctx-hint { opacity: 0.85; }
+.ctx-sep { height: 1px; margin: 0.25rem 0.3rem; background: var(--border2); }
+
 /* ── Left tool palette: add items to the board ── */
 #tools {
   position: fixed;
