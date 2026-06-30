@@ -299,6 +299,39 @@ test('a blank board shows a centered empty-state prompt that clears once a node 
   await expect(page.locator('#empty-hint')).toBeHidden();
 });
 
+// A long heading should widen the card (no clipped/ellipsised title), while a
+// long body must NOT — the title alone drives width.
+test('a long heading widens the card; a long body does not', async ({ page }) => {
+  const widthOf = (loc) => loc.evaluate((el) => el.getBoundingClientRect().width);
+
+  // short title → default width
+  await page.click('#addCard');
+  await page.keyboard.press('Escape');
+  const plain = page.locator('.node.card').last();
+  expect(await widthOf(plain)).toBeLessThanOrEqual(245);
+
+  // long title → grows past the default
+  await page.click('#addCard');
+  await page.keyboard.type('A really quite long heading that should not be cut off');
+  await page.keyboard.press('Escape');
+  const wide = page.locator('.node.card').last();
+  const wideW = await widthOf(wide);
+  expect(wideW).toBeGreaterThan(280);
+  // title is fully visible — not clipped by ellipsis
+  const title = wide.locator('.card-title');
+  const clipped = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  expect(clipped).toBe(false);
+
+  // short title + long body → stays at default (body never drives width)
+  await page.click('#addCard');
+  await page.keyboard.press('Escape');
+  const card = page.locator('.node.card').last();
+  await card.locator('.card-body').click();
+  await page.keyboard.type('This is a long note with plenty of words that should simply wrap onto multiple lines instead of stretching the card wider and wider.');
+  await page.keyboard.press('Escape');
+  expect(await widthOf(card)).toBeLessThanOrEqual(245);
+});
+
 // Select-all to grab/move everything (Miro "quick select all to move").
 test('Cmd/Ctrl+A selects every node', async ({ page }) => {
   await addCardAt(page, 300, 300);

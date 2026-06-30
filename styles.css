@@ -67,7 +67,12 @@ body.space-pan #viewport.panning,
 /* ── Card ── */
 .card {
   position: absolute;
-  width: 240px;
+  /* width hugs the widest child — i.e. the (nowrap) title — so a long heading
+     grows the card, clamped between a comfortable min and a sane max. The body
+     fills this width without driving it (see .card-body width:0/min-width). */
+  width: max-content;
+  min-width: 240px;
+  max-width: 520px;
   min-height: 96px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -145,6 +150,9 @@ body.space-pan #viewport.panning,
 
 .card-body {
   flex: 1;
+  /* fill the card's width but never widen it: the title alone drives width */
+  width: 0;
+  min-width: 100%;
   font-size: 0.85rem;
   color: var(--text-2);
   line-height: 1.55;
