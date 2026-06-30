@@ -141,7 +141,7 @@
         '--' + BOUNDARY + '\r\nContent-Type: application/json\r\n\r\n' +
         JSON.stringify(contentObj) + '\r\n' +
         '--' + BOUNDARY + '--';
-      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,version', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + BOUNDARY },
         body,
@@ -149,10 +149,10 @@
       if (!res.ok) throw new Error('Drive create failed (' + res.status + ')');
       return res.json();
     }
-    // Rename an existing Drive file (metadata only); returns { id, name }.
+    // Rename an existing Drive file (metadata only); returns { id, name, version }.
     async function renameFile(fileId, name) {
       const token = await authed();
-      const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?fields=id,name', {
+      const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?fields=id,name,version', {
         method: 'PATCH',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name + '.whiteboard.json' }),
@@ -160,15 +160,24 @@
       if (!res.ok) throw new Error('Drive rename failed (' + res.status + ')');
       return res.json();
     }
-    // Overwrite an existing Drive file's contents; returns { id, name }.
+    // Overwrite an existing Drive file's contents; returns { id, name, version }.
     async function updateFile(fileId, contentObj) {
       const token = await authed();
-      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(fileId) + '?uploadType=media&fields=id,name', {
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(fileId) + '?uploadType=media&fields=id,name,version', {
         method: 'PATCH',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify(contentObj),
       });
       if (!res.ok) throw new Error('Drive save failed (' + res.status + ')');
+      return res.json();
+    }
+    // Cheap metadata read (no content) to detect remote changes; { id, name, version, modifiedTime }.
+    async function getMeta(fileId) {
+      const token = await authed();
+      const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?fields=id,name,version,modifiedTime', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error('Drive metadata failed (' + res.status + ')');
       return res.json();
     }
     // Download a Drive file's JSON contents (parsed).
@@ -217,7 +226,7 @@
     }
 
     return { configured, isConnected: tokenValid, connect, signOut,
-             createFile, updateFile, renameFile, getFile, pickFile,
+             createFile, updateFile, renameFile, getFile, getMeta, pickFile,
              apiKey: () => cfg.googleApiKey, clientId: () => cfg.googleClientId };
   })();
 
@@ -249,6 +258,17 @@
     const lib = loadLibrary();
     const e = lib.find((b) => b.id === id);
     if (e) { e.updatedAt = Date.now(); saveLibrary(lib); }
+  }
+  // Record the sync watermark for a Drive board: the local board.version and the
+  // Drive file version that were last known to be in agreement. Divergence from
+  // these on either side is how we detect remote/local changes (and conflicts).
+  function setDriveSyncMeta(id, localVersion, driveVersion) {
+    const lib = loadLibrary();
+    const e = lib.find((b) => b.id === id);
+    if (!e) return;
+    if (localVersion != null) e.syncedLocalVersion = localVersion;
+    if (driveVersion != null) e.driveVersion = String(driveVersion);
+    saveLibrary(lib);
   }
 
   function loadBoardContent(id) {
@@ -327,7 +347,8 @@
     drivePushTimer = setTimeout(async () => {
       setDriveState('syncing', 'Drive: syncing…');
       try {
-        await DRIVE.updateFile(fileId, snapshot);
+        const res = await DRIVE.updateFile(fileId, snapshot);
+        setDriveSyncMeta(id, snapshot.version, res.version);
         updateDriveUI();
       } catch (e) {
         console.error('Drive sync failed', e);
@@ -2262,6 +2283,7 @@
       const lib = loadLibrary();
       const e = lib.find((b) => b.id === currentBoardId);
       if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
+      setDriveSyncMeta(currentBoardId, snapshot.version, res.version);
       rememberDriveOptIn();
       renderBoardMenu();
       updateDriveUI();
@@ -2280,6 +2302,7 @@
       const picked = await DRIVE.pickFile();
       if (!picked) { updateDriveUI(); return; }
       const content = normalizeBoard(await DRIVE.getFile(picked.id));
+      const meta = await DRIVE.getMeta(picked.id);
       const lib = loadLibrary();
       let entry = lib.find((b) => b.driveFileId === picked.id);
       let id;
@@ -2294,6 +2317,7 @@
       }
       saveLibrary(lib);
       saveBoardContent(id, content);     // cache the just-fetched Drive content locally
+      setDriveSyncMeta(id, content.version, meta.version);   // we are now in sync with Drive
       saveCurrent();                     // flush the board we're leaving
       loadAndShow(id);                   // loads the cache we just wrote
       updateDriveUI();
@@ -2302,6 +2326,103 @@
       setDriveState('error', 'Drive: open failed');
     }
   }
+
+  // ── Sync reconcile (last-write-wins, with a prompt on true divergence) ──
+  // Replace a board's content in place (cache + live view + history baseline).
+  function applyPulledBoard(id, content) {
+    saveBoardContent(id, content);
+    if (id === currentBoardId) {
+      board = content;
+      undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
+      if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
+      clearSelection(); interactiveId = null;
+      reconcileToBoard();
+      lastContent = contentSnapshot();
+      updateHistoryButtons();
+    }
+  }
+
+  const conflictModal = document.getElementById('conflict-modal');
+  function openConflictModal(name) {
+    return new Promise((resolve) => {
+      if (!conflictModal) { resolve('cancel'); return; }
+      const nameEl = document.getElementById('conflict-name');
+      const keepLocal = document.getElementById('conflict-keep-local');
+      const keepDrive = document.getElementById('conflict-keep-drive');
+      const cancelBtn = document.getElementById('conflict-cancel');
+      if (nameEl) nameEl.textContent = name || 'this board';
+      conflictModal.classList.remove('hidden');
+      const done = (choice) => {
+        conflictModal.classList.add('hidden');
+        keepLocal.removeEventListener('click', onLocal);
+        keepDrive.removeEventListener('click', onDrive);
+        cancelBtn.removeEventListener('click', onCancel);
+        resolve(choice);
+      };
+      const onLocal = () => done('local');
+      const onDrive = () => done('drive');
+      const onCancel = () => done('cancel');
+      keepLocal.addEventListener('click', onLocal);
+      keepDrive.addEventListener('click', onDrive);
+      cancelBtn.addEventListener('click', onCancel);
+    });
+  }
+
+  // Bring one Drive board into agreement with its Drive file. Pulls when only
+  // Drive changed, pushes when only this device changed, and prompts when both
+  // diverged since the last sync. No-op for device boards / when disconnected.
+  const reconciling = new Set();
+  async function reconcileDriveBoard(id) {
+    const entry = libraryEntry(id);
+    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
+    if (!DRIVE.isConnected() || reconciling.has(id)) return;
+    reconciling.add(id);
+    try {
+      const isCurrent = id === currentBoardId;
+      const localBoard = isCurrent ? board : loadBoardContent(id);
+      const localVersion = localBoard.version;
+      const meta = await DRIVE.getMeta(entry.driveFileId);
+      const localChanged = entry.syncedLocalVersion != null && localVersion !== entry.syncedLocalVersion;
+      const remoteChanged = entry.driveVersion == null || String(meta.version) !== String(entry.driveVersion);
+
+      if (!remoteChanged && !localChanged) {
+        if (entry.driveVersion == null || entry.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
+        return;
+      }
+      if (remoteChanged && !localChanged) {          // Drive is newer → pull
+        setDriveState('syncing', 'Drive: updating…');
+        const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+        applyPulledBoard(id, content);
+        setDriveSyncMeta(id, content.version, meta.version);
+        updateDriveUI();
+        return;
+      }
+      if (localChanged && !remoteChanged) {          // this device is ahead → push
+        setDriveState('syncing', 'Drive: syncing…');
+        const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+        setDriveSyncMeta(id, localVersion, res.version);
+        updateDriveUI();
+        return;
+      }
+      // both diverged → ask the user which side wins
+      const choice = await openConflictModal(entry.name);
+      if (choice === 'drive') {
+        const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+        applyPulledBoard(id, content);
+        setDriveSyncMeta(id, content.version, meta.version);
+      } else if (choice === 'local') {
+        const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+        setDriveSyncMeta(id, localVersion, res.version);
+      }                                              // 'cancel' → leave both as-is
+      updateDriveUI();
+    } catch (e) {
+      console.error('Drive reconcile failed', e);
+      setDriveState('error', 'Drive: sync failed');
+    } finally {
+      reconciling.delete(id);
+    }
+  }
+  function maybeReconcileCurrent() { reconcileDriveBoard(currentBoardId); }
 
   // Attempt a silent (popup-free) reconnect for a returning opted-in user.
   // MUST run inside a user gesture (e.g. opening the board menu): Google's token
@@ -2317,6 +2438,7 @@
     try { await DRIVE.connect(false); }    // prompt:'none' → resolves via hidden iframe or fails quietly
     catch (e) { /* session expired / consent revoked — show Connect */ }
     updateDriveUI();
+    if (DRIVE.isConnected()) maybeReconcileCurrent();   // catch up the open board
   }
 
   if (driveConnectBtn) {
@@ -2357,6 +2479,7 @@
     updateBoardMenuLabel();
     renderBoardMenu();
     closeBoardMenu();
+    reconcileDriveBoard(id);    // if it's a Drive board, pull/push/resolve against Drive
   }
   function saveCurrent() {
     if (!currentBoardId) return;
@@ -2488,4 +2611,5 @@
   focusFromHash();
   window.addEventListener('hashchange', focusFromHash);
   window.addEventListener('hashchange', onBoardHashChange);
+  maybeReconcileCurrent();   // if connected (cached token) and the open board is Drive-backed, sync it
 })();

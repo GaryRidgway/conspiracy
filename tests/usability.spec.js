@@ -342,6 +342,13 @@ test('Drive bar is present and loads no Google scripts until Connect', async ({ 
   expect(await page.locator('script[src*="google"]').count()).toBe(0);
 });
 
+// The Drive conflict prompt exists but stays hidden for normal (device-board) use.
+test('Drive conflict modal is present and hidden by default', async ({ page }) => {
+  await expect(page.locator('#conflict-modal')).toBeHidden();
+  await expect(page.locator('#conflict-keep-local')).toHaveCount(1);
+  await expect(page.locator('#conflict-keep-drive')).toHaveCount(1);
+});
+
 // Select-all to grab/move everything (Miro "quick select all to move").
 test('Cmd/Ctrl+A selects every node', async ({ page }) => {
   await addCardAt(page, 300, 300);

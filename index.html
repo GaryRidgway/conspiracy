@@ -119,6 +119,19 @@
     </div>
   </div>
 
+  <!-- Drive sync conflict: board changed on this device AND in Drive -->
+  <div id="conflict-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+      <h2 id="conflict-title">This board changed in two places</h2>
+      <p class="modal-note">“<span id="conflict-name">this board</span>” has unsynced edits on this device <em>and</em> a newer version in Google Drive. Keep one — the other copy will be overwritten.</p>
+      <div class="modal-actions">
+        <button class="btn" id="conflict-cancel">Decide later</button>
+        <button class="btn" id="conflict-keep-drive">Keep Drive’s version</button>
+        <button class="btn primary" id="conflict-keep-local">Keep this device</button>
+      </div>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
