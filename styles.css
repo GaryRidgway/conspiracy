@@ -370,6 +370,29 @@ body.space-pan #viewport.panning,
   border-top: 1px solid var(--border);
 }
 .board-menu-actions .btn { flex: 1; font-size: 0.78rem; }
+
+/* ── Google Drive bar (in the board menu) ── */
+#drive-bar {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.drive-state {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.drive-state.connected { color: var(--accent); }
+.drive-state.syncing { color: var(--text-2); }
+.drive-state.error { color: var(--danger); }
+.drive-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.drive-actions .btn { flex: 1; font-size: 0.78rem; white-space: nowrap; }
+.drive-actions .btn.hidden { display: none; }
 .btn {
   font-family: var(--font-body);
   font-size: 0.82rem;

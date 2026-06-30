@@ -46,6 +46,106 @@
   const CURRENT_KEY = 'whiteboard:current';
   const boardKey = (id) => 'whiteboard:board:' + id;
 
+  // ════════════════════════════════════════════════════════
+  //  GOOGLE DRIVE — opt-in per board. Auth is the Google Identity
+  //  Services token flow (drive.file scope). Nothing is stored on a
+  //  server; the access token lives only in memory for the session.
+  //  External Google scripts load lazily on first Connect, so the
+  //  app (and tests) never touch the network unless the user opts in.
+  // ════════════════════════════════════════════════════════
+  const DRIVE = (() => {
+    const cfg = window.WHITEBOARD_CONFIG || {};
+    const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+    const BOUNDARY = '-=-=-whiteboard' + Math.random().toString(36).slice(2);
+    let tokenClient = null, accessToken = null, tokenExpiry = 0;
+    let gisLoaded = false;
+
+    const configured = () => !!cfg.googleClientId;
+    const tokenValid = () => !!accessToken && Date.now() < tokenExpiry - 60000;
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src; s.async = true; s.defer = true;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Failed to load ' + src));
+        document.head.appendChild(s);
+      });
+    }
+    async function ensureGis() {
+      if (gisLoaded) return;
+      await loadScript('https://accounts.google.com/gsi/client');
+      gisLoaded = true;
+    }
+
+    // Request (or silently refresh) an access token. `interactive` shows the
+    // Google account chooser / consent popup; a refresh can be silent.
+    async function connect(interactive = true) {
+      if (!configured()) throw new Error('Google Drive is not configured (missing client ID in config.js).');
+      await ensureGis();
+      return new Promise((resolve, reject) => {
+        if (!tokenClient) {
+          tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: cfg.googleClientId,
+            scope: SCOPE,
+            callback: (resp) => {
+              if (resp && resp.error) { reject(new Error(resp.error)); return; }
+              accessToken = resp.access_token;
+              tokenExpiry = Date.now() + (resp.expires_in || 3600) * 1000;
+              resolve(accessToken);
+            },
+            error_callback: (err) => reject(new Error((err && err.type) || 'auth failed')),
+          });
+        }
+        tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
+      });
+    }
+    function signOut() {
+      if (accessToken && window.google && google.accounts) {
+        try { google.accounts.oauth2.revoke(accessToken); } catch (e) { /* ignore */ }
+      }
+      accessToken = null; tokenExpiry = 0;
+    }
+
+    async function authed() {
+      if (tokenValid()) return accessToken;
+      return connect(true);
+    }
+
+    // Create a new Drive file holding the board JSON; returns { id, name }.
+    async function createFile(name, contentObj) {
+      const token = await authed();
+      const meta = { name: name + '.whiteboard.json', mimeType: 'application/json' };
+      const body =
+        '--' + BOUNDARY + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(meta) + '\r\n' +
+        '--' + BOUNDARY + '\r\nContent-Type: application/json\r\n\r\n' +
+        JSON.stringify(contentObj) + '\r\n' +
+        '--' + BOUNDARY + '--';
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + BOUNDARY },
+        body,
+      });
+      if (!res.ok) throw new Error('Drive create failed (' + res.status + ')');
+      return res.json();
+    }
+    // Overwrite an existing Drive file's contents; returns { id, name }.
+    async function updateFile(fileId, contentObj) {
+      const token = await authed();
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(fileId) + '?uploadType=media&fields=id,name', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(contentObj),
+      });
+      if (!res.ok) throw new Error('Drive save failed (' + res.status + ')');
+      return res.json();
+    }
+
+    return { configured, isConnected: tokenValid, connect, signOut, createFile, updateFile,
+             apiKey: () => cfg.googleApiKey, clientId: () => cfg.googleClientId };
+  })();
+
   function isPlainBoardObject(d) {
     return !!d && typeof d === 'object' && !Array.isArray(d);
   }
@@ -130,11 +230,35 @@
         saveBoardContent(currentBoardId, board);
         touchLibrary(currentBoardId);
         setSaveState('saved');
+        scheduleDrivePush(currentBoardId);   // mirror to Drive if this is a Drive board
       } catch (e) {
         console.error('Save failed', e);
         setSaveState('error');
       }
     }, 400);
+  }
+
+  // Debounced background sync of a Drive-backed board to its Drive file. Local
+  // (device) boards and a disconnected session are no-ops, so this is safe to
+  // call after every local save.
+  let drivePushTimer = null;
+  function scheduleDrivePush(id) {
+    const entry = libraryEntry(id);
+    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
+    if (!DRIVE.isConnected()) { updateDriveUI(); return; }   // will resync once reconnected
+    const snapshot = JSON.parse(JSON.stringify(board));
+    const fileId = entry.driveFileId;
+    clearTimeout(drivePushTimer);
+    drivePushTimer = setTimeout(async () => {
+      setDriveState('syncing', 'Drive: syncing…');
+      try {
+        await DRIVE.updateFile(fileId, snapshot);
+        updateDriveUI();
+      } catch (e) {
+        console.error('Drive sync failed', e);
+        setDriveState('error', 'Drive: sync failed');
+      }
+    }, 1200);
   }
   // commit() is the single mutation chokepoint. opts.coalesce groups rapid
   // text edits into one undo step.
@@ -1999,6 +2123,82 @@
   const boardList = document.getElementById('board-list');
   const boardNameLabel = document.getElementById('board-name');
 
+  // ── Drive bar UI ──
+  const driveStateEl = document.getElementById('drive-state');
+  const driveConnectBtn = document.getElementById('driveConnectBtn');
+  const driveSaveBtn = document.getElementById('driveSaveBtn');
+  const driveSignoutBtn = document.getElementById('driveSignoutBtn');
+  const openDriveBtn = document.getElementById('openDriveBtn');
+
+  function setDriveState(cls, text) {
+    if (!driveStateEl) return;
+    driveStateEl.className = 'drive-state' + (cls ? ' ' + cls : '');
+    driveStateEl.textContent = text;
+  }
+  function updateDriveUI() {
+    if (!driveStateEl) return;
+    const ok = DRIVE.configured();
+    const connected = DRIVE.isConnected();
+    const entry = libraryEntry(currentBoardId);
+    const onDrive = entry && entry.mode === 'drive';
+
+    if (!ok) {
+      setDriveState('', 'Drive: not set up');
+      driveConnectBtn.disabled = true;
+      driveConnectBtn.title = 'Add your Google client ID + API key to config.js (see SETUP-google-drive.md).';
+      driveConnectBtn.classList.remove('hidden');
+      driveSaveBtn.classList.add('hidden');
+      openDriveBtn.classList.add('hidden');
+      driveSignoutBtn.classList.add('hidden');
+      return;
+    }
+    driveConnectBtn.disabled = false;
+    driveConnectBtn.title = '';
+    driveConnectBtn.classList.toggle('hidden', connected);
+    driveSaveBtn.classList.toggle('hidden', !connected);
+    openDriveBtn.classList.add('hidden');      // Picker / open-from-Drive lands in the next slice
+    driveSignoutBtn.classList.toggle('hidden', !connected);
+    driveSaveBtn.textContent = onDrive ? 'Saved to Drive ✓' : 'Save to Drive';
+    driveSaveBtn.disabled = onDrive;
+    setDriveState(connected ? 'connected' : '',
+      connected ? (onDrive ? 'Drive: this board is synced' : 'Drive: connected') : 'Drive: not connected');
+  }
+
+  // Link the current board to Drive: create its file (or reuse if already
+  // linked), flip the library entry to Drive mode, and let future edits sync.
+  async function linkCurrentBoardToDrive() {
+    const entry = libraryEntry(currentBoardId);
+    if (!entry) return;
+    saveCurrent();                       // flush any pending local edits first
+    setDriveState('syncing', 'Drive: saving…');
+    try {
+      const snapshot = JSON.parse(JSON.stringify(board));
+      const res = entry.driveFileId
+        ? await DRIVE.updateFile(entry.driveFileId, snapshot)
+        : await DRIVE.createFile(entry.name || 'Untitled board', snapshot);
+      const lib = loadLibrary();
+      const e = lib.find((b) => b.id === currentBoardId);
+      if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
+      renderBoardMenu();
+      updateDriveUI();
+    } catch (err) {
+      console.error('Save to Drive failed', err);
+      setDriveState('error', 'Drive: save failed');
+    }
+  }
+
+  if (driveConnectBtn) {
+    driveConnectBtn.addEventListener('click', async () => {
+      driveConnectBtn.disabled = true;
+      setDriveState('syncing', 'Drive: connecting…');
+      try { await DRIVE.connect(true); }
+      catch (e) { console.error(e); setDriveState('error', 'Drive: connection failed'); }
+      finally { driveConnectBtn.disabled = false; updateDriveUI(); }
+    });
+    driveSaveBtn.addEventListener('click', linkCurrentBoardToDrive);
+    driveSignoutBtn.addEventListener('click', () => { DRIVE.signOut(); updateDriveUI(); });
+  }
+
   function updateBoardMenuLabel() {
     const e = libraryEntry(currentBoardId);
     if (boardNameLabel) boardNameLabel.textContent = e ? e.name : 'Board';
@@ -2111,6 +2311,7 @@
       });
       boardList.appendChild(row);
     }
+    updateDriveUI();
   }
 
   if (boardMenuBtn) {

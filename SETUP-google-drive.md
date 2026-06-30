@@ -43,7 +43,9 @@ Open **Google Auth Platform** (APIs & Services → OAuth consent screen):
 
 ## 5. Create an API key (for the file picker)
 **Credentials → Create credentials → API key** → copy it. Then **Edit** the key:
-- **Application restrictions:** HTTP referrers → add your origins (e.g. `http://localhost:5500/*`).
+- **Application restrictions:** choose **Websites** (this is the renamed "HTTP referrers"
+  option). Add your origins as referrer patterns with a `/*` suffix, e.g.
+  `http://localhost:5500/*` and later `https://your-domain.example/*`.
 - **API restrictions:** restrict to **Google Picker API** (and Drive API).
 
 ## 6. Paste both into config.js

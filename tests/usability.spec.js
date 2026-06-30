@@ -332,6 +332,16 @@ test('a long heading widens the card; a long body does not', async ({ page }) =>
   expect(await widthOf(card)).toBeLessThanOrEqual(245);
 });
 
+// Drive opt-in lives in the board menu and must not pull in Google's scripts
+// (or touch the network) until the user actually clicks Connect.
+test('Drive bar is present and loads no Google scripts until Connect', async ({ page }) => {
+  await page.click('#boardMenuBtn');
+  await expect(page.locator('#drive-bar')).toBeVisible();
+  await expect(page.locator('#driveConnectBtn')).toBeVisible();
+  // nothing Google-hosted should have loaded just by booting + opening the menu
+  expect(await page.locator('script[src*="google"]').count()).toBe(0);
+});
+
 // Select-all to grab/move everything (Miro "quick select all to move").
 test('Cmd/Ctrl+A selects every node', async ({ page }) => {
   await addCardAt(page, 300, 300);

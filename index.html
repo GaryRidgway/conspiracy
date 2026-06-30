@@ -26,7 +26,15 @@
         <div id="board-list"></div>
         <div class="board-menu-actions">
           <button class="btn" id="newBoardBtn">+ New board</button>
-          <button class="btn" id="openDriveBtn" disabled title="Connect Google Drive (coming soon)">Open from Drive</button>
+        </div>
+        <div id="drive-bar">
+          <span id="drive-state" class="drive-state">Drive: not connected</span>
+          <div class="drive-actions">
+            <button class="btn" id="driveConnectBtn">Connect Drive</button>
+            <button class="btn primary hidden" id="driveSaveBtn" title="Save this board to your Google Drive">Save to Drive</button>
+            <button class="btn hidden" id="openDriveBtn" title="Open a board from your Google Drive">Open from Drive</button>
+            <button class="btn hidden" id="driveSignoutBtn" title="Disconnect Google Drive">Sign out</button>
+          </div>
         </div>
       </div>
     </div>
