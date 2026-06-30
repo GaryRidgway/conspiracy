@@ -2424,6 +2424,31 @@
   }
   function maybeReconcileCurrent() { reconcileDriveBoard(currentBoardId); }
 
+  // ── Background sync (laggy by design) ──────────────────────────────────
+  // A light poll keeps the open Drive board fresh without any user action.
+  // The tick only PULLS — and only when the board is fully synced locally —
+  // so it never interrupts an active edit or races the debounced push; the
+  // metadata pre-check means a no-change tick is one cheap request. Returning
+  // focus to the tab runs a full reconcile (which can surface a conflict).
+  const SYNC_POLL_MS = 20000;
+  let syncPollTimer = null;
+  function currentBoardFullySynced() {
+    const e = libraryEntry(currentBoardId);
+    return !!e && e.mode === 'drive' && e.syncedLocalVersion != null && board.version === e.syncedLocalVersion;
+  }
+  function syncTick() {
+    if (document.hidden || !DRIVE.isConnected()) return;
+    if (!currentBoardFullySynced()) return;   // unsynced edits pending → let the push converge first
+    reconcileDriveBoard(currentBoardId);
+  }
+  function startSyncPolling() {
+    if (syncPollTimer) return;
+    syncPollTimer = setInterval(syncTick, SYNC_POLL_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && DRIVE.isConnected()) maybeReconcileCurrent();   // catch up on return (can prompt)
+    });
+  }
+
   // Attempt a silent (popup-free) reconnect for a returning opted-in user.
   // MUST run inside a user gesture (e.g. opening the board menu): Google's token
   // flow can only suppress its popup when invoked from a gesture, and a token
@@ -2612,4 +2637,5 @@
   window.addEventListener('hashchange', focusFromHash);
   window.addEventListener('hashchange', onBoardHashChange);
   maybeReconcileCurrent();   // if connected (cached token) and the open board is Drive-backed, sync it
+  startSyncPolling();        // keep the open Drive board fresh in the background
 })();
