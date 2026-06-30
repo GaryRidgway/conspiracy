@@ -152,8 +152,53 @@
       if (!res.ok) throw new Error('Drive save failed (' + res.status + ')');
       return res.json();
     }
+    // Download a Drive file's JSON contents (parsed).
+    async function getFile(fileId) {
+      const token = await authed();
+      const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error('Drive open failed (' + res.status + ')');
+      return res.json();
+    }
 
-    return { configured, isConnected: tokenValid, connect, signOut, createFile, updateFile, renameFile,
+    // Google Picker — lets the user choose a board file (including ones shared
+    // with them; drive.file then grants this app access to just that file).
+    let pickerReady = false;
+    async function ensurePicker() {
+      if (pickerReady) return;
+      await loadScript('https://apis.google.com/js/api.js');
+      await new Promise((resolve) => gapi.load('picker', { callback: resolve }));
+      pickerReady = true;
+    }
+    // Resolves to { id, name } of the picked file, or null if cancelled.
+    async function pickFile() {
+      const token = await authed();
+      await ensurePicker();
+      return new Promise((resolve) => {
+        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+          .setMimeTypes('application/json')
+          .setMode(google.picker.DocsViewMode.LIST);
+        const builder = new google.picker.PickerBuilder()
+          .setOAuthToken(token)
+          .addView(view)
+          .setTitle('Open a whiteboard from Drive')
+          .setCallback((data) => {
+            const a = data[google.picker.Response.ACTION];
+            if (a === google.picker.Action.PICKED) {
+              const doc = data[google.picker.Response.DOCUMENTS][0];
+              resolve({ id: doc[google.picker.Document.ID], name: doc[google.picker.Document.NAME] });
+            } else if (a === google.picker.Action.CANCEL) {
+              resolve(null);
+            }
+          });
+        if (cfg.googleApiKey) builder.setDeveloperKey(cfg.googleApiKey);
+        builder.build().setVisible(true);
+      });
+    }
+
+    return { configured, isConnected: tokenValid, connect, signOut,
+             createFile, updateFile, renameFile, getFile, pickFile,
              apiKey: () => cfg.googleApiKey, clientId: () => cfg.googleClientId };
   })();
 
@@ -2167,13 +2212,21 @@
     driveConnectBtn.title = '';
     driveConnectBtn.classList.toggle('hidden', connected);
     driveSaveBtn.classList.toggle('hidden', !connected);
-    openDriveBtn.classList.add('hidden');      // Picker / open-from-Drive lands in the next slice
+    openDriveBtn.classList.toggle('hidden', !connected);
     driveSignoutBtn.classList.toggle('hidden', !connected);
     driveSaveBtn.textContent = onDrive ? 'Saved to Drive ✓' : 'Save to Drive';
     driveSaveBtn.disabled = onDrive;
     setDriveState(connected ? 'connected' : '',
       connected ? (onDrive ? 'Drive: this board is synced' : 'Drive: connected') : 'Drive: not connected');
   }
+
+  // Remember that the user opted into Drive so we can silently reconnect on the
+  // next visit (no popup). Set only after a real connection; cleared on Sign out.
+  const DRIVE_OPTED_KEY = 'whiteboard:drive:opted';
+  const rememberDriveOptIn = () => { try { localStorage.setItem(DRIVE_OPTED_KEY, '1'); } catch (e) { /* quota */ } };
+  const forgetDriveOptIn = () => { try { localStorage.removeItem(DRIVE_OPTED_KEY); } catch (e) { /* quota */ } };
+
+  const stripBoardExt = (n) => (n || 'Untitled board').replace(/\.whiteboard\.json$/i, '').replace(/\.json$/i, '');
 
   // Link the current board to Drive: create its file (or reuse if already
   // linked), flip the library entry to Drive mode, and let future edits sync.
@@ -2190,6 +2243,7 @@
       const lib = loadLibrary();
       const e = lib.find((b) => b.id === currentBoardId);
       if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
+      rememberDriveOptIn();
       renderBoardMenu();
       updateDriveUI();
     } catch (err) {
@@ -2198,16 +2252,59 @@
     }
   }
 
+  // Open a board from Drive via the Picker. Reuses an existing local entry if
+  // we already know this file; otherwise adds a new Drive-backed board.
+  async function openFromDrive() {
+    if (!DRIVE.isConnected()) return;
+    setDriveState('syncing', 'Drive: opening…');
+    try {
+      const picked = await DRIVE.pickFile();
+      if (!picked) { updateDriveUI(); return; }
+      const content = normalizeBoard(await DRIVE.getFile(picked.id));
+      const lib = loadLibrary();
+      let entry = lib.find((b) => b.driveFileId === picked.id);
+      let id;
+      if (entry) {
+        id = entry.id;
+        entry.name = stripBoardExt(picked.name);
+        entry.updatedAt = Date.now();
+      } else {
+        id = newBoardId();
+        entry = { id, name: stripBoardExt(picked.name), mode: 'drive', driveFileId: picked.id, updatedAt: Date.now() };
+        lib.unshift(entry);
+      }
+      saveLibrary(lib);
+      saveBoardContent(id, content);     // cache the just-fetched Drive content locally
+      saveCurrent();                     // flush the board we're leaving
+      loadAndShow(id);                   // loads the cache we just wrote
+      updateDriveUI();
+    } catch (err) {
+      console.error('Open from Drive failed', err);
+      setDriveState('error', 'Drive: open failed');
+    }
+  }
+
+  // On boot, silently reconnect if the user previously opted in (no popup). On
+  // any failure we just fall back to the Connect button.
+  async function tryDriveAutoConnect() {
+    if (!DRIVE.configured()) return;
+    if (localStorage.getItem(DRIVE_OPTED_KEY) !== '1') return;
+    try { await DRIVE.connect(false); }
+    catch (e) { /* session expired / consent revoked — stay disconnected */ }
+    updateDriveUI();
+  }
+
   if (driveConnectBtn) {
     driveConnectBtn.addEventListener('click', async () => {
       driveConnectBtn.disabled = true;
       setDriveState('syncing', 'Drive: connecting…');
-      try { await DRIVE.connect(true); }
+      try { await DRIVE.connect(true); rememberDriveOptIn(); }
       catch (e) { console.error(e); setDriveState('error', 'Drive: connection failed'); }
       finally { driveConnectBtn.disabled = false; updateDriveUI(); }
     });
     driveSaveBtn.addEventListener('click', linkCurrentBoardToDrive);
-    driveSignoutBtn.addEventListener('click', () => { DRIVE.signOut(); updateDriveUI(); });
+    openDriveBtn.addEventListener('click', openFromDrive);
+    driveSignoutBtn.addEventListener('click', () => { DRIVE.signOut(); forgetDriveOptIn(); updateDriveUI(); });
   }
 
   function updateBoardMenuLabel() {
@@ -2366,4 +2463,5 @@
   focusFromHash();
   window.addEventListener('hashchange', focusFromHash);
   window.addEventListener('hashchange', onBoardHashChange);
+  tryDriveAutoConnect();   // silent reconnect for returning Drive users (no popup)
 })();
