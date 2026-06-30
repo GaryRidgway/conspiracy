@@ -57,11 +57,29 @@
     const cfg = window.WHITEBOARD_CONFIG || {};
     const SCOPE = 'https://www.googleapis.com/auth/drive.file';
     const BOUNDARY = '-=-=-whiteboard' + Math.random().toString(36).slice(2);
+    const TOKEN_CACHE = 'whiteboard:drive:tok';
     let tokenClient = null, accessToken = null, tokenExpiry = 0;
     let gisLoaded = false;
 
     const configured = () => !!cfg.googleClientId;
     const tokenValid = () => !!accessToken && Date.now() < tokenExpiry - 60000;
+
+    // Cache the short-lived access token in sessionStorage so a page reload
+    // within its ~1h life reconnects instantly — no popup, no network. (Session,
+    // not local, so it's gone when the tab closes.)
+    function persistToken() {
+      try { sessionStorage.setItem(TOKEN_CACHE, JSON.stringify({ t: accessToken, e: tokenExpiry })); } catch (e) { /* ignore */ }
+    }
+    function clearToken() {
+      accessToken = null; tokenExpiry = 0;
+      try { sessionStorage.removeItem(TOKEN_CACHE); } catch (e) { /* ignore */ }
+    }
+    (function restoreToken() {
+      try {
+        const o = JSON.parse(sessionStorage.getItem(TOKEN_CACHE) || 'null');
+        if (o && o.t) { accessToken = o.t; tokenExpiry = o.e || 0; }
+      } catch (e) { /* ignore */ }
+    })();
 
     function loadScript(src) {
       return new Promise((resolve, reject) => {
@@ -92,6 +110,7 @@
               if (resp && resp.error) { reject(new Error(resp.error)); return; }
               accessToken = resp.access_token;
               tokenExpiry = Date.now() + (resp.expires_in || 3600) * 1000;
+              persistToken();
               resolve(accessToken);
             },
             error_callback: (err) => reject(new Error((err && err.type) || 'auth failed')),
@@ -104,7 +123,7 @@
       if (accessToken && window.google && google.accounts) {
         try { google.accounts.oauth2.revoke(accessToken); } catch (e) { /* ignore */ }
       }
-      accessToken = null; tokenExpiry = 0;
+      clearToken();
     }
 
     async function authed() {
@@ -2284,13 +2303,19 @@
     }
   }
 
-  // On boot, silently reconnect if the user previously opted in (no popup). On
-  // any failure we just fall back to the Connect button.
-  async function tryDriveAutoConnect() {
-    if (!DRIVE.configured()) return;
+  // Attempt a silent (popup-free) reconnect for a returning opted-in user.
+  // MUST run inside a user gesture (e.g. opening the board menu): Google's token
+  // flow can only suppress its popup when invoked from a gesture, and a token
+  // restored from sessionStorage means most reloads skip this entirely. We never
+  // call it on bare page load — that's what was triggering the blocked popup.
+  let autoConnectTried = false;
+  async function tryDriveSilentReconnect() {
+    if (autoConnectTried) return;          // once per session is enough
+    if (!DRIVE.configured() || DRIVE.isConnected()) return;
     if (localStorage.getItem(DRIVE_OPTED_KEY) !== '1') return;
-    try { await DRIVE.connect(false); }
-    catch (e) { /* session expired / consent revoked — stay disconnected */ }
+    autoConnectTried = true;
+    try { await DRIVE.connect(false); }    // prompt:'none' → resolves via hidden iframe or fails quietly
+    catch (e) { /* session expired / consent revoked — show Connect */ }
     updateDriveUI();
   }
 
@@ -2434,7 +2459,7 @@
       e.stopPropagation();
       const willOpen = boardMenu.classList.contains('hidden');
       boardMenu.classList.toggle('hidden');
-      if (willOpen) renderBoardMenu();
+      if (willOpen) { renderBoardMenu(); tryDriveSilentReconnect(); }
     });
     document.addEventListener('click', (e) => {
       if (!boardMenu.classList.contains('hidden') && !e.target.closest('#board-menu-wrap')) closeBoardMenu();
@@ -2463,5 +2488,4 @@
   focusFromHash();
   window.addEventListener('hashchange', focusFromHash);
   window.addEventListener('hashchange', onBoardHashChange);
-  tryDriveAutoConnect();   // silent reconnect for returning Drive users (no popup)
 })();
