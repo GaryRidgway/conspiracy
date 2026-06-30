@@ -130,6 +130,17 @@
       if (!res.ok) throw new Error('Drive create failed (' + res.status + ')');
       return res.json();
     }
+    // Rename an existing Drive file (metadata only); returns { id, name }.
+    async function renameFile(fileId, name) {
+      const token = await authed();
+      const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?fields=id,name', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name + '.whiteboard.json' }),
+      });
+      if (!res.ok) throw new Error('Drive rename failed (' + res.status + ')');
+      return res.json();
+    }
     // Overwrite an existing Drive file's contents; returns { id, name }.
     async function updateFile(fileId, contentObj) {
       const token = await authed();
@@ -142,7 +153,7 @@
       return res.json();
     }
 
-    return { configured, isConnected: tokenValid, connect, signOut, createFile, updateFile,
+    return { configured, isConnected: tokenValid, connect, signOut, createFile, updateFile, renameFile,
              apiKey: () => cfg.googleApiKey, clientId: () => cfg.googleClientId };
   })();
 
@@ -2252,6 +2263,13 @@
     e.name = (name || '').trim() || 'Untitled board';
     saveLibrary(lib);
     updateBoardMenuLabel();
+    // keep the Drive file's name in sync for Drive-backed boards
+    if (e.mode === 'drive' && e.driveFileId && DRIVE.isConnected()) {
+      setDriveState('syncing', 'Drive: renaming…');
+      DRIVE.renameFile(e.driveFileId, e.name)
+        .then(() => updateDriveUI())
+        .catch((err) => { console.error('Drive rename failed', err); setDriveState('error', 'Drive: rename failed'); });
+    }
   }
   function removeBoard(id) {
     const lib = loadLibrary();
