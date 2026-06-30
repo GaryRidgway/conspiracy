@@ -61,7 +61,9 @@ body.space-pan #viewport.panning,
   top: 0; left: 0;
   width: 0; height: 0;
   transform-origin: 0 0;
-  will-change: transform;
+  /* will-change is toggled on in JS only during active pan/zoom — leaving it on
+     permanently keeps #world on a GPU layer that bitmap-scales (blurry) text
+     when zoomed; clearing it when idle lets the browser re-rasterize crisply. */
 }
 
 /* ── Card ── */

@@ -456,6 +456,7 @@
   const saveStateEl = document.getElementById('saveState');
   const zoomValEl = document.getElementById('zoomReset');
 
+  let willChangeTimer = null;
   function applyViewport() {
     const { x, y, zoom } = board.viewport;
     world.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
@@ -463,6 +464,13 @@
     viewport.style.backgroundSize = `${28 * zoom}px ${28 * zoom}px`;
     coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
     if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
+    // Promote #world to a GPU layer while the view is actively changing (smooth
+    // pan/zoom), then drop the promotion ~200ms after the last change so the
+    // static view re-rasterizes text crisply at the current scale instead of
+    // bitmap-scaling a cached layer.
+    world.style.willChange = 'transform';
+    clearTimeout(willChangeTimer);
+    willChangeTimer = setTimeout(() => { world.style.willChange = 'auto'; }, 200);
     scheduleFrameEval();   // pan/zoom can bring frames into (or out of) loadable range
   }
 
