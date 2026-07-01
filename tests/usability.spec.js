@@ -342,6 +342,62 @@ test('Drive bar is present and loads no Google scripts until Connect', async ({ 
   expect(await page.locator('script[src*="google"]').count()).toBe(0);
 });
 
+// ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
+//    Exercised directly via the pure window.__wb_mergeBoards hook (no OAuth). ──
+function card(x, y, title, body) { return { x, y, title: title || '', body: body || '' }; }
+async function merge(page, base, local, remote) {
+  return page.evaluate(([b, l, r]) => window.__wb_mergeBoards(b, l, r), [base, local, remote]);
+}
+const boardOf = (cards) => ({ schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 }, cards, iframes: {}, connections: {} });
+
+test('merge: edits to different nodes both survive', async ({ page }) => {
+  const base = boardOf({ a: card(0, 0, 'A'), b: card(10, 10, 'B') });
+  const local = boardOf({ a: card(0, 0, 'A EDITED'), b: card(10, 10, 'B') });   // this device edited A
+  const remote = boardOf({ a: card(0, 0, 'A'), b: card(99, 99, 'B') });          // other device moved B
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.a.title).toBe('A EDITED');   // local edit kept
+  expect(merged.cards.b.x).toBe(99);               // remote edit kept
+});
+
+test('merge: same node, different fields — both edits kept', async ({ page }) => {
+  const base = boardOf({ a: card(0, 0, 'A', 'body') });
+  const local = boardOf({ a: card(50, 60, 'A', 'body') });          // moved it
+  const remote = boardOf({ a: card(0, 0, 'A', 'new body') });        // edited its body
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.a.x).toBe(50);            // local position
+  expect(merged.cards.a.body).toBe('new body'); // remote body
+});
+
+test('merge: same field on both sides is a conflict, local wins', async ({ page }) => {
+  const base = boardOf({ a: card(0, 0, 'A', 'orig') });
+  const local = boardOf({ a: card(0, 0, 'A', 'mine') });
+  const remote = boardOf({ a: card(0, 0, 'A', 'theirs') });
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(1);
+  expect(merged.cards.a.body).toBe('mine');
+});
+
+test('merge: node added on one side appears; node deleted on one side goes away', async ({ page }) => {
+  const base = boardOf({ a: card(0, 0, 'A') });
+  const local = boardOf({ a: card(0, 0, 'A'), c: card(5, 5, 'C') });  // added C
+  const remote = boardOf({});                                          // deleted A
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.c).toBeTruthy();      // add survives
+  expect(merged.cards.a).toBeFalsy();       // delete survives
+});
+
+test('merge: delete on one side vs edit on the other keeps the edit', async ({ page }) => {
+  const base = boardOf({ a: card(0, 0, 'A', 'orig') });
+  const local = boardOf({});                                  // deleted A
+  const remote = boardOf({ a: card(0, 0, 'A', 'edited') });   // edited A
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(1);
+  expect(merged.cards.a.body).toBe('edited');   // don't lose the edit
+});
+
 // The Drive conflict prompt exists but stays hidden for normal (device-board) use.
 test('Drive conflict modal is present and hidden by default', async ({ page }) => {
   await expect(page.locator('#conflict-modal')).toBeHidden();

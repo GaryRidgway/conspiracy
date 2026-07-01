@@ -38,6 +38,81 @@
   let currentBoardId = null;
 
   // ════════════════════════════════════════════════════════
+  //  THREE-WAY MERGE — reconcile a Drive board without clobbering
+  //  changes the other side made. Given the common ancestor (the
+  //  last-synced "base"), we know what each side actually edited, so
+  //  non-overlapping edits both survive; only the SAME field of the
+  //  SAME node edited on both sides is a true conflict (local wins).
+  // ════════════════════════════════════════════════════════
+  // Node/connection records are flat objects of primitives, so a shallow
+  // key+value compare is a correct equality test.
+  function shallowEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => a[k] === b[k]);
+  }
+  // Merge one record (node/connection) edited on both sides, field by field.
+  // Returns [mergedRecord, hadFieldConflict].
+  function mergeRecord(base, local, remote) {
+    base = base || {};
+    const merged = {};
+    let conflict = false;
+    const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+    for (const k of keys) {
+      const bv = base[k], lv = local[k], rv = remote[k];
+      const lChanged = lv !== bv, rChanged = rv !== bv;
+      if (lChanged && rChanged && lv !== rv) { merged[k] = lv; conflict = true; }  // true tie → local wins
+      else if (lChanged) merged[k] = lv;
+      else if (rChanged) merged[k] = rv;
+      else merged[k] = lv !== undefined ? lv : rv;
+    }
+    return [merged, conflict];
+  }
+  // Merge one keyed collection (cards | iframes | connections).
+  function mergeCollection(base, local, remote) {
+    const out = {};
+    let conflicts = 0;
+    const ids = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+    for (const id of ids) {
+      const b = base[id], l = local[id], r = remote[id];
+      const lChanged = !shallowEqual(b, l);   // includes add (b undefined) and delete (l undefined)
+      const rChanged = !shallowEqual(b, r);
+      if (!lChanged && !rChanged) { if (l !== undefined) out[id] = l; continue; }   // untouched
+      if (lChanged && !rChanged)  { if (l !== undefined) out[id] = l; continue; }   // only this side (edit/add/delete)
+      if (!lChanged && rChanged)  { if (r !== undefined) out[id] = r; continue; }   // only the other side
+      // both sides changed this id:
+      if (l === undefined && r === undefined) continue;                 // both deleted → gone
+      if (l === undefined || r === undefined) { out[id] = l || r; conflicts++; continue; } // delete vs edit → keep the edit
+      const [merged, hadConflict] = mergeRecord(b, l, r);
+      out[id] = merged;
+      if (hadConflict) conflicts++;
+    }
+    return { out, conflicts };
+  }
+  // Three-way merge of whole boards. Keeps THIS device's viewport, bumps
+  // version. Returns { merged, conflicts }.
+  function mergeBoards(base, local, remote) {
+    base = base || blankBoard();
+    let conflicts = 0;
+    const merged = {
+      schema: local.schema || remote.schema || SCHEMA_VERSION,
+      version: Math.max(local.version || 0, remote.version || 0) + 1,
+      viewport: local.viewport || remote.viewport || { x: 0, y: 0, zoom: 1 },
+    };
+    for (const coll of ['cards', 'iframes', 'connections']) {
+      const res = mergeCollection(base[coll] || {}, local[coll] || {}, remote[coll] || {});
+      merged[coll] = res.out;
+      conflicts += res.conflicts;
+    }
+    return { merged: normalizeBoard(merged), conflicts };
+  }
+  // Test hook (pure function; no side effects) so the merge logic can be
+  // exercised without the live Drive/OAuth flow.
+  window.__wb_mergeBoards = mergeBoards;
+
+  // ════════════════════════════════════════════════════════
   //  PERSISTENCE — a local library of boards (device-backed for
   //  now; Drive boards slot in later). Each board's content lives
   //  under its own key; the library lists them.
@@ -45,6 +120,17 @@
   const LIB_KEY = 'whiteboard:library';
   const CURRENT_KEY = 'whiteboard:current';
   const boardKey = (id) => 'whiteboard:board:' + id;
+  // Merge base: the board content as it stood at the last successful sync — the
+  // common ancestor a three-way merge diffs against. Stored per Drive board.
+  const baseKey = (id) => 'whiteboard:base:' + id;
+  function saveBase(id, content) {
+    try { localStorage.setItem(baseKey(id), JSON.stringify(content)); } catch (e) { /* quota */ }
+  }
+  function loadBase(id) {
+    try { const raw = localStorage.getItem(baseKey(id)); return raw ? JSON.parse(raw) : null; }
+    catch { return null; }
+  }
+  function clearBase(id) { try { localStorage.removeItem(baseKey(id)); } catch (e) { /* ignore */ } }
 
   // ════════════════════════════════════════════════════════
   //  GOOGLE DRIVE — opt-in per board. Auth is the Google Identity
@@ -333,28 +419,18 @@
     }, 400);
   }
 
-  // Debounced background sync of a Drive-backed board to its Drive file. Local
-  // (device) boards and a disconnected session are no-ops, so this is safe to
-  // call after every local save.
+  // Debounced background sync of a Drive-backed board. Routes through
+  // reconcileDriveBoard so a push first checks whether Drive changed and MERGES
+  // rather than blindly overwriting — this closes the window where two devices
+  // editing at once would clobber each other. No-op for device boards / when
+  // disconnected, so it's safe to call after every local save.
   let drivePushTimer = null;
   function scheduleDrivePush(id) {
     const entry = libraryEntry(id);
     if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
     if (!DRIVE.isConnected()) { updateDriveUI(); return; }   // will resync once reconnected
-    const snapshot = JSON.parse(JSON.stringify(board));
-    const fileId = entry.driveFileId;
     clearTimeout(drivePushTimer);
-    drivePushTimer = setTimeout(async () => {
-      setDriveState('syncing', 'Drive: syncing…');
-      try {
-        const res = await DRIVE.updateFile(fileId, snapshot);
-        setDriveSyncMeta(id, snapshot.version, res.version);
-        updateDriveUI();
-      } catch (e) {
-        console.error('Drive sync failed', e);
-        setDriveState('error', 'Drive: sync failed');
-      }
-    }, 1200);
+    drivePushTimer = setTimeout(() => reconcileDriveBoard(id), 1200);
   }
   // commit() is the single mutation chokepoint. opts.coalesce groups rapid
   // text edits into one undo step.
@@ -2284,6 +2360,7 @@
       const e = lib.find((b) => b.id === currentBoardId);
       if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
       setDriveSyncMeta(currentBoardId, snapshot.version, res.version);
+      saveBase(currentBoardId, snapshot);   // this pushed state is the merge base
       rememberDriveOptIn();
       renderBoardMenu();
       updateDriveUI();
@@ -2318,6 +2395,7 @@
       saveLibrary(lib);
       saveBoardContent(id, content);     // cache the just-fetched Drive content locally
       setDriveSyncMeta(id, content.version, meta.version);   // we are now in sync with Drive
+      saveBase(id, content);             // fetched state is the merge base
       saveCurrent();                     // flush the board we're leaving
       loadAndShow(id);                   // loads the cache we just wrote
       updateDriveUI();
@@ -2385,14 +2463,16 @@
       const localChanged = entry.syncedLocalVersion != null && localVersion !== entry.syncedLocalVersion;
       const remoteChanged = entry.driveVersion == null || String(meta.version) !== String(entry.driveVersion);
 
-      if (!remoteChanged && !localChanged) {
+      if (!remoteChanged && !localChanged) {         // already in sync
         if (entry.driveVersion == null || entry.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
+        if (!loadBase(id)) saveBase(id, localBoard); // establish a base for future merges
         return;
       }
       if (remoteChanged && !localChanged) {          // Drive is newer → pull
         setDriveState('syncing', 'Drive: updating…');
         const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
         applyPulledBoard(id, content);
+        saveBase(id, content);
         setDriveSyncMeta(id, content.version, meta.version);
         updateDriveUI();
         return;
@@ -2400,18 +2480,36 @@
       if (localChanged && !remoteChanged) {          // this device is ahead → push
         setDriveState('syncing', 'Drive: syncing…');
         const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+        saveBase(id, localBoard);
         setDriveSyncMeta(id, localVersion, res.version);
         updateDriveUI();
         return;
       }
-      // both diverged → ask the user which side wins
+      // both sides changed since the last sync
+      const remoteContent = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+      const base = loadBase(id);
+      if (base) {                                    // three-way merge: keep both sides' edits
+        setDriveState('syncing', 'Drive: merging…');
+        const { merged, conflicts } = mergeBoards(base, localBoard, remoteContent);
+        applyPulledBoard(id, merged);
+        const res = await DRIVE.updateFile(entry.driveFileId, merged);
+        saveBase(id, merged);
+        setDriveSyncMeta(id, merged.version, res.version);
+        updateDriveUI();
+        setDriveState('connected', conflicts
+          ? 'Drive: merged (' + conflicts + ' kept this device)'
+          : 'Drive: merged');
+        return;
+      }
+      // no base to merge against (first divergence / legacy board) → ask
       const choice = await openConflictModal(entry.name);
       if (choice === 'drive') {
-        const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
-        applyPulledBoard(id, content);
-        setDriveSyncMeta(id, content.version, meta.version);
+        applyPulledBoard(id, remoteContent);
+        saveBase(id, remoteContent);
+        setDriveSyncMeta(id, remoteContent.version, meta.version);
       } else if (choice === 'local') {
         const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+        saveBase(id, localBoard);
         setDriveSyncMeta(id, localVersion, res.version);
       }                                              // 'cancel' → leave both as-is
       updateDriveUI();
@@ -2548,6 +2646,7 @@
     lib.splice(idx, 1);
     saveLibrary(lib);
     localStorage.removeItem(boardKey(id));   // device board: content is gone
+    clearBase(id);                           // drop any merge base too
     if (id !== currentBoardId) { renderBoardMenu(); return; }
     currentBoardId = null;                    // so we don't re-save the removed board
     if (!lib.length) {
