@@ -192,6 +192,24 @@ test('work is not lost across a reload', async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
+// ── 10b. No lost work when leaving: hiding/closing the tab flushes the pending
+//        debounced save immediately, so a quick edit-then-leave still persists. ──
+test('leaving the tab flushes a pending edit without waiting for the debounce', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  const id = await node.getAttribute('data-id');
+  // Simulate the tab being hidden; the flush must persist synchronously.
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // No polling — the card must already be in storage right after the event.
+  const stored = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:board:' + cur) || '';
+  });
+  expect(stored).toContain(id);
+});
+
 // ════════════════════════════════════════════════════════════════════════
 //  BACKLOG — known gaps vs. what users expect from Miro/FigJam/Excalidraw.
 //  These run as `fixme` (skipped, not failing). Drop `.fixme` as we build each.

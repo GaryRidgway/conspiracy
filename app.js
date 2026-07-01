@@ -2542,70 +2542,98 @@
   // Drive changed, pushes when only this device changed, and prompts when both
   // diverged since the last sync. No-op for device boards / when disconnected.
   const reconciling = new Set();
+  // Optimistic-concurrency write: re-read Drive's version right before writing
+  // and bail if it no longer matches what our push/merge decision was based on.
+  // A mismatch means another device pushed in the read→write window, so writing
+  // would clobber it; instead we signal a retry and re-reconcile against the new
+  // remote. This shrinks the clobber window to a single getMeta→PATCH gap (Drive
+  // has no content-version precondition to close it fully) and never loses the
+  // other device's edit — the retry merges it in.
+  async function guardedUpdate(entry, content, basedOnVersion) {
+    const fresh = await DRIVE.getMeta(entry.driveFileId);
+    if (String(fresh.version) !== String(basedOnVersion)) return { stale: true };
+    return { stale: false, res: await DRIVE.updateFile(entry.driveFileId, content) };
+  }
+
+  // One reconcile pass. Returns 'retry' when a guarded write found Drive had
+  // moved under us (re-run against the newer remote), otherwise 'done'.
+  async function reconcileAttempt(id) {
+    const entry = libraryEntry(id);
+    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return 'done';
+    const isCurrent = id === currentBoardId;
+    const localBoard = isCurrent ? board : loadBoardContent(id);
+    const localVersion = localBoard.version;
+    const meta = await DRIVE.getMeta(entry.driveFileId);
+    const localChanged = entry.syncedLocalVersion != null && localVersion !== entry.syncedLocalVersion;
+    const remoteChanged = entry.driveVersion == null || String(meta.version) !== String(entry.driveVersion);
+
+    if (!remoteChanged && !localChanged) {           // already in sync
+      if (entry.driveVersion == null || entry.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
+      if (!loadBase(id)) saveBase(id, localBoard);   // establish a base for future merges
+      return 'done';
+    }
+    if (remoteChanged && !localChanged) {            // Drive is newer → pull
+      setDriveState('syncing', 'Drive: updating…');
+      const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+      applyPulledBoard(id, content);
+      saveBase(id, content);
+      setDriveSyncMeta(id, content.version, meta.version);
+      updateDriveUI();
+      return 'done';
+    }
+    if (localChanged && !remoteChanged) {            // this device is ahead → push
+      setDriveState('syncing', 'Drive: syncing…');
+      const g = await guardedUpdate(entry, localBoard, meta.version);
+      if (g.stale) return 'retry';                   // Drive moved under us → re-reconcile & merge
+      saveBase(id, localBoard);
+      setDriveSyncMeta(id, localVersion, g.res.version);
+      updateDriveUI();
+      return 'done';
+    }
+    // both sides changed since the last sync
+    const remoteContent = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+    const base = loadBase(id);
+    if (base) {                                      // three-way merge: keep both sides' edits
+      setDriveState('syncing', 'Drive: merging…');
+      const { merged, conflicts, conflictItems } = mergeBoards(base, localBoard, remoteContent);
+      const g = await guardedUpdate(entry, merged, meta.version);
+      if (g.stale) return 'retry';                   // don't apply locally either — retry re-merges
+      applyPulledBoard(id, merged);
+      saveBase(id, merged);
+      setDriveSyncMeta(id, merged.version, g.res.version);
+      updateDriveUI();
+      setDriveState('connected', conflicts
+        ? 'Drive: merged (' + conflicts + ' kept this device)'
+        : 'Drive: merged');
+      if (conflicts && id === currentBoardId) showConflictNotice(conflictItems);
+      return 'done';
+    }
+    // no base to merge against (first divergence / legacy board) → ask
+    const choice = await openConflictModal(entry.name);
+    if (choice === 'drive') {
+      applyPulledBoard(id, remoteContent);
+      saveBase(id, remoteContent);
+      setDriveSyncMeta(id, remoteContent.version, meta.version);
+    } else if (choice === 'local') {
+      const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+      saveBase(id, localBoard);
+      setDriveSyncMeta(id, localVersion, res.version);
+    }                                                // 'cancel' → leave both as-is
+    updateDriveUI();
+    return 'done';
+  }
+
   async function reconcileDriveBoard(id) {
     const entry = libraryEntry(id);
     if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
     if (!DRIVE.isConnected() || reconciling.has(id)) return;
     reconciling.add(id);
     try {
-      const isCurrent = id === currentBoardId;
-      const localBoard = isCurrent ? board : loadBoardContent(id);
-      const localVersion = localBoard.version;
-      const meta = await DRIVE.getMeta(entry.driveFileId);
-      const localChanged = entry.syncedLocalVersion != null && localVersion !== entry.syncedLocalVersion;
-      const remoteChanged = entry.driveVersion == null || String(meta.version) !== String(entry.driveVersion);
-
-      if (!remoteChanged && !localChanged) {         // already in sync
-        if (entry.driveVersion == null || entry.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
-        if (!loadBase(id)) saveBase(id, localBoard); // establish a base for future merges
-        return;
+      // Retry a bounded number of times if a write loses the concurrency check;
+      // each retry re-reads the remote and merges, so it converges quickly.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (await reconcileAttempt(id) !== 'retry') break;
       }
-      if (remoteChanged && !localChanged) {          // Drive is newer → pull
-        setDriveState('syncing', 'Drive: updating…');
-        const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
-        applyPulledBoard(id, content);
-        saveBase(id, content);
-        setDriveSyncMeta(id, content.version, meta.version);
-        updateDriveUI();
-        return;
-      }
-      if (localChanged && !remoteChanged) {          // this device is ahead → push
-        setDriveState('syncing', 'Drive: syncing…');
-        const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
-        saveBase(id, localBoard);
-        setDriveSyncMeta(id, localVersion, res.version);
-        updateDriveUI();
-        return;
-      }
-      // both sides changed since the last sync
-      const remoteContent = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
-      const base = loadBase(id);
-      if (base) {                                    // three-way merge: keep both sides' edits
-        setDriveState('syncing', 'Drive: merging…');
-        const { merged, conflicts, conflictItems } = mergeBoards(base, localBoard, remoteContent);
-        applyPulledBoard(id, merged);
-        const res = await DRIVE.updateFile(entry.driveFileId, merged);
-        saveBase(id, merged);
-        setDriveSyncMeta(id, merged.version, res.version);
-        updateDriveUI();
-        setDriveState('connected', conflicts
-          ? 'Drive: merged (' + conflicts + ' kept this device)'
-          : 'Drive: merged');
-        if (conflicts && id === currentBoardId) showConflictNotice(conflictItems);
-        return;
-      }
-      // no base to merge against (first divergence / legacy board) → ask
-      const choice = await openConflictModal(entry.name);
-      if (choice === 'drive') {
-        applyPulledBoard(id, remoteContent);
-        saveBase(id, remoteContent);
-        setDriveSyncMeta(id, remoteContent.version, meta.version);
-      } else if (choice === 'local') {
-        const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
-        saveBase(id, localBoard);
-        setDriveSyncMeta(id, localVersion, res.version);
-      }                                              // 'cancel' → leave both as-is
-      updateDriveUI();
     } catch (e) {
       console.error('Drive reconcile failed', e);
       setDriveState('error', 'Drive: sync failed');
@@ -2632,12 +2660,29 @@
     if (!currentBoardFullySynced()) return;   // unsynced edits pending → let the push converge first
     reconcileDriveBoard(currentBoardId);
   }
+  // Flush any debounced local save + Drive push immediately — called when the
+  // tab is hidden or closing so a quick edit-then-leave isn't stranded in a
+  // 400ms/1200ms timer. The local save is synchronous (always lands); the Drive
+  // push is reliable on a tab switch and best-effort on actual close (the fetch
+  // may be cut off), but the next boot reconcile pushes anything missed.
+  function flushPendingSync() {
+    if (saveTimer) {
+      clearTimeout(saveTimer); saveTimer = null;
+      try { saveBoardContent(currentBoardId, board); touchLibrary(currentBoardId); setSaveState('saved'); }
+      catch (e) { console.error('Save failed', e); }
+    }
+    if (drivePushTimer) { clearTimeout(drivePushTimer); drivePushTimer = null; }
+    if (DRIVE.isConnected()) reconcileDriveBoard(currentBoardId);
+  }
+
   function startSyncPolling() {
     if (syncPollTimer) return;
     syncPollTimer = setInterval(syncTick, SYNC_POLL_MS);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && DRIVE.isConnected()) maybeReconcileCurrent();   // catch up on return (can prompt)
+      if (document.hidden) flushPendingSync();                                // leaving → flush pending edits
+      else if (DRIVE.isConnected()) maybeReconcileCurrent();                  // returning → catch up (can prompt)
     });
+    window.addEventListener('pagehide', flushPendingSync);                    // tab close / navigation away
   }
 
   // Attempt a silent (popup-free) reconnect for a returning opted-in user.
