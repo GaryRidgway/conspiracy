@@ -21,7 +21,10 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  overflow: hidden;
+  /* clip, not hidden: an overflow:hidden box is still a scroll container, so a
+     loading iframe that grabs focus makes the browser scroll it (shifting the
+     transform-based canvas). clip is never scrollable, so it can't happen. */
+  overflow: clip;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -29,7 +32,7 @@ html, body {
 #viewport {
   position: fixed;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;               /* see html,body note: never a scroll container */
   /* dotted grid that scrolls with the world via background-position */
   background-color: var(--bg);
   background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.1px);

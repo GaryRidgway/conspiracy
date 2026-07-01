@@ -1617,6 +1617,14 @@
   });
   window.addEventListener('blur', () => { spaceHeld = false; document.body.classList.remove('space-pan'); });
 
+  // Insurance against focus-scroll: if anything ever manages to scroll the
+  // container (e.g. a loading iframe grabbing focus), snap it back — we drive
+  // the view with transform, never native scroll. (overflow:clip should already
+  // prevent this; this catches the document-level case too.)
+  const pinScroll = (el) => { if (el && (el.scrollLeft || el.scrollTop)) { el.scrollLeft = 0; el.scrollTop = 0; } };
+  viewport.addEventListener('scroll', () => pinScroll(viewport), { passive: true });
+  window.addEventListener('scroll', () => { pinScroll(document.scrollingElement); pinScroll(document.body); }, { passive: true });
+
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
     exitInteract();
