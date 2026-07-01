@@ -580,23 +580,23 @@
   }
 
   // Zoom to a new level while keeping the screen point (cx, cy) fixed.
-  // Panning is translate-only, so compositing #world onto a GPU layer while a
-  // pan is active is pure win — it makes the drag/scroll snappy from the first
-  // frame instead of the browser taking a few frames to promote it ("run-up").
-  // We drop the promotion ~250ms after motion stops so the static/zoomed view
-  // re-rasterizes crisply. Zoom deliberately does NOT use this: a scaled layer
-  // bitmap-scales (blurry) and flashes from the origin, so zoom stays on the
-  // main thread (see zoomAround, which forces the promotion off).
+  // While a pan is in flight we mark <body class="panning">. The only thing
+  // that costs real time per pan frame is the live cross-origin iframes: they
+  // render out-of-process, so the browser has to reposition each one every
+  // frame and it lags a beat behind the transform — the board appears to snap
+  // into place after the scroll. `body.panning` blanks the live docs to their
+  // dark node box (cheap DOM that pans instantly with everything else); the
+  // page returns the moment motion settles. We deliberately do NOT promote
+  // #world to a GPU layer — a giant composited layer both bitmap-scales (blurs)
+  // on zoom and re-rasterizes with a stall, which was itself the old "snap".
+  const PAN_SETTLE_MS = 260;   // idle gap after which motion counts as stopped
   let panLayerTimer = null;
   function markPanActive() {
-    if (world.style.willChange !== 'transform') world.style.willChange = 'transform';
+    if (!document.body.classList.contains('panning')) document.body.classList.add('panning');
     clearTimeout(panLayerTimer);
-    // Keep the layer warm well past a single scroll burst — trackpad scrolling
-    // arrives in bursts with gaps, and re-promoting each time re-rasterizes the
-    // board (a visible stall). Long idle → demote so a static zoom re-crisps.
-    panLayerTimer = setTimeout(() => { world.style.willChange = 'auto'; }, 1500);
+    panLayerTimer = setTimeout(endPanLayer, PAN_SETTLE_MS);
   }
-  function endPanLayer() { clearTimeout(panLayerTimer); world.style.willChange = 'auto'; }
+  function endPanLayer() { clearTimeout(panLayerTimer); document.body.classList.remove('panning'); }
 
   function zoomAround(nextZoom, cx, cy) {
     const zoom = board.viewport.zoom;
