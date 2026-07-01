@@ -99,6 +99,29 @@ test('panning promotes #world to a GPU layer and never blanks the live doc', asy
   expect(await page.evaluate(() => document.getElementById('world').style.willChange)).toBe('auto');
 });
 
+// ── 2c. The dotted grid must track the world transform under zoom (same
+//      spacing + cursor anchoring as the cards), not drift on its own. ──
+test('the dot grid stays phase-aligned with the world under zoom', async ({ page }) => {
+  const phaseGap = () => page.evaluate(() => {
+    const wm = document.getElementById('world').style.transform
+      .match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)\s*scale\(([-\d.]+)\)/);
+    const gm = document.getElementById('grid').style.transform
+      .match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+    const tx = parseFloat(wm[1]), zoom = parseFloat(wm[3]), gtx = parseFloat(gm[1]);
+    const tile = 28 * zoom, INSET = 160;
+    const mod = (v) => (((v % tile) + tile) % tile);
+    // grid's on-screen phase must equal the world's (x mod tile)
+    const a = mod(-INSET + gtx), b = mod(tx);
+    return Math.min(Math.abs(a - b), tile - Math.abs(a - b));   // circular distance
+  });
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 4; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaY: -200, clientX: 640, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  expect(await phaseGap()).toBeLessThan(0.5);
+});
+
 // ── 3. Zoom should stay sane (Miro "400% isn't infinite", "everything
 //      blurred"). Clamp, and always offer a way back to 100%. ──
 test('zoom stays within a sane range and Reset returns home', async ({ page }) => {

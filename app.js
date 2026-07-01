@@ -551,6 +551,7 @@
   const grid = document.createElement('div');
   grid.id = 'grid';
   viewport.insertBefore(grid, world);
+  const GRID_INSET = 160;   // must match #grid's `inset: -160px` in styles.css
 
   let lastTile = 0;
   function applyViewport() {
@@ -558,9 +559,14 @@
     world.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
     // Grid: move by transform (GPU) using the sub-tile remainder; resize only
     // when zoom changes it. Avoids a full-screen background repaint per pan.
+    // GRID_INSET compensates for #grid's negative inset so the pattern's screen
+    // phase is exactly (x mod tile) — i.e. the same mapping the world transform
+    // uses. Without it the phase carries a fixed -160px error that changes with
+    // tile size, so the dots drift (and don't anchor to the cursor) on zoom.
     const tile = 28 * zoom;
     if (tile !== lastTile) { grid.style.backgroundSize = tile + 'px ' + tile + 'px'; lastTile = tile; }
-    grid.style.transform = 'translate(' + (((x % tile) + tile) % tile) + 'px, ' + (((y % tile) + tile) % tile) + 'px)';
+    const phase = (v) => ((((v + GRID_INSET) % tile) + tile) % tile) + 'px';
+    grid.style.transform = 'translate(' + phase(x) + ', ' + phase(y) + ')';
     coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
     if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
     scheduleFrameEval();   // pan/zoom can bring frames into (or out of) loadable range
