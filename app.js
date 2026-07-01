@@ -586,27 +586,13 @@
   // the repaints fall behind (stutter). A composited layer just moves, no
   // repaint, at any speed. Zoom demotes it (zoomAround → endPanLayer) so a
   // scaled layer never bitmap-blurs the text.
-  //
-  // Separately, live cross-origin iframes render out-of-process: the browser
-  // repositions each a frame behind the transform, so they lag/snap. That lag
-  // is only VISIBLE at speed — a gentle scroll trails by a couple pixels, but a
-  // flick trails badly. So <body.flicking> blanks the live docs to their dark
-  // node box ONLY during a genuine flick (high per-event velocity); normal
-  // scrolling keeps them live. They're never reloaded — just visibility-hidden.
   const PAN_SETTLE_MS = 260;    // idle gap after which motion counts as stopped
-  const FLICK_SETTLE_MS = 120;  // shorter: reveal docs as a flick decelerates
-  const FLICK_SPEED = 45;       // px/event above which iframes blank (tunable)
-  let panLayerTimer = null, flickTimer = null;
-  function markPanActive(speed) {
+  let panLayerTimer = null;
+  function markPanActive() {
     if (world.style.willChange !== 'transform') world.style.willChange = 'transform';
     if (!document.body.classList.contains('panning')) document.body.classList.add('panning');
     clearTimeout(panLayerTimer);
     panLayerTimer = setTimeout(endPanLayer, PAN_SETTLE_MS);
-    if (speed >= FLICK_SPEED) {
-      if (!document.body.classList.contains('flicking')) document.body.classList.add('flicking');
-      clearTimeout(flickTimer);
-      flickTimer = setTimeout(() => document.body.classList.remove('flicking'), FLICK_SETTLE_MS);
-    }
   }
   function endPanLayer() {
     clearTimeout(panLayerTimer);
@@ -1691,7 +1677,7 @@
     // repaints and keeps the motion locked to the paint cycle.
     board.viewport.x -= e.deltaX;
     board.viewport.y -= e.deltaY;
-    markPanActive(Math.hypot(e.deltaX, e.deltaY));
+    markPanActive();
     if (!wheelRAF) {
       wheelRAF = requestAnimationFrame(() => {
         wheelRAF = 0;

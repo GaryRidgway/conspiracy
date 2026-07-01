@@ -72,35 +72,31 @@ test('plain scroll/trackpad pans and never changes zoom', async ({ page }) => {
     }));
   });
   expect(await worldScale(page)).toBeCloseTo(before, 5);   // zoom untouched
-  const t = await page.evaluate(() => document.getElementById('world').style.transform);
-  expect(t).toContain('translate(0px, -200px)');           // it panned instead
+  // The pan applies on the next animation frame (wheel events are rAF-coalesced).
+  await expect
+    .poll(() => page.evaluate(() => document.getElementById('world').style.transform))
+    .toContain('translate(0px, -200px)');                  // it panned instead
 });
 
 // ── 2b. Panning must feel snappy with heavy embeds on the board. Live
 //      cross-origin iframes reposition a frame behind the transform (they
 //      render out-of-process), so during an active pan we blank the live doc
 //      to its node box and restore it once motion settles. ──
-test('a flick blanks live iframes; a gentle scroll leaves them live', async ({ page }) => {
+test('panning promotes #world to a GPU layer and never blanks the live doc', async ({ page }) => {
   await page.click('#addFrame');
   await page.fill('#frame-url', 'http://localhost:8123/tests/fixtures/embed.html');
   await page.click('#frame-add');
   const frame = page.locator('.iframe-node.loaded .iframe-frame');
   await expect(frame).toBeVisible();                         // loaded & visible at rest
 
-  // Gentle scroll: pans (promotes #world) but must NOT blank the live doc.
-  await page.evaluate(() => document.getElementById('viewport').dispatchEvent(
-    new WheelEvent('wheel', { deltaY: 6, clientX: 600, clientY: 400, bubbles: true, cancelable: true })));
-  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(true);
-  expect(await page.evaluate(() => document.body.classList.contains('flicking'))).toBe(false);
-  await expect(frame).toBeVisible();                         // still live
-
-  // Flick: high per-event velocity blanks the doc to its dark node box.
   await page.evaluate(() => document.getElementById('viewport').dispatchEvent(
     new WheelEvent('wheel', { deltaY: 180, clientX: 600, clientY: 400, bubbles: true, cancelable: true })));
-  await expect(frame).toBeHidden();                          // blanked during the flick
+  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(true);
+  expect(await page.evaluate(() => document.getElementById('world').style.willChange)).toBe('transform');
+  await expect(frame).toBeVisible();                         // live doc stays on screen
 
-  await expect(page.locator('body.flicking')).toHaveCount(0, { timeout: 1000 });  // decelerates
-  await expect(frame).toBeVisible();                         // live doc returns
+  await expect(page.locator('body.panning')).toHaveCount(0, { timeout: 1000 });  // settles
+  expect(await page.evaluate(() => document.getElementById('world').style.willChange)).toBe('auto');
 });
 
 // ── 3. Zoom should stay sane (Miro "400% isn't infinite", "everything

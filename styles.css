@@ -759,13 +759,6 @@ body.space-pan #viewport.panning,
   pointer-events: none;       /* canvas mode: frame is inert, node is draggable */
 }
 
-/* During a FLICK (fast scroll only) take the live cross-origin docs out of the
-   paint — the browser repositions out-of-process iframes a frame behind the
-   transform, and at flick speed that lag is glaring. The dark node box pans
-   smoothly in their place; the live page returns as the flick decelerates.
-   Normal/slow scrolling keeps the docs live (the lag is a couple pixels there).
-   Never a reload — just visibility. */
-body.flicking .iframe-node.loaded .iframe-frame { visibility: hidden; }
 
 /* interact mode: frame receives pointer events; show a clear indicator */
 .iframe-node.interactive { border-color: var(--accent); }
