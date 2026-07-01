@@ -575,9 +575,12 @@
   // main thread (see zoomAround, which forces the promotion off).
   let panLayerTimer = null;
   function markPanActive() {
-    world.style.willChange = 'transform';
+    if (world.style.willChange !== 'transform') world.style.willChange = 'transform';
     clearTimeout(panLayerTimer);
-    panLayerTimer = setTimeout(() => { world.style.willChange = 'auto'; }, 250);
+    // Keep the layer warm well past a single scroll burst — trackpad scrolling
+    // arrives in bursts with gaps, and re-promoting each time re-rasterizes the
+    // board (a visible stall). Long idle → demote so a static zoom re-crisps.
+    panLayerTimer = setTimeout(() => { world.style.willChange = 'auto'; }, 1500);
   }
   function endPanLayer() { clearTimeout(panLayerTimer); world.style.willChange = 'auto'; }
 
@@ -1642,6 +1645,7 @@
   viewport.addEventListener('scroll', () => pinScroll(viewport), { passive: true });
   window.addEventListener('scroll', () => { pinScroll(document.scrollingElement); pinScroll(document.body); }, { passive: true });
 
+  let wheelRAF = 0;
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
     exitInteract();
@@ -1650,12 +1654,20 @@
     // scroll / two-finger swipe pans.
     if (e.ctrlKey) {
       zoomAround(board.viewport.zoom * Math.exp(-e.deltaY * ZOOM_SPEED), e.clientX, e.clientY);
-    } else {
-      board.viewport.x -= e.deltaX;
-      board.viewport.y -= e.deltaY;
-      applyViewport();
-      markPanActive();
-      commit({ viewportOnly: true });
+      return;
+    }
+    // Pan: accumulate deltas now, apply once per animation frame. Wheel events
+    // can arrive several per frame; coalescing avoids redundant transform/grid
+    // repaints and keeps the motion locked to the paint cycle.
+    board.viewport.x -= e.deltaX;
+    board.viewport.y -= e.deltaY;
+    markPanActive();
+    if (!wheelRAF) {
+      wheelRAF = requestAnimationFrame(() => {
+        wheelRAF = 0;
+        applyViewport();
+        commit({ viewportOnly: true });
+      });
     }
   }, { passive: false });
 
