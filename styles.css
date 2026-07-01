@@ -615,11 +615,10 @@ body.space-pan #viewport.panning,
 #connections .line {
   fill: none;
   /* --conn-stroke is a per-connection gradient set in JS; falls back to the
-     default when unset. Hover/selected rules below set `stroke` directly and
-     so still win over this. */
+     default when unset. Hover/selected keep the gradient and just saturate it. */
   stroke: var(--conn-stroke, var(--text-3));
   stroke-width: 2;
-  transition: stroke 0.12s;
+  transition: filter 0.12s, stroke-width 0.12s;
 }
 #connections .hit {
   fill: none;
@@ -628,8 +627,9 @@ body.space-pan #viewport.panning,
   pointer-events: stroke;     /* generous click target along the curve */
   cursor: pointer;
 }
-#connections .conn:hover .line { stroke: var(--text-2); }
-#connections .conn.selected .line { stroke: var(--accent); stroke-width: 2.5; }
+/* Keep the color; hover saturates a bit, selection saturates more (+ thicker). */
+#connections .conn:hover .line { filter: saturate(1.7) brightness(1.08); }
+#connections .conn.selected .line { filter: saturate(2.6) brightness(1.18); stroke-width: 3; }
 #connections .conn-temp {
   fill: none;
   stroke: var(--accent);
