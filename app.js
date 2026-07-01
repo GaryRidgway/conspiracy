@@ -580,23 +580,33 @@
   }
 
   // Zoom to a new level while keeping the screen point (cx, cy) fixed.
-  // While a pan is in flight we mark <body class="panning">. The only thing
-  // that costs real time per pan frame is the live cross-origin iframes: they
-  // render out-of-process, so the browser has to reposition each one every
-  // frame and it lags a beat behind the transform — the board appears to snap
-  // into place after the scroll. `body.panning` blanks the live docs to their
-  // dark node box (cheap DOM that pans instantly with everything else); the
-  // page returns the moment motion settles. We deliberately do NOT promote
-  // #world to a GPU layer — a giant composited layer both bitmap-scales (blurs)
-  // on zoom and re-rasterizes with a stall, which was itself the old "snap".
+  // While a pan is in flight we mark <body class="panning"> and promote #world
+  // to a GPU layer. Two costs, addressed together:
+  //   1. Live cross-origin iframes render out-of-process, so the browser
+  //      repositions each one a frame behind the transform → the board snaps
+  //      into place after a scroll. `body.panning` blanks them to their dark
+  //      node box; the live page returns the moment motion settles.
+  //   2. Without a GPU layer, translating #world repaints the whole viewport
+  //      every frame — fine at slow speeds, but a fast trackpad flick jumps a
+  //      big distance per frame and the repaints fall behind (stutter). A
+  //      composited layer just moves — no repaint — at any flick speed.
+  // Promoting #world used to cause the snap on its own, but only because the
+  // giant layer had the live iframes inside it; with them hidden during a pan
+  // the layer is cheap card DOM. Zoom still demotes it (zoomAround → endPanLayer)
+  // so a scaled layer never bitmap-blurs the text.
   const PAN_SETTLE_MS = 260;   // idle gap after which motion counts as stopped
   let panLayerTimer = null;
   function markPanActive() {
+    if (world.style.willChange !== 'transform') world.style.willChange = 'transform';
     if (!document.body.classList.contains('panning')) document.body.classList.add('panning');
     clearTimeout(panLayerTimer);
     panLayerTimer = setTimeout(endPanLayer, PAN_SETTLE_MS);
   }
-  function endPanLayer() { clearTimeout(panLayerTimer); document.body.classList.remove('panning'); }
+  function endPanLayer() {
+    clearTimeout(panLayerTimer);
+    world.style.willChange = 'auto';
+    document.body.classList.remove('panning');
+  }
 
   function zoomAround(nextZoom, cx, cy) {
     const zoom = board.viewport.zoom;
