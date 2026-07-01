@@ -112,6 +112,9 @@ body.space-pan #viewport.panning,
   background: color-mix(in srgb, var(--node-color) 15%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--node-color) 34%, transparent);
 }
+/* icon buttons pick up the same tinted border as the heading's bottom edge */
+.card.colored .icon-btn,
+.iframe-node.colored .icon-btn { border-color: color-mix(in srgb, var(--node-color) 34%, transparent); }
 /* Selecting a colored node highlights it in a saturated version of ITS color
    (--node-color-hi), not the accent gold; uncolored nodes keep the gold ring. */
 .card.colored.selected, .iframe-node.colored.selected {
@@ -187,7 +190,7 @@ body.space-pan #viewport.panning,
   font-size: 0.85rem;
   color: var(--text-2);
   line-height: 1.55;
-  padding: 0 0.95rem 0.8rem;
+  padding: 0.3rem 0.95rem 0.8rem;
   outline: none;
   /* bottom corners match the card so the focus background never covers
      the card's rounded corners (replaces the old overflow:hidden) */
