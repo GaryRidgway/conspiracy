@@ -73,7 +73,7 @@
   // Merge one keyed collection (cards | iframes | connections).
   function mergeCollection(base, local, remote) {
     const out = {};
-    let conflicts = 0;
+    const conflictIds = [];
     const ids = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
     for (const id of ids) {
       const b = base[id], l = local[id], r = remote[id];
@@ -84,18 +84,18 @@
       if (!lChanged && rChanged)  { if (r !== undefined) out[id] = r; continue; }   // only the other side
       // both sides changed this id:
       if (l === undefined && r === undefined) continue;                 // both deleted → gone
-      if (l === undefined || r === undefined) { out[id] = l || r; conflicts++; continue; } // delete vs edit → keep the edit
+      if (l === undefined || r === undefined) { out[id] = l || r; conflictIds.push(id); continue; } // delete vs edit → keep the edit
       const [merged, hadConflict] = mergeRecord(b, l, r);
       out[id] = merged;
-      if (hadConflict) conflicts++;
+      if (hadConflict) conflictIds.push(id);
     }
-    return { out, conflicts };
+    return { out, conflictIds };
   }
   // Three-way merge of whole boards. Keeps THIS device's viewport, bumps
   // version. Returns { merged, conflicts }.
   function mergeBoards(base, local, remote) {
     base = base || blankBoard();
-    let conflicts = 0;
+    const conflictItems = [];
     const merged = {
       schema: local.schema || remote.schema || SCHEMA_VERSION,
       version: Math.max(local.version || 0, remote.version || 0) + 1,
@@ -104,9 +104,17 @@
     for (const coll of ['cards', 'iframes', 'connections']) {
       const res = mergeCollection(base[coll] || {}, local[coll] || {}, remote[coll] || {});
       merged[coll] = res.out;
-      conflicts += res.conflicts;
+      for (const id of res.conflictIds) conflictItems.push({ coll, id });
     }
-    return { merged: normalizeBoard(merged), conflicts };
+    const normalized = normalizeBoard(merged);
+    // label each conflicted item from the merged content, for the notice
+    for (const it of conflictItems) {
+      const n = normalized[it.coll][it.id];
+      it.label = it.coll === 'cards' ? ((n && n.title) || 'Untitled card')
+        : it.coll === 'iframes' ? ((n && (n.src || '').replace(/^https?:\/\//, '').split('/')[0]) || 'Frame')
+        : 'a connection';
+    }
+    return { merged: normalized, conflicts: conflictItems.length, conflictItems };
   }
   // Test hook (pure function; no side effects) so the merge logic can be
   // exercised without the live Drive/OAuth flow.
@@ -2420,6 +2428,36 @@
     }
   }
 
+  // Non-blocking notice shown after a background merge that had true conflicts
+  // (same field edited on both devices → this device's version was kept). Names
+  // the affected nodes and offers to select/center them for review.
+  const conflictNotice = document.createElement('div');
+  conflictNotice.id = 'conflict-notice';
+  conflictNotice.className = 'hidden';
+  conflictNotice.innerHTML =
+    '<span class="notice-text"></span>' +
+    '<button class="notice-show" type="button">Show</button>' +
+    '<button class="notice-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>';
+  document.body.appendChild(conflictNotice);
+  const hideConflictNotice = () => conflictNotice.classList.add('hidden');
+  conflictNotice.querySelector('.notice-dismiss').addEventListener('click', hideConflictNotice);
+  let conflictNoticeTimer = null;
+  function showConflictNotice(items) {
+    const named = items.filter((i) => i.coll !== 'connections').map((i) => '“' + i.label + '”');
+    const shown = named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) + ' more' : '');
+    const what = named.length ? shown : items.length + ' item(s)';
+    conflictNotice.querySelector('.notice-text').textContent =
+      'Merged with Drive — kept this device’s edits to ' + what + ' (the other device changed the same thing).';
+    // "Show" selects the still-present conflicted nodes and centers the first.
+    const ids = items.map((i) => i.id).filter((id) => nodeEls.has(id));
+    const showBtn = conflictNotice.querySelector('.notice-show');
+    showBtn.classList.toggle('hidden', !ids.length);
+    showBtn.onclick = () => { setSelection(ids); if (ids[0]) frameNode(ids[0]); hideConflictNotice(); };
+    conflictNotice.classList.remove('hidden');
+    clearTimeout(conflictNoticeTimer);
+    conflictNoticeTimer = setTimeout(hideConflictNotice, 15000);
+  }
+
   const conflictModal = document.getElementById('conflict-modal');
   function openConflictModal(name) {
     return new Promise((resolve) => {
@@ -2490,7 +2528,7 @@
       const base = loadBase(id);
       if (base) {                                    // three-way merge: keep both sides' edits
         setDriveState('syncing', 'Drive: merging…');
-        const { merged, conflicts } = mergeBoards(base, localBoard, remoteContent);
+        const { merged, conflicts, conflictItems } = mergeBoards(base, localBoard, remoteContent);
         applyPulledBoard(id, merged);
         const res = await DRIVE.updateFile(entry.driveFileId, merged);
         saveBase(id, merged);
@@ -2499,6 +2537,7 @@
         setDriveState('connected', conflicts
           ? 'Drive: merged (' + conflicts + ' kept this device)'
           : 'Drive: merged');
+        if (conflicts && id === currentBoardId) showConflictNotice(conflictItems);
         return;
       }
       // no base to merge against (first divergence / legacy board) → ask

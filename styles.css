@@ -214,6 +214,45 @@ body.space-pan #viewport.panning,
 #empty-hint .empty-sub { font-size: 0.85rem; font-weight: 400; color: var(--text-3); }
 #empty-hint strong { color: var(--accent); font-weight: 600; }
 
+/* ── Non-blocking merge-conflict notice ── */
+#conflict-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  z-index: 55;
+  max-width: min(92vw, 560px);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem 0.6rem 0.9rem;
+  background: var(--surface2);
+  border: 1px solid var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+#conflict-notice.hidden { display: none; }
+#conflict-notice .notice-text { flex: 1; line-height: 1.35; }
+#conflict-notice .notice-show {
+  flex: none;
+  font: inherit; font-weight: 600;
+  color: #1a1205; background: var(--accent);
+  border: none; border-radius: 6px;
+  padding: 0.3rem 0.6rem; cursor: pointer;
+}
+#conflict-notice .notice-show.hidden { display: none; }
+#conflict-notice .notice-dismiss {
+  flex: none;
+  font-size: 1.1rem; line-height: 1;
+  color: var(--text-3); background: transparent;
+  border: none; cursor: pointer; padding: 0 0.2rem;
+}
+#conflict-notice .notice-dismiss:hover { color: var(--text); }
+
 /* ── Right-click context menu ── */
 #context-menu {
   position: fixed;
