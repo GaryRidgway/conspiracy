@@ -33,13 +33,22 @@ html, body {
   position: fixed;
   inset: 0;
   overflow: clip;               /* see html,body note: never a scroll container */
-  /* dotted grid that scrolls with the world via background-position */
   background-color: var(--bg);
-  background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.1px);
-  background-size: 28px 28px;
   cursor: default;              /* empty-drag box-selects, so no grab hand */
   user-select: none;
   touch-action: none;
+}
+
+/* Dotted grid: a viewport-sized layer moved by transform (GPU) in JS. Extends
+   a tile beyond every edge so the sub-tile translate never exposes a gap. */
+#grid {
+  position: absolute;
+  inset: -160px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.1px);
+  background-size: 28px 28px;
+  will-change: transform;
 }
 #viewport.selecting { cursor: crosshair; }
 /* grab hand only when actually panning (Space held or middle-mouse) */
@@ -63,6 +72,7 @@ body.space-pan #viewport.panning,
   position: absolute;
   top: 0; left: 0;
   width: 0; height: 0;
+  z-index: 1;                    /* above the #grid layer */
   transform-origin: 0 0;
   /* No will-change / layer promotion on purpose: a composited layer would
      bitmap-scale (blur) text when zoomed in, and toggling promotion mid-zoom

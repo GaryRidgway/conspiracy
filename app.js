@@ -542,11 +542,25 @@
   const saveStateEl = document.getElementById('saveState');
   const zoomValEl = document.getElementById('zoomReset');
 
+  // Dotted grid layer. It's a viewport-sized element moved by transform (GPU)
+  // rather than a background-position on #viewport — panning a full-screen
+  // background-position repaints the whole screen every frame, which is the
+  // dominant per-frame cost during a pan. Since the pattern repeats every tile,
+  // we only translate it by the sub-tile remainder; a one-tile overhang keeps
+  // it covering the edges. background-size changes only on zoom (not per pan).
+  const grid = document.createElement('div');
+  grid.id = 'grid';
+  viewport.insertBefore(grid, world);
+
+  let lastTile = 0;
   function applyViewport() {
     const { x, y, zoom } = board.viewport;
     world.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
-    viewport.style.backgroundPosition = `${x}px ${y}px`;
-    viewport.style.backgroundSize = `${28 * zoom}px ${28 * zoom}px`;
+    // Grid: move by transform (GPU) using the sub-tile remainder; resize only
+    // when zoom changes it. Avoids a full-screen background repaint per pan.
+    const tile = 28 * zoom;
+    if (tile !== lastTile) { grid.style.backgroundSize = tile + 'px ' + tile + 'px'; lastTile = tile; }
+    grid.style.transform = 'translate(' + (((x % tile) + tile) % tile) + 'px, ' + (((y % tile) + tile) % tile) + 'px)';
     coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
     if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
     scheduleFrameEval();   // pan/zoom can bring frames into (or out of) loadable range
