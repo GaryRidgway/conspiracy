@@ -393,8 +393,12 @@ test('a connection fades between its two nodes\' colors', async ({ page }) => {
   const conn = page.locator('#connections g.conn');
   await expect(conn).toHaveCount(1);
   const stops = conn.locator('linearGradient stop');
-  await expect(stops.nth(0)).toHaveAttribute('stop-color', '#F87171');   // from red
-  await expect(stops.nth(1)).toHaveAttribute('stop-color', '#6BA6FF');   // to blue
+  await expect(stops).toHaveCount(7);                                    // multi-stop spectrum
+  await expect(stops.first()).toHaveAttribute('stop-color', '#F87171');  // exact source (red)
+  await expect(stops.last()).toHaveAttribute('stop-color', '#6BA6FF');   // exact target (blue)
+  // a middle stop rotates through the wheel (hsl), not a grayed RGB midpoint
+  const mid = await stops.nth(3).getAttribute('stop-color');
+  expect(mid.startsWith('hsl(')).toBe(true);
   await expect(conn.locator('marker path')).toHaveAttribute('fill', '#6BA6FF');  // arrow = target
 });
 

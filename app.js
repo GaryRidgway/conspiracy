@@ -854,8 +854,15 @@
   ];
   function applyNodeColor(el, color) {
     const c = color && NODE_COLORS.find((x) => x.key === color);
-    if (c) { el.style.setProperty('--node-color', c.hex); el.classList.add('colored'); }
-    else { el.style.removeProperty('--node-color'); el.classList.remove('colored'); }
+    if (c) {
+      el.style.setProperty('--node-color', c.hex);
+      el.style.setProperty('--node-color-hi', saturate(c.hex));   // selection highlight
+      el.classList.add('colored');
+    } else {
+      el.style.removeProperty('--node-color');
+      el.style.removeProperty('--node-color-hi');
+      el.classList.remove('colored');
+    }
   }
   // Set (or clear, color=null) the color of the given nodes in one undo step.
   function setNodesColor(ids, color) {
@@ -1293,6 +1300,61 @@
     return c ? c.hex : DEFAULT_CONN_HEX;
   }
 
+  function hexToHsl(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255,
+          g = parseInt(hex.slice(3, 5), 16) / 255,
+          b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0; const l = (max + min) / 2;
+    const s = d === 0 ? 0 : (l > 0.5 ? d / (2 - max - min) : d / (max + min));
+    if (d) {
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    return { h, s, l };
+  }
+  function hslToHex(h, s, l) {
+    h /= 360;
+    const f = (n) => {
+      const k = (n + h * 12) % 12;
+      const a = s * Math.min(l, 1 - l);
+      const c = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+      return Math.round(c * 255).toString(16).padStart(2, '0');
+    };
+    return '#' + f(0) + f(8) + f(4);
+  }
+  // A punchier version of a color, for selection highlights.
+  function saturate(hex) {
+    const { h, s, l } = hexToHsl(hex);
+    return hslToHex(h, Math.min(1, s * 1.5 + 0.12), Math.max(0, Math.min(1, l * 0.9)));
+  }
+
+  // Stops that rotate through the color wheel from one hex to another, so the
+  // fade stays saturated (a straight RGB blend grays out through the middle).
+  // Endpoints are exact; the middle sweeps hue along the shorter arc. If one end
+  // is (near-)gray its hue is undefined, so we borrow the other's hue and just
+  // fade saturation — no phantom rainbow toward red.
+  const CONN_STOPS = 7;
+  function spectrumStops(fromHex, toHex, n) {
+    const A = hexToHsl(fromHex), B = hexToHsl(toHex);
+    if (A.s < 0.06 && B.s >= 0.06) A.h = B.h;
+    if (B.s < 0.06 && A.s >= 0.06) B.h = A.h;
+    let dh = B.h - A.h;
+    if (dh > 180) dh -= 360; else if (dh < -180) dh += 360;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const h = (((A.h + dh * t) % 360) + 360) % 360;
+      const s = A.s + (B.s - A.s) * t;
+      const l = A.l + (B.l - A.l) * t;
+      out.push(`hsl(${h.toFixed(1)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`);
+    }
+    out[0] = fromHex; out[n - 1] = toHex;   // keep endpoints exactly on the node colors
+    return out;
+  }
+
   function unit(x, y) {
     const m = Math.hypot(x, y) || 1;
     return { x: x / m, y: y / m };
@@ -1316,9 +1378,13 @@
       const grad = document.createElementNS(SVGNS, 'linearGradient');
       grad.setAttribute('id', 'cg-' + id);
       grad.setAttribute('gradientUnits', 'userSpaceOnUse');   // stops track world coords
-      const stopA = document.createElementNS(SVGNS, 'stop'); stopA.setAttribute('offset', '0');
-      const stopB = document.createElementNS(SVGNS, 'stop'); stopB.setAttribute('offset', '1');
-      grad.appendChild(stopA); grad.appendChild(stopB);
+      const stops = [];
+      for (let i = 0; i < CONN_STOPS; i++) {
+        const s = document.createElementNS(SVGNS, 'stop');
+        s.setAttribute('offset', (i / (CONN_STOPS - 1)).toFixed(4));
+        grad.appendChild(s);
+        stops.push(s);
+      }
 
       const marker = document.createElementNS(SVGNS, 'marker');
       marker.setAttribute('id', 'ca-' + id);
@@ -1342,7 +1408,7 @@
       g.appendChild(grad); g.appendChild(marker); g.appendChild(hit); g.appendChild(line);
       svg.appendChild(g);
       g.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectConn(id); });
-      entry = { g, line, hit, grad, stopA, stopB, mpath };
+      entry = { g, line, hit, grad, stops, mpath };
       connEls.set(id, entry);
     }
     drawConnection(id);
@@ -1356,12 +1422,13 @@
     if (!p) return;
     entry.line.setAttribute('d', p.d);
     entry.hit.setAttribute('d', p.d);
-    // Gradient runs along the curve's endpoints; stops = each node's color.
+    // Gradient runs along the curve's endpoints and rotates through the color
+    // wheel so the fade stays vivid; stops = each node's color at the ends.
     const from = nodeColorHex(data.from), to = nodeColorHex(data.to);
     entry.grad.setAttribute('x1', p.a.x); entry.grad.setAttribute('y1', p.a.y);
     entry.grad.setAttribute('x2', p.b.x); entry.grad.setAttribute('y2', p.b.y);
-    entry.stopA.setAttribute('stop-color', from);
-    entry.stopB.setAttribute('stop-color', to);
+    const colors = spectrumStops(from, to, CONN_STOPS);
+    entry.stops.forEach((s, i) => s.setAttribute('stop-color', colors[i]));
     entry.mpath.setAttribute('fill', to);
   }
 
