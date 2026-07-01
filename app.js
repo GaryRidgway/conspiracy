@@ -866,6 +866,7 @@
       if (color) node.data.color = color; else delete node.data.color;
       const el = nodeEls.get(id);
       if (el) applyNodeColor(el, color);
+      redrawConnectionsFor(id);          // connections fade to the new color
       changed = true;
     }
     if (changed) commit();
@@ -1279,7 +1280,17 @@
     const n2 = unit(b.x - c2.x, b.y - c2.y);
     const cp1 = { x: a.x + n1.x * k, y: a.y + n1.y * k };
     const cp2 = { x: b.x + n2.x * k, y: b.y + n2.y * k };
-    return `M${a.x},${a.y} C${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${b.x},${b.y}`;
+    return { d: `M${a.x},${a.y} C${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${b.x},${b.y}`, a, b };
+  }
+
+  // The stroke color for an endpoint: its node's color, else the default line
+  // color. Connections fade between their two endpoints' colors (see below).
+  const DEFAULT_CONN_HEX =
+    getComputedStyle(document.documentElement).getPropertyValue('--text-3').trim() || '#ABB3C5';
+  function nodeColorHex(id) {
+    const n = getNode(id);
+    const c = n && n.data.color && NODE_COLORS.find((x) => x.key === n.data.color);
+    return c ? c.hex : DEFAULT_CONN_HEX;
   }
 
   function unit(x, y) {
@@ -1298,16 +1309,40 @@
       const g = document.createElementNS(SVGNS, 'g');
       g.setAttribute('class', 'conn');
       g.dataset.id = id;
+
+      // Per-connection gradient + arrowhead, kept inside this <g> so g.remove()
+      // cleans them up. The line fades from the source color to the target
+      // color; the arrowhead takes the target color. Both are referenced by id.
+      const grad = document.createElementNS(SVGNS, 'linearGradient');
+      grad.setAttribute('id', 'cg-' + id);
+      grad.setAttribute('gradientUnits', 'userSpaceOnUse');   // stops track world coords
+      const stopA = document.createElementNS(SVGNS, 'stop'); stopA.setAttribute('offset', '0');
+      const stopB = document.createElementNS(SVGNS, 'stop'); stopB.setAttribute('offset', '1');
+      grad.appendChild(stopA); grad.appendChild(stopB);
+
+      const marker = document.createElementNS(SVGNS, 'marker');
+      marker.setAttribute('id', 'ca-' + id);
+      marker.setAttribute('viewBox', '0 0 10 10');
+      marker.setAttribute('refX', '8.5'); marker.setAttribute('refY', '5');
+      marker.setAttribute('markerWidth', '7'); marker.setAttribute('markerHeight', '7');
+      marker.setAttribute('orient', 'auto-start-reverse');
+      const mpath = document.createElementNS(SVGNS, 'path');
+      mpath.setAttribute('d', 'M0,0 L10,5 L0,10 z');
+      marker.appendChild(mpath);
+
       const hit = document.createElementNS(SVGNS, 'path');
       hit.setAttribute('class', 'hit');
       const line = document.createElementNS(SVGNS, 'path');
       line.setAttribute('class', 'line');
-      line.setAttribute('marker-end', 'url(#arrow)');
-      g.appendChild(hit);
-      g.appendChild(line);
+      line.setAttribute('marker-end', 'url(#ca-' + id + ')');
+      // Fed to CSS `stroke: var(--conn-stroke, …)`, so hover/selected rules
+      // (which set `stroke` directly) still override the gradient.
+      line.style.setProperty('--conn-stroke', 'url(#cg-' + id + ')');
+
+      g.appendChild(grad); g.appendChild(marker); g.appendChild(hit); g.appendChild(line);
       svg.appendChild(g);
       g.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectConn(id); });
-      entry = { g, line, hit };
+      entry = { g, line, hit, grad, stopA, stopB, mpath };
       connEls.set(id, entry);
     }
     drawConnection(id);
@@ -1317,10 +1352,17 @@
     const entry = connEls.get(id);
     const data = board.connections[id];
     if (!entry || !data) return;
-    const d = pathBetween(data.from, data.to);
-    if (!d) return;
-    entry.line.setAttribute('d', d);
-    entry.hit.setAttribute('d', d);
+    const p = pathBetween(data.from, data.to);
+    if (!p) return;
+    entry.line.setAttribute('d', p.d);
+    entry.hit.setAttribute('d', p.d);
+    // Gradient runs along the curve's endpoints; stops = each node's color.
+    const from = nodeColorHex(data.from), to = nodeColorHex(data.to);
+    entry.grad.setAttribute('x1', p.a.x); entry.grad.setAttribute('y1', p.a.y);
+    entry.grad.setAttribute('x2', p.b.x); entry.grad.setAttribute('y2', p.b.y);
+    entry.stopA.setAttribute('stop-color', from);
+    entry.stopB.setAttribute('stop-color', to);
+    entry.mpath.setAttribute('fill', to);
   }
 
   function redrawConnectionsFor(nodeId) {

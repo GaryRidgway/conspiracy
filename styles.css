@@ -609,7 +609,10 @@ body.space-pan #viewport.panning,
 }
 #connections .line {
   fill: none;
-  stroke: var(--text-3);
+  /* --conn-stroke is a per-connection gradient set in JS; falls back to the
+     default when unset. Hover/selected rules below set `stroke` directly and
+     so still win over this. */
+  stroke: var(--conn-stroke, var(--text-3));
   stroke-width: 2;
   transition: stroke 0.12s;
 }

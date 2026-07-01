@@ -369,6 +369,35 @@ test('choosing "no color" clears a node color', async ({ page }) => {
   await expect(node).not.toHaveClass(/colored/);
 });
 
+// A connection fades between its two endpoints' colors; the arrowhead takes the
+// destination color.
+test('a connection fades between its two nodes\' colors', async ({ page }) => {
+  const a0 = await addCardAt(page, 300, 300);
+  const aid = await a0.getAttribute('data-id');
+  const b0 = await addCardAt(page, 760, 320);
+  const bid = await b0.getAttribute('data-id');
+  const A = page.locator(`.node.card[data-id="${aid}"]`);
+  const B = page.locator(`.node.card[data-id="${bid}"]`);
+
+  await A.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Red"]').click();
+  await B.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Blue"]').click();
+
+  await A.hover();                                            // reveal ports
+  const port = await A.locator('.port.right').boundingBox();
+  const bb = await B.boundingBox();
+  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 },
+                   { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 });
+
+  const conn = page.locator('#connections g.conn');
+  await expect(conn).toHaveCount(1);
+  const stops = conn.locator('linearGradient stop');
+  await expect(stops.nth(0)).toHaveAttribute('stop-color', '#F87171');   // from red
+  await expect(stops.nth(1)).toHaveAttribute('stop-color', '#6BA6FF');   // to blue
+  await expect(conn.locator('marker path')).toHaveAttribute('fill', '#6BA6FF');  // arrow = target
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
