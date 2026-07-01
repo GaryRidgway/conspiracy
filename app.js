@@ -566,10 +566,26 @@
   }
 
   // Zoom to a new level while keeping the screen point (cx, cy) fixed.
+  // Panning is translate-only, so compositing #world onto a GPU layer while a
+  // pan is active is pure win — it makes the drag/scroll snappy from the first
+  // frame instead of the browser taking a few frames to promote it ("run-up").
+  // We drop the promotion ~250ms after motion stops so the static/zoomed view
+  // re-rasterizes crisply. Zoom deliberately does NOT use this: a scaled layer
+  // bitmap-scales (blurry) and flashes from the origin, so zoom stays on the
+  // main thread (see zoomAround, which forces the promotion off).
+  let panLayerTimer = null;
+  function markPanActive() {
+    world.style.willChange = 'transform';
+    clearTimeout(panLayerTimer);
+    panLayerTimer = setTimeout(() => { world.style.willChange = 'auto'; }, 250);
+  }
+  function endPanLayer() { clearTimeout(panLayerTimer); world.style.willChange = 'auto'; }
+
   function zoomAround(nextZoom, cx, cy) {
     const zoom = board.viewport.zoom;
     const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
     if (next === zoom) return;
+    endPanLayer();                 // never composite while scaling — keep zoom crisp
     const w = toWorld(cx, cy);
     board.viewport.zoom = next;
     board.viewport.x = cx - w.x * next;
@@ -1440,6 +1456,7 @@
       board.viewport.x = ox + (ev.clientX - startX);
       board.viewport.y = oy + (ev.clientY - startY);
       applyViewport();
+      markPanActive();
       moved = true;
     };
     const onUp = () => {
@@ -1637,6 +1654,7 @@
       board.viewport.x -= e.deltaX;
       board.viewport.y -= e.deltaY;
       applyViewport();
+      markPanActive();
       commit({ viewportOnly: true });
     }
   }, { passive: false });
