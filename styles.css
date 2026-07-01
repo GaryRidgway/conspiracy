@@ -105,6 +105,16 @@ body.space-pan #viewport.panning,
 }
 .card.dragging { cursor: grabbing; }
 
+/* ── Per-node color coding (heading tint + border). --node-color set in JS. ──
+   Applies to both node types; the accent selection ring still shows on top. */
+.card.colored, .iframe-node.colored,
+.card.colored.selected, .iframe-node.colored.selected { border-color: var(--node-color); }
+.card.colored .card-header,
+.iframe-node.colored .iframe-header {
+  background: color-mix(in srgb, var(--node-color) 15%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--node-color) 34%, transparent);
+}
+
 /* ── Shared node header (cards + iframes) ── */
 .card-header {
   display: flex;
@@ -305,6 +315,24 @@ body.space-pan #viewport.panning,
 .ctx-hint { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
 .ctx-item:hover .ctx-hint { opacity: 0.85; }
 .ctx-sep { height: 1px; margin: 0.25rem 0.3rem; background: var(--border2); }
+
+/* Color swatch row (node context menu): a dot per palette color + a "none". */
+.ctx-swatches { display: flex; flex-wrap: wrap; gap: 7px; padding: 0.45rem 0.6rem; }
+.ctx-swatch {
+  width: 18px; height: 18px; padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: var(--sw);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.ctx-swatch:hover { transform: scale(1.18); }
+.ctx-swatch.active { box-shadow: 0 0 0 2px var(--surface2), 0 0 0 3px var(--text); }
+.ctx-swatch-none {
+  background: var(--surface);
+  /* a diagonal strike to read as "no color" */
+  background-image: linear-gradient(135deg, transparent 44%, var(--danger) 44%, var(--danger) 56%, transparent 56%);
+}
 
 /* ── Left tool palette: add items to the board ── */
 #tools {

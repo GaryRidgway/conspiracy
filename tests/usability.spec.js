@@ -333,6 +333,42 @@ test('right-click opens a context menu on the canvas and on a node', async ({ pa
   await expect(menu).toBeHidden();
 });
 
+// Color coding: pick a color from the node context menu → it tints the node
+// (heading + border via .colored / --node-color) and persists across a reload.
+test('color-code a node from the context menu; it tints and persists', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  await page.keyboard.press('Escape');                       // leave the title rename
+  await node.click({ button: 'right' });
+  const menu = page.locator('#context-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.locator('.ctx-swatch')).toHaveCount(8);  // "none" + 7 colors
+
+  await menu.locator('.ctx-swatch[title="Green"]').click();
+  await expect(menu).toBeHidden();
+  await expect(node).toHaveClass(/colored/);
+  expect(await node.evaluate((el) => el.style.getPropertyValue('--node-color'))).toBe('#5AD19A');
+
+  await expect.poll(() => page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:board:' + cur) || '';
+  })).toContain('"color":"green"');
+  await page.reload();
+  await expect(page.locator('.node.card').first()).toHaveClass(/colored/);
+});
+
+// Clearing the color ("none") removes the tint.
+test('choosing "no color" clears a node color', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  await page.keyboard.press('Escape');
+  const menu = page.locator('#context-menu');
+  await node.click({ button: 'right' });
+  await menu.locator('.ctx-swatch[title="Blue"]').click();
+  await expect(node).toHaveClass(/colored/);
+  await node.click({ button: 'right' });
+  await menu.locator('.ctx-swatch-none').click();
+  await expect(node).not.toHaveClass(/colored/);
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

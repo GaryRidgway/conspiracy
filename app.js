@@ -839,6 +839,38 @@
   // ════════════════════════════════════════════════════════
   //  CARD NODE
   // ════════════════════════════════════════════════════════
+  // ── Node color coding ──────────────────────────────────────────────────
+  // A per-node accent used to tint the heading and border (see .colored CSS).
+  // Stored as a palette key on the node's data (data.color); absent = default.
+  // It's just another data field, so it persists and 3-way-merges for free.
+  const NODE_COLORS = [
+    { key: 'red',    label: 'Red',    hex: '#F87171' },
+    { key: 'amber',  label: 'Amber',  hex: '#F8CF5F' },
+    { key: 'green',  label: 'Green',  hex: '#5AD19A' },
+    { key: 'blue',   label: 'Blue',   hex: '#6BA6FF' },
+    { key: 'purple', label: 'Purple', hex: '#B08CFF' },
+    { key: 'pink',   label: 'Pink',   hex: '#F17FB8' },
+    { key: 'gray',   label: 'Gray',   hex: '#9AA3B7' },
+  ];
+  function applyNodeColor(el, color) {
+    const c = color && NODE_COLORS.find((x) => x.key === color);
+    if (c) { el.style.setProperty('--node-color', c.hex); el.classList.add('colored'); }
+    else { el.style.removeProperty('--node-color'); el.classList.remove('colored'); }
+  }
+  // Set (or clear, color=null) the color of the given nodes in one undo step.
+  function setNodesColor(ids, color) {
+    let changed = false;
+    for (const id of ids) {
+      const node = getNode(id);
+      if (!node) continue;
+      if (color) node.data.color = color; else delete node.data.color;
+      const el = nodeEls.get(id);
+      if (el) applyNodeColor(el, color);
+      changed = true;
+    }
+    if (changed) commit();
+  }
+
   function renderCard(id) {
     const data = board.cards[id];
     if (!data) return;
@@ -862,6 +894,7 @@
     }
     el.style.left = data.x + 'px';
     el.style.top = data.y + 'px';
+    applyNodeColor(el, data.color);
 
     const titleEl = el.querySelector('.card-title');
     const bodyEl = el.querySelector('.card-body');
@@ -988,6 +1021,7 @@
     el.style.top = data.y + 'px';
     el.style.width = data.w + 'px';
     el.style.height = data.h + 'px';
+    applyNodeColor(el, data.color);
 
     // src is set lazily by evaluateFrameLoading(), not here
     const labelEl = el.querySelector('.iframe-label');
@@ -1571,6 +1605,27 @@
         contextMenu.appendChild(s);
         continue;
       }
+      if (it.swatches) {
+        const row = document.createElement('div');
+        row.className = 'ctx-swatches';
+        const none = document.createElement('button');
+        none.type = 'button';
+        none.className = 'ctx-swatch ctx-swatch-none' + (it.current ? '' : ' active');
+        none.title = 'No color';
+        none.addEventListener('click', () => { closeContextMenu(); it.onPick(null); });
+        row.appendChild(none);
+        for (const c of NODE_COLORS) {
+          const sw = document.createElement('button');
+          sw.type = 'button';
+          sw.className = 'ctx-swatch' + (it.current === c.key ? ' active' : '');
+          sw.title = c.label;
+          sw.style.setProperty('--sw', c.hex);
+          sw.addEventListener('click', () => { closeContextMenu(); it.onPick(c.key); });
+          row.appendChild(sw);
+        }
+        contextMenu.appendChild(row);
+        continue;
+      }
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'ctx-item' + (it.danger ? ' danger' : '');
@@ -1625,6 +1680,10 @@
       items.push({ label: 'Copy', hint: '⌘C', action: copySelection });
       items.push({ label: 'Cut', hint: '⌘X', action: () => { copySelection(); for (const nid of [...selectedNodes]) deleteNode(nid); } });
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
+      items.push('sep');
+      const gn = getNode(id);
+      const curColor = (gn && gn.data.color) || null;   // reflects the right-clicked node
+      items.push({ swatches: true, current: curColor, onPick: (key) => setNodesColor([...selectedNodes], key) });
       items.push('sep');
       items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete frame' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
     } else if (connG) {
