@@ -580,27 +580,33 @@
   }
 
   // Zoom to a new level while keeping the screen point (cx, cy) fixed.
-  // While a pan is in flight we mark <body class="panning"> and promote #world
-  // to a GPU layer. Two costs, addressed together:
-  //   1. Live cross-origin iframes render out-of-process, so the browser
-  //      repositions each one a frame behind the transform → the board snaps
-  //      into place after a scroll. `body.panning` blanks them to their dark
-  //      node box; the live page returns the moment motion settles.
-  //   2. Without a GPU layer, translating #world repaints the whole viewport
-  //      every frame — fine at slow speeds, but a fast trackpad flick jumps a
-  //      big distance per frame and the repaints fall behind (stutter). A
-  //      composited layer just moves — no repaint — at any flick speed.
-  // Promoting #world used to cause the snap on its own, but only because the
-  // giant layer had the live iframes inside it; with them hidden during a pan
-  // the layer is cheap card DOM. Zoom still demotes it (zoomAround → endPanLayer)
-  // so a scaled layer never bitmap-blurs the text.
-  const PAN_SETTLE_MS = 260;   // idle gap after which motion counts as stopped
-  let panLayerTimer = null;
-  function markPanActive() {
+  // While a pan is in flight we promote #world to a GPU layer (<body.panning>).
+  // Without it, translating #world repaints the whole viewport every frame —
+  // fine slowly, but a fast trackpad flick jumps a big distance per frame and
+  // the repaints fall behind (stutter). A composited layer just moves, no
+  // repaint, at any speed. Zoom demotes it (zoomAround → endPanLayer) so a
+  // scaled layer never bitmap-blurs the text.
+  //
+  // Separately, live cross-origin iframes render out-of-process: the browser
+  // repositions each a frame behind the transform, so they lag/snap. That lag
+  // is only VISIBLE at speed — a gentle scroll trails by a couple pixels, but a
+  // flick trails badly. So <body.flicking> blanks the live docs to their dark
+  // node box ONLY during a genuine flick (high per-event velocity); normal
+  // scrolling keeps them live. They're never reloaded — just visibility-hidden.
+  const PAN_SETTLE_MS = 260;    // idle gap after which motion counts as stopped
+  const FLICK_SETTLE_MS = 120;  // shorter: reveal docs as a flick decelerates
+  const FLICK_SPEED = 45;       // px/event above which iframes blank (tunable)
+  let panLayerTimer = null, flickTimer = null;
+  function markPanActive(speed) {
     if (world.style.willChange !== 'transform') world.style.willChange = 'transform';
     if (!document.body.classList.contains('panning')) document.body.classList.add('panning');
     clearTimeout(panLayerTimer);
     panLayerTimer = setTimeout(endPanLayer, PAN_SETTLE_MS);
+    if (speed >= FLICK_SPEED) {
+      if (!document.body.classList.contains('flicking')) document.body.classList.add('flicking');
+      clearTimeout(flickTimer);
+      flickTimer = setTimeout(() => document.body.classList.remove('flicking'), FLICK_SETTLE_MS);
+    }
   }
   function endPanLayer() {
     clearTimeout(panLayerTimer);
@@ -1685,7 +1691,7 @@
     // repaints and keeps the motion locked to the paint cycle.
     board.viewport.x -= e.deltaX;
     board.viewport.y -= e.deltaY;
-    markPanActive();
+    markPanActive(Math.hypot(e.deltaX, e.deltaY));
     if (!wheelRAF) {
       wheelRAF = requestAnimationFrame(() => {
         wheelRAF = 0;
