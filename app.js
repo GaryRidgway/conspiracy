@@ -293,16 +293,28 @@
       pickerReady = true;
     }
     // Resolves to { id, name } of the picked file, or null if cancelled.
+    // The Cloud project number, needed so the Picker actually grants this app
+    // drive.file access to a file the user picks (esp. one shared TO them, which
+    // the app didn't create). It's the numeric prefix of the OAuth client id.
+    const APP_ID = (cfg.googleClientId || '').split('-')[0];
     async function pickFile() {
       const token = await authed();
       await ensurePicker();
       return new Promise((resolve) => {
-        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-          .setMimeTypes('application/json')
-          .setMode(google.picker.DocsViewMode.LIST);
+        // Two views so both owned boards AND ones shared with this user appear;
+        // picking either grants drive.file access to just that file.
+        const mkView = (ownedByMe) => {
+          const v = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setMimeTypes('application/json')
+            .setMode(google.picker.DocsViewMode.LIST);
+          if (ownedByMe != null) v.setOwnedByMe(ownedByMe);
+          return v;
+        };
         const builder = new google.picker.PickerBuilder()
           .setOAuthToken(token)
-          .addView(view)
+          .setAppId(APP_ID)                 // required for drive.file grants
+          .addView(mkView(true))            // My Drive
+          .addView(mkView(false))           // Shared with me
           .setTitle('Open a whiteboard from Drive')
           .setCallback((data) => {
             const a = data[google.picker.Response.ACTION];
