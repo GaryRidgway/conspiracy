@@ -3,9 +3,8 @@
 
   // ════════════════════════════════════════════════════════
   //  DATA MODEL
-  //  One board document — designed at 30%, reused verbatim as
-  //  the Firestore document in Track B. Keyed MAPS for every
-  //  collection; positions in world coordinates.
+  //  One board document. Keyed MAPS for every collection;
+  //  positions in world coordinates. Synced to Drive as JSON.
   // ════════════════════════════════════════════════════════
   const STORAGE_KEY = 'whiteboard';
   const SCHEMA_VERSION = 1;
@@ -26,7 +25,7 @@
   function blankBoard() {
     return {
       schema: SCHEMA_VERSION,
-      version: 0,                       // bumped on every commit — the Track B poll sentinel
+      version: 0,                       // bumped on every commit — the sync watermark
       viewport: { x: 0, y: 0, zoom: 1 },// world-space offset + scale
       cards: {},                        // { id: { x, y, title, body } }
       iframes: {},                      // { id: { x, y, w, h, src } }
@@ -320,8 +319,7 @@
     }
 
     return { configured, isConnected: tokenValid, connect, signOut,
-             createFile, updateFile, renameFile, getFile, getMeta, pickFile,
-             apiKey: () => cfg.googleApiKey, clientId: () => cfg.googleClientId };
+             createFile, updateFile, renameFile, getFile, getMeta, pickFile };
   })();
 
   function isPlainBoardObject(d) {
@@ -444,6 +442,10 @@
   // text edits into one undo step.
   function commit(opts) {
     board.version++;
+    // Viewport-only changes (pan/zoom) can't alter content or emptiness and are
+    // never undoable, so skip the snapshot machinery — this avoids a full-board
+    // JSON.stringify on every wheel/pinch tick.
+    if (opts && opts.viewportOnly) { scheduleSave(); return; }
     recordUndo(opts && opts.coalesce);
     scheduleSave();
     updateEmptyState();
@@ -573,7 +575,7 @@
     board.viewport.x = cx - w.x * next;
     board.viewport.y = cy - w.y * next;
     applyViewport();
-    commit();
+    commit({ viewportOnly: true });
   }
 
   // ════════════════════════════════════════════════════════
@@ -1297,6 +1299,24 @@
     commit();
   }
 
+  // Create a node from a plain data object (a deep copy of another node's data);
+  // returns the new id. Shared by duplicate and paste.
+  function addNodeFromData(type, data) {
+    if (type === 'card') { const nid = newId('c_'); board.cards[nid] = data; renderCard(nid); return nid; }
+    const nid = newId('f_'); board.iframes[nid] = data; renderIframe(nid); return nid;
+  }
+  // Re-create connections from {from,to} pairs, remapping endpoints through
+  // idMap; only pairs whose BOTH endpoints were cloned carry over.
+  function remapConnections(pairs, idMap) {
+    for (const c of pairs) {
+      if (idMap[c.from] && idMap[c.to]) {
+        const cid = newId('cn_');
+        board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
+        renderConnection(cid);
+      }
+    }
+  }
+
   // Duplicate the current selection (nodes + connections between them),
   // offset slightly, and select the copies. One undo step.
   function duplicateSelection() {
@@ -1309,22 +1329,9 @@
       if (!n) continue;
       const data = JSON.parse(JSON.stringify(n.data));
       data.x += OFF; data.y += OFF;
-      if (n.type === 'card') {
-        const nid = newId('c_');
-        board.cards[nid] = data; renderCard(nid); idMap[oldId] = nid;
-      } else {
-        const nid = newId('f_');
-        board.iframes[nid] = data; renderIframe(nid); idMap[oldId] = nid;
-      }
+      idMap[oldId] = addNodeFromData(n.type, data);
     }
-    // carry over connections whose endpoints were both duplicated
-    for (const c of Object.values(board.connections)) {
-      if (idMap[c.from] && idMap[c.to]) {
-        const cid = newId('cn_');
-        board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
-        renderConnection(cid);
-      }
-    }
+    remapConnections(Object.values(board.connections), idMap);
     setSelection(Object.values(idMap));
     scheduleFrameEval();
     commit();
@@ -1370,16 +1377,9 @@
     for (const item of clipboard.nodes) {
       const data = JSON.parse(JSON.stringify(item.data));
       data.x += dx; data.y += dy;
-      if (item.type === 'card') { const nid = newId('c_'); board.cards[nid] = data; renderCard(nid); idMap[item.oldId] = nid; }
-      else { const nid = newId('f_'); board.iframes[nid] = data; renderIframe(nid); idMap[item.oldId] = nid; }
+      idMap[item.oldId] = addNodeFromData(item.type, data);
     }
-    for (const c of clipboard.conns) {
-      if (idMap[c.from] && idMap[c.to]) {
-        const cid = newId('cn_');
-        board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
-        renderConnection(cid);
-      }
-    }
+    remapConnections(clipboard.conns, idMap);
     setSelection(Object.values(idMap));
     scheduleFrameEval();
     commit();
@@ -1447,7 +1447,7 @@
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      if (moved) commit();
+      if (moved) commit({ viewportOnly: true });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1629,7 +1629,7 @@
       board.viewport.x -= e.deltaX;
       board.viewport.y -= e.deltaY;
       applyViewport();
-      commit();
+      commit({ viewportOnly: true });
     }
   }, { passive: false });
 
@@ -1664,7 +1664,7 @@
     board.viewport.x = r.x + r.w / 2 - (g.x + g.w / 2) * zoom;
     board.viewport.y = r.y + r.h / 2 - (g.y + g.h / 2) * zoom;
     applyViewport();
-    commit();
+    commit({ viewportOnly: true });
   }
 
   // ── Linking to nodes ──
@@ -1738,7 +1738,7 @@
     board.viewport.x = r.x + (r.w - bw * zoom) / 2 - (minX - pad) * zoom;
     board.viewport.y = r.y + (r.h - bh * zoom) / 2 - (minY - pad) * zoom;
     applyViewport();
-    commit();
+    commit({ viewportOnly: true });
   }
 
   // ════════════════════════════════════════════════════════
@@ -1815,7 +1815,7 @@
     exitInteract();
     board.viewport.x = 0; board.viewport.y = 0; board.viewport.zoom = 1;
     applyViewport();
-    commit();
+    commit({ viewportOnly: true });
   });
 
   // ── Clear board (typed-CLEAR confirmation modal) ──
@@ -1925,7 +1925,7 @@
     else if (right > r.x + r.w) dx = (r.x + r.w) - right - 20;
     if (top < r.y) dy = r.y - top + 20;
     else if (bottom > r.y + r.h) dy = (r.y + r.h) - bottom - 20;
-    if (dx || dy) { board.viewport.x += dx; board.viewport.y += dy; applyViewport(); commit(); }
+    if (dx || dy) { board.viewport.x += dx; board.viewport.y += dy; applyViewport(); commit({ viewportOnly: true }); }
   }
 
   function tabToNode(dir) {
