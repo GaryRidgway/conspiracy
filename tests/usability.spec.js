@@ -495,6 +495,10 @@ test('a connection can be labeled by double-clicking it, and the label persists'
   await page.mouse.dblclick(mid.x, mid.y);
   const label = page.locator('.conn-label');
   await expect(label).toBeVisible();
+  // the empty pill must open AT the curve's midpoint, not at a stale position
+  const bb = await label.boundingBox();
+  expect(Math.abs(bb.x + bb.width / 2 - mid.x)).toBeLessThan(20);
+  expect(Math.abs(bb.y + bb.height / 2 - mid.y)).toBeLessThan(20);
   await page.keyboard.type('paid off by');
   await page.keyboard.press('Enter');
   await expect(label).toHaveText('paid off by');

@@ -1568,6 +1568,7 @@
     if (!entry) return;
     entry.labelEl.classList.remove('hidden');
     beginRename(entry.labelEl);
+    drawConnection(id);   // now that it's focused, this places the empty pill at the curve's midpoint
   }
 
   function drawConnection(id) {
