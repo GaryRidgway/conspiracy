@@ -724,12 +724,23 @@ test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });
   await page.click('#resetView');
-  await expectSaved(page, '"viewport":{"x":0,"y":0,"zoom":1}');
+  // viewport is a per-device preference, stored under its own local key (never
+  // in board content, never synced to Drive).
+  await expect.poll(() => page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:viewport:' + cur) || '';
+  })).toContain('"zoom":1');
   const vp = await page.evaluate(() => {
     const cur = localStorage.getItem('whiteboard:current');
-    return JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).viewport;
+    return JSON.parse(localStorage.getItem('whiteboard:viewport:' + cur));
   });
   expect(vp).toMatchObject({ x: 0, y: 0, zoom: 1 });
+  // and it must NOT be embedded in the synced board content
+  const content = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:board:' + cur);
+  });
+  expect(content).not.toContain('"viewport"');
 });
 
 test('themed modal: Cancel and Escape dismiss without creating; Enter submits', async ({ page }) => {

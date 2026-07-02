@@ -215,6 +215,32 @@ test('work is not lost across a reload', async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
+// ── 10a. Viewport is a per-device preference: it persists locally across a
+//        reload, but is never written into the (synced) board content. ──
+test('viewport persists locally across reload but stays out of board content', async ({ page }) => {
+  await addCardAt(page, 400, 300);
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    v.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
+    v.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, deltaX: 80, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  // wait out the viewport-save debounce
+  await expect.poll(() => page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:viewport:' + cur) || '';
+  })).toContain('zoom');
+  // content must not carry the viewport
+  const content = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return localStorage.getItem('whiteboard:board:' + cur);
+  });
+  expect(content).not.toContain('viewport');
+
+  const before = await page.evaluate(() => document.getElementById('world').style.transform);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => document.getElementById('world').style.transform)).toBe(before);
+});
+
 // ── 10b. No lost work when leaving: hiding/closing the tab flushes the pending
 //        debounced save immediately, so a quick edit-then-leave still persists. ──
 test('leaving the tab flushes a pending edit without waiting for the debounce', async ({ page }) => {

@@ -131,7 +131,7 @@
   // common ancestor a three-way merge diffs against. Stored per Drive board.
   const baseKey = (id) => 'whiteboard:base:' + id;
   function saveBase(id, content) {
-    try { localStorage.setItem(baseKey(id), JSON.stringify(content)); } catch (e) { /* quota */ }
+    try { localStorage.setItem(baseKey(id), JSON.stringify(contentForStore(content))); } catch (e) { /* quota */ }
   }
   function loadBase(id) {
     try { const raw = localStorage.getItem(baseKey(id)); return raw ? JSON.parse(raw) : null; }
@@ -376,16 +376,48 @@
   }
 
   function loadBoardContent(id) {
+    let b;
     try {
       const raw = localStorage.getItem(boardKey(id));
-      return raw ? normalizeBoard(JSON.parse(raw)) : blankBoard();
+      b = raw ? normalizeBoard(JSON.parse(raw)) : blankBoard();
     } catch (e) {
       console.warn('Could not parse saved board, starting fresh.', e);
-      return blankBoard();
+      b = blankBoard();
     }
+    // Viewport comes from the local per-device key; fall back to any value
+    // embedded in legacy content (migrated out on the next save).
+    b.viewport = loadViewport(id, b.viewport);
+    return b;
   }
+  // Viewport (pan/zoom) is a per-DEVICE view preference, NOT board content: it's
+  // stored under its own local key, never written to Drive, and never bumps the
+  // content version. This stops pans/zooms from churning the sync (and from
+  // yanking one device's view to another's when a remote change is pulled).
+  const contentForStore = (b) => { const { viewport, ...rest } = b; return rest; };
+  const viewportKey = (id) => 'whiteboard:viewport:' + id;
+  function loadViewport(id, fallback) {
+    try {
+      const raw = localStorage.getItem(viewportKey(id));
+      if (raw) { const v = JSON.parse(raw); return { x: +v.x || 0, y: +v.y || 0, zoom: +v.zoom || 1 }; }
+    } catch (e) { /* ignore */ }
+    return fallback || { x: 0, y: 0, zoom: 1 };
+  }
+  function saveViewport(id) {
+    const v = board.viewport;
+    try { localStorage.setItem(viewportKey(id), JSON.stringify({ x: v.x, y: v.y, zoom: v.zoom })); } catch (e) { /* quota */ }
+  }
+  let vpTimer = null;
+  function scheduleViewportSave() {
+    clearTimeout(vpTimer);
+    vpTimer = setTimeout(() => { vpTimer = null; saveViewport(currentBoardId); }, 400);
+  }
+  function flushViewport() {
+    if (vpTimer) { clearTimeout(vpTimer); vpTimer = null; }
+    saveViewport(currentBoardId);
+  }
+
   function saveBoardContent(id, b) {
-    try { localStorage.setItem(boardKey(id), JSON.stringify(b)); } catch (e) { /* quota */ }
+    try { localStorage.setItem(boardKey(id), JSON.stringify(contentForStore(b))); } catch (e) { /* quota */ }
   }
 
   // Build/repair the library: migrate the legacy single-board key, then
@@ -395,7 +427,10 @@
     const legacy = localStorage.getItem(STORAGE_KEY);   // pre-library single board
     if (legacy !== null) {
       const id = newBoardId();
-      saveBoardContent(id, normalizeBoard(safeParse(legacy)));
+      const migrated = normalizeBoard(safeParse(legacy));
+      saveBoardContent(id, migrated);
+      // viewport is now a separate local key; preserve the legacy board's view
+      try { localStorage.setItem(viewportKey(id), JSON.stringify(migrated.viewport)); } catch (e) { /* quota */ }
       lib.unshift({ id, name: 'My board', mode: 'device', updatedAt: Date.now() });
       localStorage.removeItem(STORAGE_KEY);
       localStorage.setItem(CURRENT_KEY, id);   // open the just-migrated board
@@ -453,11 +488,11 @@
   // commit() is the single mutation chokepoint. opts.coalesce groups rapid
   // text edits into one undo step.
   function commit(opts) {
+    // Viewport-only changes (pan/zoom) are a local, per-device view preference:
+    // they don't touch content, aren't undoable, and must NOT bump the version
+    // or trigger a Drive push — just persist the viewport to its own local key.
+    if (opts && opts.viewportOnly) { scheduleViewportSave(); return; }
     board.version++;
-    // Viewport-only changes (pan/zoom) can't alter content or emptiness and are
-    // never undoable, so skip the snapshot machinery — this avoids a full-board
-    // JSON.stringify on every wheel/pinch tick.
-    if (opts && opts.viewportOnly) { scheduleSave(); return; }
     recordUndo(opts && opts.coalesce);
     scheduleSave();
     updateEmptyState();
@@ -2601,9 +2636,10 @@
     setDriveState('syncing', 'Drive: saving…');
     try {
       const snapshot = JSON.parse(JSON.stringify(board));
+      const body = contentForStore(snapshot);   // viewport is local-only, never written to Drive
       const res = entry.driveFileId
-        ? await DRIVE.updateFile(entry.driveFileId, snapshot)
-        : await DRIVE.createFile(entry.name || 'Untitled board', snapshot);
+        ? await DRIVE.updateFile(entry.driveFileId, body)
+        : await DRIVE.createFile(entry.name || 'Untitled board', body);
       const lib = loadLibrary();
       const e = lib.find((b) => b.id === currentBoardId);
       if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
@@ -2658,6 +2694,7 @@
   function applyPulledBoard(id, content) {
     saveBoardContent(id, content);
     if (id === currentBoardId) {
+      content.viewport = board.viewport;   // viewport is local-only: don't let a pull move the view
       board = content;
       undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
       if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
@@ -2738,7 +2775,7 @@
   async function guardedUpdate(entry, content, basedOnVersion) {
     const fresh = await DRIVE.getMeta(entry.driveFileId);
     if (String(fresh.version) !== String(basedOnVersion)) return { stale: true };
-    return { stale: false, res: await DRIVE.updateFile(entry.driveFileId, content) };
+    return { stale: false, res: await DRIVE.updateFile(entry.driveFileId, contentForStore(content)) };
   }
 
   // One reconcile pass. Returns 'retry' when a guarded write found Drive had
@@ -2801,7 +2838,7 @@
       saveBase(id, remoteContent);
       setDriveSyncMeta(id, remoteContent.version, meta.version);
     } else if (choice === 'local') {
-      const res = await DRIVE.updateFile(entry.driveFileId, localBoard);
+      const res = await DRIVE.updateFile(entry.driveFileId, contentForStore(localBoard));
       saveBase(id, localBoard);
       setDriveSyncMeta(id, localVersion, res.version);
     }                                                // 'cancel' → leave both as-is
@@ -2852,6 +2889,7 @@
   // push is reliable on a tab switch and best-effort on actual close (the fetch
   // may be cut off), but the next boot reconcile pushes anything missed.
   function flushPendingSync() {
+    flushViewport();                    // persist pan/zoom before leaving (local-only)
     if (saveTimer) {
       clearTimeout(saveTimer); saveTimer = null;
       try { saveBoardContent(currentBoardId, board); touchLibrary(currentBoardId); setSaveState('saved'); }
@@ -2931,6 +2969,7 @@
   function saveCurrent() {
     if (!currentBoardId) return;
     flushCoalesce();
+    flushViewport();                    // persist this device's pan/zoom (local-only)
     saveBoardContent(currentBoardId, board);
     touchLibrary(currentBoardId);
   }
