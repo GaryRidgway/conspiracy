@@ -485,6 +485,7 @@
     recordUndo(opts && opts.coalesce);
     scheduleSave();
     updateEmptyState();
+    refreshDriveStatus();   // show "changes pending…" until the next sync tick pushes
   }
 
   // Show a centered prompt while the board has nothing on it, so a blank canvas
@@ -2576,8 +2577,21 @@
 
   function setDriveState(cls, text) {
     if (!driveStateEl) return;
-    driveStateEl.className = 'drive-state' + (cls ? ' ' + cls : '');
+    const className = 'drive-state' + (cls ? ' ' + cls : '');
+    if (driveStateEl.className === className && driveStateEl.textContent === text) return;   // no-op if unchanged
+    driveStateEl.className = className;
     driveStateEl.textContent = text;
+  }
+  // Light status-line refresh: reflect whether the open Drive board has local
+  // edits not yet pushed. Cheap enough to call on every commit (setDriveState
+  // no-ops when unchanged); skipped mid-reconcile so it doesn't stomp the
+  // transient 'syncing…/merging…' messages.
+  function refreshDriveStatus() {
+    if (!DRIVE.isConnected() || reconciling.has(currentBoardId)) return;
+    const entry = libraryEntry(currentBoardId);
+    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;   // non-Drive board: leave as-is
+    if (currentBoardFullySynced()) setDriveState('connected', 'Drive: synced');
+    else setDriveState('pending', 'Drive: changes pending…');
   }
   function updateDriveUI() {
     if (!driveStateEl) return;
@@ -2604,8 +2618,10 @@
     driveSignoutBtn.classList.toggle('hidden', !connected);
     driveSaveBtn.textContent = onDrive ? 'Saved to Drive ✓' : 'Save to Drive';
     driveSaveBtn.disabled = onDrive;
-    setDriveState(connected ? 'connected' : '',
-      connected ? (onDrive ? 'Drive: this board is synced' : 'Drive: connected') : 'Drive: not connected');
+    if (!connected) setDriveState('', 'Drive: not connected');
+    else if (!onDrive) setDriveState('connected', 'Drive: connected');
+    else if (currentBoardFullySynced()) setDriveState('connected', 'Drive: synced');
+    else setDriveState('pending', 'Drive: changes pending…');
   }
 
   // Remember that the user opted into Drive so we can silently reconnect on the
@@ -2862,7 +2878,7 @@
   // an active editing session from hitting Drive on every pause; edits reach
   // Drive within the tick interval (or immediately on tab-leave, see
   // flushPendingSync). A no-change tick is one cheap getMeta.
-  const SYNC_POLL_MS = 20000;
+  const SYNC_POLL_MS = 10000;
   let syncPollTimer = null;
   function currentBoardFullySynced() {
     const e = libraryEntry(currentBoardId);

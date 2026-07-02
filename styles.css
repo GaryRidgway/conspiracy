@@ -480,6 +480,7 @@ body.space-pan #viewport.panning,
 }
 .drive-state.connected { color: var(--accent); }
 .drive-state.syncing { color: var(--text-2); }
+.drive-state.pending { color: var(--phase-60, #F8CF5F); }   /* local edits not yet pushed */
 .drive-state.error { color: var(--danger); }
 .drive-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .drive-actions .btn { flex: 1; font-size: 0.78rem; white-space: nowrap; }
