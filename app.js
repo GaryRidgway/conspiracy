@@ -464,7 +464,9 @@
         saveBoardContent(currentBoardId, board);
         touchLibrary(currentBoardId);
         setSaveState('saved');
-        scheduleDrivePush(currentBoardId);   // mirror to Drive if this is a Drive board
+        // Drive is NOT pushed here — pushes are batched onto the 20s sync tick
+        // (syncTick) and flushed on tab-leave, so an active session doesn't hit
+        // Drive on every editing pause. Local save above is the durable one.
       } catch (e) {
         console.error('Save failed', e);
         setSaveState('error');
@@ -472,19 +474,6 @@
     }, 400);
   }
 
-  // Debounced background sync of a Drive-backed board. Routes through
-  // reconcileDriveBoard so a push first checks whether Drive changed and MERGES
-  // rather than blindly overwriting — this closes the window where two devices
-  // editing at once would clobber each other. No-op for device boards / when
-  // disconnected, so it's safe to call after every local save.
-  let drivePushTimer = null;
-  function scheduleDrivePush(id) {
-    const entry = libraryEntry(id);
-    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
-    if (!DRIVE.isConnected()) { updateDriveUI(); return; }   // will resync once reconnected
-    clearTimeout(drivePushTimer);
-    drivePushTimer = setTimeout(() => reconcileDriveBoard(id), 1200);
-  }
   // commit() is the single mutation chokepoint. opts.coalesce groups rapid
   // text edits into one undo step.
   function commit(opts) {
@@ -2866,12 +2855,13 @@
   }
   function maybeReconcileCurrent() { reconcileDriveBoard(currentBoardId); }
 
-  // ── Background sync (laggy by design) ──────────────────────────────────
-  // A light poll keeps the open Drive board fresh without any user action.
-  // The tick only PULLS — and only when the board is fully synced locally —
-  // so it never interrupts an active edit or races the debounced push; the
-  // metadata pre-check means a no-change tick is one cheap request. Returning
-  // focus to the tab runs a full reconcile (which can surface a conflict).
+  // ── Background sync (batched, laggy by design) ─────────────────────────
+  // Local saves are immediate (localStorage). Drive I/O is BATCHED onto this
+  // tick: every ~20s the open board reconciles with Drive — pushing pending
+  // local edits, pulling remote changes, or merging if both moved. This keeps
+  // an active editing session from hitting Drive on every pause; edits reach
+  // Drive within the tick interval (or immediately on tab-leave, see
+  // flushPendingSync). A no-change tick is one cheap getMeta.
   const SYNC_POLL_MS = 20000;
   let syncPollTimer = null;
   function currentBoardFullySynced() {
@@ -2880,12 +2870,10 @@
   }
   function syncTick() {
     if (document.hidden || !DRIVE.isConnected()) return;
-    if (!currentBoardFullySynced()) return;   // unsynced edits pending → let the push converge first
-    reconcileDriveBoard(currentBoardId);
+    reconcileDriveBoard(currentBoardId);   // push pending local edits and/or pull remote
   }
-  // Flush any debounced local save + Drive push immediately — called when the
-  // tab is hidden or closing so a quick edit-then-leave isn't stranded in a
-  // 400ms/1200ms timer. The local save is synchronous (always lands); the Drive
+  // Flush immediately on tab hide/close so edits from the current 20s window
+  // aren't stranded. The local save is synchronous (always lands); the Drive
   // push is reliable on a tab switch and best-effort on actual close (the fetch
   // may be cut off), but the next boot reconcile pushes anything missed.
   function flushPendingSync() {
@@ -2895,8 +2883,7 @@
       try { saveBoardContent(currentBoardId, board); touchLibrary(currentBoardId); setSaveState('saved'); }
       catch (e) { console.error('Save failed', e); }
     }
-    if (drivePushTimer) { clearTimeout(drivePushTimer); drivePushTimer = null; }
-    if (DRIVE.isConnected()) reconcileDriveBoard(currentBoardId);
+    if (DRIVE.isConnected()) reconcileDriveBoard(currentBoardId);   // push this window's edits now
   }
 
   function startSyncPolling() {
