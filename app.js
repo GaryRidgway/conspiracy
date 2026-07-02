@@ -606,6 +606,7 @@
     grid.style.transform = 'translate(' + phase(x) + ', ' + phase(y) + ')';
     coordsEl.textContent = `x: ${Math.round(-x)}  y: ${Math.round(-y)}`;
     if (zoomValEl) zoomValEl.textContent = Math.round(zoom * 100) + '%';
+    repositionTextToolbar();   // keep the edit toolbar anchored to its card as the view moves
     scheduleFrameEval();   // pan/zoom can bring frames into (or out of) loadable range
   }
 
@@ -2419,9 +2420,11 @@
   const npFilter = document.getElementById('np-filter');
   const npList = document.getElementById('np-list');
 
-  function showTextToolbar(cardEl) {
+  // The node the toolbar is anchored to, so it can re-track the card as the
+  // board pans/zooms (the toolbar is fixed-positioned in screen space).
+  let textToolbarEl = null;
+  function positionTextToolbar(cardEl) {
     const r = cardEl.getBoundingClientRect();
-    textToolbar.classList.remove('hidden');
     const tw = textToolbar.offsetWidth, th = textToolbar.offsetHeight;
     const left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
     let top = r.top - th - 8;
@@ -2429,11 +2432,20 @@
     textToolbar.style.left = left + 'px';
     textToolbar.style.top = top + 'px';
   }
+  function showTextToolbar(cardEl) {
+    textToolbarEl = cardEl;
+    textToolbar.classList.remove('hidden');
+    positionTextToolbar(cardEl);
+  }
+  function repositionTextToolbar() {
+    if (textToolbarEl && !textToolbar.classList.contains('hidden')) positionTextToolbar(textToolbarEl);
+  }
   function hideTextToolbarIfIdle() {
     const ae = document.activeElement;
     if (ae && (ae.closest('#text-toolbar') || ae.closest('#node-picker'))) return;
     if (ae && ae.classList && ae.classList.contains('card-body')) return;
     textToolbar.classList.add('hidden');
+    textToolbarEl = null;
     closeNodePicker();
     activeBody = null;
   }

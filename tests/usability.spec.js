@@ -122,6 +122,20 @@ test('the dot grid stays phase-aligned with the world under zoom', async ({ page
   expect(await phaseGap()).toBeLessThan(0.5);
 });
 
+// ── 2d. The floating edit toolbar is fixed-positioned; it must re-anchor to
+//      its card as the board pans, not stay stuck on screen. ──
+test('the edit toolbar stays anchored to its card when the board is panned', async ({ page }) => {
+  await addCardAt(page, 500, 350);
+  await page.locator('.node.card .card-body').first().click();   // focus body → toolbar
+  const bar = page.locator('#text-toolbar');
+  await expect(bar).toBeVisible();
+  const before = await bar.evaluate((el) => parseFloat(el.style.top));
+  await page.evaluate(() => document.getElementById('viewport').dispatchEvent(
+    new WheelEvent('wheel', { deltaY: 220, clientX: 600, clientY: 400, bubbles: true, cancelable: true })));
+  // the card moved on screen, so the toolbar's top must move with it (~ the pan delta)
+  await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.top))).toBeLessThan(before - 100);
+});
+
 // ── 3. Zoom should stay sane (Miro "400% isn't infinite", "everything
 //      blurred"). Clamp, and always offer a way back to 100%. ──
 test('zoom stays within a sane range and Reset returns home', async ({ page }) => {
