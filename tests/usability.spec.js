@@ -465,6 +465,70 @@ test('a connection fades between its two nodes\' colors', async ({ page }) => {
   await expect(conn.locator('marker path')).toHaveAttribute('fill', '#6BA6FF');  // arrow = target
 });
 
+// Connect two cards and return the exact screen point of the curve's middle
+// (the label anchor / dblclick target).
+async function connectTwoCards(page) {
+  // pin by data-id — addCardAt returns a live `.last()` locator that would
+  // re-resolve to the second card once it exists
+  const aid = await (await addCardAt(page, 300, 300)).getAttribute('data-id');
+  const bid = await (await addCardAt(page, 760, 320)).getAttribute('data-id');
+  const A = page.locator(`.node.card[data-id="${aid}"]`);
+  const B = page.locator(`.node.card[data-id="${bid}"]`);
+  await A.hover();
+  const port = await A.locator('.port.right').boundingBox();
+  const bb = await B.boundingBox();
+  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 },
+                   { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 });
+  await expect(page.locator('#connections g.conn')).toHaveCount(1);
+  return page.evaluate(() => {
+    const line = document.querySelector('#connections g.conn .line');
+    const p = line.getPointAtLength(line.getTotalLength() / 2);
+    const m = line.getScreenCTM();
+    return { x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f };
+  });
+}
+
+// Connections can say WHY two items are linked: double-click the line, type,
+// and the label survives a reload.
+test('a connection can be labeled by double-clicking it, and the label persists', async ({ page }) => {
+  const mid = await connectTwoCards(page);
+  await page.mouse.dblclick(mid.x, mid.y);
+  const label = page.locator('.conn-label');
+  await expect(label).toBeVisible();
+  await page.keyboard.type('paid off by');
+  await page.keyboard.press('Enter');
+  await expect(label).toHaveText('paid off by');
+
+  await page.reload();
+  await expect(page.locator('.conn-label')).toHaveText('paid off by');
+});
+
+// Committing an empty label removes it; deleting the connection removes the pill.
+test('an emptied connection label disappears, and deleting the connection removes it', async ({ page }) => {
+  const mid = await connectTwoCards(page);
+  await page.mouse.dblclick(mid.x, mid.y);
+  await page.keyboard.type('temp');
+  await page.keyboard.press('Enter');
+  const label = page.locator('.conn-label');
+  await expect(label).toHaveText('temp');
+
+  // empty it → pill hides, no label in the stored content
+  await label.dblclick();
+  await page.keyboard.press('Meta+a');
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('Enter');
+  await expect(label).toBeHidden();
+
+  // re-label, then delete the connection → pill fully removed
+  await page.mouse.dblclick(mid.x, mid.y);
+  await page.keyboard.type('again');
+  await page.keyboard.press('Enter');
+  await label.click();                        // selects the connection
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#connections g.conn')).toHaveCount(0);
+  await expect(page.locator('.conn-label')).toHaveCount(0);
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

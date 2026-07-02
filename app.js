@@ -709,26 +709,35 @@
   let selectedConn = null;           // connection id, or null
 
   function markNode(id, on) { const el = nodeEls.get(id); if (el) el.classList.toggle('selected', on); }
+  function markConn(id, on) {
+    const entry = connEls.get(id);
+    if (!entry) return;
+    entry.g.classList.toggle('selected', on);
+    entry.labelEl.classList.toggle('selected', on);
+  }
+  function deselectConn() {
+    if (selectedConn) markConn(selectedConn, false);
+    selectedConn = null;
+  }
   function clearSelection() {
     for (const id of selectedNodes) markNode(id, false);
     selectedNodes.clear();
-    if (selectedConn && connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected');
-    selectedConn = null;
+    deselectConn();
   }
   // select a single node (default), or add it to the current selection
   function selectNode(id, opts) {
-    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    deselectConn();
     if (!(opts && opts.add)) { for (const sid of selectedNodes) if (sid !== id) markNode(sid, false); selectedNodes.clear(); }
     if (id && nodeEls.has(id)) { selectedNodes.add(id); markNode(id, true); }
   }
   function toggleNodeSelection(id) {
-    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    deselectConn();
     if (selectedNodes.has(id)) { selectedNodes.delete(id); markNode(id, false); }
     else if (nodeEls.has(id)) { selectedNodes.add(id); markNode(id, true); }
   }
   // replace the node selection with exactly these ids (used by box-select)
   function setSelection(ids) {
-    if (selectedConn) { if (connEls.has(selectedConn)) connEls.get(selectedConn).g.classList.remove('selected'); selectedConn = null; }
+    deselectConn();
     const next = new Set(ids);
     for (const id of selectedNodes) if (!next.has(id)) markNode(id, false);
     for (const id of next) if (!selectedNodes.has(id)) markNode(id, true);
@@ -739,7 +748,7 @@
     clearSelection();
     if (!connEls.has(id)) return;
     selectedConn = id;
-    connEls.get(id).g.classList.add('selected');
+    markConn(id, true);
   }
   // pointerdown on a node: shift toggles; otherwise select just it — but keep
   // an existing multi-selection intact when pressing on an already-selected
@@ -1331,7 +1340,7 @@
     const n2 = unit(b.x - c2.x, b.y - c2.y);
     const cp1 = { x: a.x + n1.x * k, y: a.y + n1.y * k };
     const cp2 = { x: b.x + n2.x * k, y: b.y + n2.y * k };
-    return { d: `M${a.x},${a.y} C${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${b.x},${b.y}`, a, b };
+    return { d: `M${a.x},${a.y} C${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${b.x},${b.y}`, a, b, cp1, cp2 };
   }
 
   // The stroke color for an endpoint: its node's color, else the default line
@@ -1452,10 +1461,42 @@
       g.appendChild(grad); g.appendChild(marker); g.appendChild(hit); g.appendChild(line);
       svg.appendChild(g);
       g.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectConn(id); });
-      entry = { g, line, hit, grad, stops, mpath };
+
+      // Label: an HTML pill in #world (not the SVG) so it pans/zooms with the
+      // board and takes contenteditable. Hidden until the connection has text.
+      const labelEl = document.createElement('div');
+      labelEl.className = 'conn-label hidden';
+      labelEl.dataset.connId = id;
+      world.appendChild(labelEl);
+      labelEl.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectConn(id); });
+      makeRenamable(labelEl, {
+        onCommit: (v) => {
+          const c = board.connections[id];
+          if (!c) return;
+          const prev = c.label || '';
+          if (v) c.label = v; else delete c.label;
+          drawConnection(id);
+          if (v !== prev) commit();
+        },
+      });
+      // Double-click anywhere on the line to add (or edit) its label.
+      g.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        selectConn(id);
+        beginConnLabelEdit(id);
+      });
+
+      entry = { g, line, hit, grad, stops, mpath, labelEl };
       connEls.set(id, entry);
     }
     drawConnection(id);
+  }
+
+  function beginConnLabelEdit(id) {
+    const entry = connEls.get(id);
+    if (!entry) return;
+    entry.labelEl.classList.remove('hidden');
+    beginRename(entry.labelEl);
   }
 
   function drawConnection(id) {
@@ -1474,6 +1515,20 @@
     const colors = spectrumStops(from, to, CONN_STOPS);
     entry.stops.forEach((s, i) => s.setAttribute('stop-color', colors[i]));
     entry.mpath.setAttribute('fill', to);
+
+    // Label pill sits at the curve's midpoint (cubic bezier at t=0.5) and is
+    // tinted with the gradient's middle color so it reads as part of the line.
+    const lbl = entry.labelEl;
+    const editing = document.activeElement === lbl;
+    if (!editing) lbl.textContent = data.label || '';
+    lbl.classList.toggle('hidden', !data.label && !editing);
+    if (data.label || editing) {
+      const mx = (p.a.x + 3 * p.cp1.x + 3 * p.cp2.x + p.b.x) / 8;
+      const my = (p.a.y + 3 * p.cp1.y + 3 * p.cp2.y + p.b.y) / 8;
+      lbl.style.left = mx + 'px';
+      lbl.style.top = my + 'px';
+      lbl.style.setProperty('--conn-label-color', colors[(CONN_STOPS - 1) / 2]);
+    }
   }
 
   function redrawConnectionsFor(nodeId) {
@@ -1496,7 +1551,7 @@
   function deleteConnection(id) {
     delete board.connections[id];
     const entry = connEls.get(id);
-    if (entry) { entry.g.remove(); connEls.delete(id); }
+    if (entry) { entry.g.remove(); entry.labelEl.remove(); connEls.delete(id); }
     if (selectedConn === id) selectedConn = null;
     commit();
   }
@@ -1534,6 +1589,7 @@
       if (idMap[c.from] && idMap[c.to]) {
         const cid = newId('cn_');
         board.connections[cid] = { from: idMap[c.from], to: idMap[c.to] };
+        if (c.label) board.connections[cid].label = c.label;
         renderConnection(cid);
       }
     }
@@ -1630,7 +1686,11 @@
       }
     }
     for (const id of [...connEls.keys()]) {
-      if (!board.connections[id]) { connEls.get(id).g.remove(); connEls.delete(id); }
+      if (!board.connections[id]) {
+        const entry = connEls.get(id);
+        entry.g.remove(); entry.labelEl.remove();
+        connEls.delete(id);
+      }
     }
     for (const id of Object.keys(board.cards)) renderCard(id);
     for (const id of Object.keys(board.iframes)) renderIframe(id);
@@ -1842,6 +1902,9 @@
     } else if (connG) {
       const id = connG.dataset.id;
       selectConn(id);
+      const hasLabel = !!(board.connections[id] && board.connections[id].label);
+      items.push({ label: hasLabel ? 'Edit label' : 'Add label', hint: '2×click', action: () => beginConnLabelEdit(id) });
+      items.push('sep');
       items.push({ label: 'Delete connection', hint: 'Del', danger: true, action: () => deleteConnection(id) });
     } else {
       items.push({ label: 'Add card here', action: () => createCard(world.x - 120, world.y - 24) });
@@ -2092,7 +2155,7 @@
   function doClearBoard() {
     board.cards = {}; board.iframes = {}; board.connections = {};
     nodeEls.forEach((el) => el.remove()); nodeEls.clear();
-    connEls.forEach((c) => c.g.remove()); connEls.clear();
+    connEls.forEach((c) => { c.g.remove(); c.labelEl.remove(); }); connEls.clear();
     clearSelection(); interactiveId = null;
     commit();
   }

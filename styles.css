@@ -642,6 +642,43 @@ body.space-pan #viewport.panning,
   pointer-events: none;
 }
 
+/* ── Connection label — an HTML pill in #world, centered on the curve's
+   midpoint. Its border/text pick up the gradient's middle color so it reads
+   as part of the line it sits on. ── */
+.conn-label.hidden { display: none; }
+.conn-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 220px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--conn-label-color, var(--text-3)) 75%, var(--text));
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--conn-label-color, var(--text-3)) 55%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+}
+.conn-label.selected {
+  border-color: var(--conn-label-color, var(--text-3));
+  box-shadow: 0 0 0 1px var(--conn-label-color, var(--text-3));
+}
+.conn-label[contenteditable] {
+  cursor: text;
+  overflow: visible;
+  max-width: none;
+  background: var(--surface2);
+}
+.conn-label[contenteditable]:empty::before {
+  content: 'label…';
+  color: var(--text-3);
+}
+
 /* Ports straddle the node border; nodes intentionally don't clip overflow
    (the card body rounds its own bottom corners; the iframe clips via
    .iframe-wrap), so the handles aren't cut off. */
