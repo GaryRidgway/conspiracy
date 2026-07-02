@@ -2709,6 +2709,110 @@
   }
 
   // ════════════════════════════════════════════════════════
+  //  QUICK JUMP (⌘K) — search every card/frame by its visible text and fly
+  //  the viewport to the pick. Arrow keys move the highlight, Enter jumps.
+  // ════════════════════════════════════════════════════════
+  const jumpEl = document.getElementById('jump');
+  const jumpInput = document.getElementById('jump-input');
+  const jumpList = document.getElementById('jump-list');
+
+  // Everything findable about a node: its rendered text (title + card body),
+  // a frame's URL, and the id (so a pasted deep-link id matches too).
+  function nodeSearchText(id) {
+    const n = getNode(id);
+    const el = nodeEls.get(id);
+    const extra = n && n.type === 'iframe' ? (n.data.src || '') : '';
+    return ((el ? el.textContent : '') + ' ' + extra + ' ' + id).toLowerCase();
+  }
+
+  function openJump() {
+    exitInteract();
+    renderJumpList('');
+    jumpEl.classList.remove('hidden');
+    jumpInput.value = '';
+    jumpInput.focus();
+  }
+  function closeJump() { jumpEl.classList.add('hidden'); }
+
+  function jumpToNode(id) {
+    closeJump();
+    frameNode(id);
+    selectNode(id);
+    flashNode(id);
+  }
+  // A brief pulse so the eye lands on the found node after the viewport moves.
+  function flashNode(id) {
+    const el = nodeEls.get(id);
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;               // restart the animation if re-triggered
+    el.classList.add('flash');
+    el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+  }
+
+  function renderJumpList(query) {
+    const q = (query || '').trim().toLowerCase();
+    jumpList.innerHTML = '';
+    let any = false;
+    for (const id of nodeEls.keys()) {
+      if (q && !nodeSearchText(id).includes(q)) continue;
+      any = true;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'np-item';
+      item.dataset.id = id;
+      item.innerHTML = '<span class="np-type"></span><span class="np-label"></span><span class="np-id"></span>';
+      item.querySelector('.np-type').textContent = nodeKind(id);
+      item.querySelector('.np-label').textContent = nodeTitle(id);
+      item.querySelector('.np-id').textContent = id;
+      item.addEventListener('mousedown', (e) => e.preventDefault());
+      item.addEventListener('click', () => jumpToNode(id));
+      jumpList.appendChild(item);
+    }
+    if (!any) {
+      const empty = document.createElement('div');
+      empty.className = 'np-empty';
+      empty.textContent = 'No matching items';
+      jumpList.appendChild(empty);
+    }
+    setJumpSel(0);
+  }
+  function setJumpSel(i) {
+    const items = [...jumpList.querySelectorAll('.np-item')];
+    if (!items.length) return;
+    const idx = ((i % items.length) + items.length) % items.length;
+    items.forEach((el, n) => el.classList.toggle('sel', n === idx));
+    items[idx].scrollIntoView({ block: 'nearest' });
+  }
+  function jumpSelIndex() {
+    const items = [...jumpList.querySelectorAll('.np-item')];
+    return items.findIndex((el) => el.classList.contains('sel'));
+  }
+
+  jumpInput.addEventListener('input', () => renderJumpList(jumpInput.value));
+  jumpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeJump(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setJumpSel(jumpSelIndex() + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setJumpSel(jumpSelIndex() - 1); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const sel = jumpList.querySelector('.np-item.sel') || jumpList.querySelector('.np-item');
+      if (sel) jumpToNode(sel.dataset.id);
+    }
+  });
+  jumpEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  window.addEventListener('pointerdown', (e) => {
+    if (!jumpEl.classList.contains('hidden') && !jumpEl.contains(e.target)) closeJump();
+  }, true);
+  document.getElementById('findBtn').addEventListener('click', openJump);
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (jumpEl.classList.contains('hidden')) openJump(); else closeJump();
+    }
+  });
+
+  // ════════════════════════════════════════════════════════
   //  BOARD LIBRARY — picker dropdown, switch / new / rename / remove
   // ════════════════════════════════════════════════════════
   const boardMenuBtn = document.getElementById('boardMenuBtn');

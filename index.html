@@ -41,6 +41,7 @@
     <button class="btn btn-icon" id="undoBtn" title="Undo (⌘/Ctrl+Z)" disabled><span class="icon icon-undo"></span></button>
     <button class="btn btn-icon" id="redoBtn" title="Redo (⌘/Ctrl+Shift+Z)" disabled><span class="icon icon-redo"></span></button>
     <button class="btn" id="fitContent">Fit</button>
+    <button class="btn" id="findBtn" title="Find on this board (⌘K)">Find</button>
     <button class="btn" id="exportBtn">Export</button>
     <button class="btn" id="importBtn">Import</button>
     <input type="file" id="importFile" accept="application/json,.json" hidden>
@@ -91,6 +92,12 @@
   <div id="node-picker" class="hidden">
     <input id="np-filter" type="text" placeholder="Card, frame, or paste an ID…" autocomplete="off" spellcheck="false">
     <div id="np-list"></div>
+  </div>
+
+  <!-- Quick jump (⌘K): search every card/frame by its text and fly to it -->
+  <div id="jump" class="hidden">
+    <input id="jump-input" type="text" placeholder="Jump to a card or frame…" autocomplete="off" spellcheck="false">
+    <div id="jump-list"></div>
   </div>
 
   <!-- Themed iframe-creation modal (replaces the native prompt) -->

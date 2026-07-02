@@ -572,6 +572,43 @@ test('clicking a legend dot spotlights that color and dims the rest', async ({ p
   await expect(B).not.toHaveClass(/filtered-out/);
 });
 
+// Quick jump (⌘K): finding an item by its text flies the viewport to it —
+// the other half of "getting lost on the infinite canvas".
+test('quick jump finds a card by its text and flies the viewport to it', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  await node.locator('.card-title').dblclick();
+  await page.keyboard.type('smoking gun');
+  await page.keyboard.press('Enter');
+
+  // scroll far away so the card leaves the viewport
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 500, deltaY: 500, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(async () => within(await node.boundingBox(), page.viewportSize().width, page.viewportSize().height)).toBe(false);
+
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.locator('#jump')).toBeVisible();
+  await page.keyboard.type('smoking');
+  await expect(page.locator('#jump-list .np-item')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('#jump')).toBeHidden();
+  const vp = page.viewportSize();
+  expect(within(await node.boundingBox(), vp.width, vp.height)).toBe(true);
+  await expect(node).toHaveClass(/selected/);   // found node is selected + flashed
+});
+
+// The Find button opens the same palette, and Escape closes it.
+test('Find button opens quick jump; Escape closes it', async ({ page }) => {
+  await addCardAt(page, 450, 350);
+  await page.click('#findBtn');
+  await expect(page.locator('#jump')).toBeVisible();
+  await expect(page.locator('#jump-list .np-item')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#jump')).toBeHidden();
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
