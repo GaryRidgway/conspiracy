@@ -357,6 +357,55 @@ body.space-pan #viewport.panning,
   padding: 0.4rem;
   box-shadow: 0 6px 22px rgba(0,0,0,0.35);
 }
+/* ── Color legend/filter — floats just below the tools palette ── */
+#color-filter {
+  position: fixed;
+  left: 1rem; top: calc(50% + 5.5rem);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.5rem 0.4rem;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+}
+#color-filter.hidden { display: none; }
+.cf-dot {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.3);
+  background: var(--sw);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.75;
+  transition: transform 0.1s, opacity 0.1s, box-shadow 0.1s;
+}
+.cf-dot:hover { opacity: 1; transform: scale(1.15); }
+.cf-dot.active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--sw);
+}
+.cf-clear {
+  width: 16px; height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.cf-clear:hover { color: var(--text); }
+
+/* Filtered-out items fade back but stay in place (and stay clickable). */
+.node.filtered-out { opacity: 0.15; transition: opacity 0.15s; }
+#connections .conn.filtered-out { opacity: 0.08; }
+.conn-label.filtered-out { opacity: 0.08; }
+
 .tool-btn {
   display: flex;
   flex-direction: column;

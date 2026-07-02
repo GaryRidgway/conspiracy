@@ -529,6 +529,49 @@ test('an emptied connection label disappears, and deleting the connection remove
   await expect(page.locator('.conn-label')).toHaveCount(0);
 });
 
+// Color coding pays off as a filter: the legend lists only colors in use, and
+// clicking a dot spotlights matching items while dimming the rest (view-only —
+// nothing is written to the board).
+test('clicking a legend dot spotlights that color and dims the rest', async ({ page }) => {
+  const legend = page.locator('#color-filter');
+  await expect(legend).toBeHidden();                       // no colors in use yet
+
+  const aid = await (await addCardAt(page, 300, 300)).getAttribute('data-id');
+  const bid = await (await addCardAt(page, 760, 320)).getAttribute('data-id');
+  const A = page.locator(`.node.card[data-id="${aid}"]`);
+  const B = page.locator(`.node.card[data-id="${bid}"]`);
+  await A.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Red"]').click();
+  await B.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Blue"]').click();
+
+  await expect(legend).toBeVisible();
+  await expect(legend.locator('.cf-dot')).toHaveCount(2);  // only colors in use
+
+  // let the debounced local save land so the stored version is current
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  const storedVersion = () => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current'))).version);
+  const versionBefore = await storedVersion();
+
+  await legend.locator('.cf-dot[title="Show only Red"]').click();
+  await expect(A).not.toHaveClass(/filtered-out/);
+  await expect(B).toHaveClass(/filtered-out/);
+
+  // view-only: filtering must not bump the content version
+  expect(await storedVersion()).toBe(versionBefore);
+
+  await legend.locator('.cf-clear').click();
+  await expect(B).not.toHaveClass(/filtered-out/);
+
+  // removing the last red item retires the dot (and any active filter on it)
+  await legend.locator('.cf-dot[title="Show only Red"]').click();
+  await A.locator('.card-header').click();   // header selects without entering text edit
+  await page.keyboard.press('Delete');
+  await expect(legend.locator('.cf-dot')).toHaveCount(1);
+  await expect(B).not.toHaveClass(/filtered-out/);
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

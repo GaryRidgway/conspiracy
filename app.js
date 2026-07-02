@@ -485,6 +485,7 @@
     recordUndo(opts && opts.coalesce);
     scheduleSave();
     updateEmptyState();
+    refreshColorFilter();   // legend/dimming track content changes
     refreshDriveStatus();   // show "changes pending…" until the next sync tick pushes
   }
 
@@ -930,6 +931,76 @@
       changed = true;
     }
     if (changed) commit();
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  COLOR FILTER — a legend of the colors in use; clicking a dot spotlights
+  //  those items and dims the rest. Pure view state: per-device, in-memory,
+  //  never synced, never in undo history.
+  // ════════════════════════════════════════════════════════
+  const colorFilterEl = document.getElementById('color-filter');
+  const colorFilter = new Set();          // active palette keys; empty = show all
+
+  function colorsInUse() {
+    const used = new Set();
+    for (const n of Object.values(board.cards)) if (n.color) used.add(n.color);
+    for (const n of Object.values(board.iframes)) if (n.color) used.add(n.color);
+    return used;
+  }
+
+  // Dim what doesn't match. A connection stays lit if EITHER endpoint matches,
+  // so a spotlighted item still shows what it's linked to.
+  function applyColorFilter() {
+    const active = colorFilter.size > 0;
+    const keep = (id) => {
+      const n = getNode(id);
+      return !active || (n && colorFilter.has(n.data.color));
+    };
+    for (const [id, el] of nodeEls) el.classList.toggle('filtered-out', !keep(id));
+    for (const [cid, c] of Object.entries(board.connections)) {
+      const entry = connEls.get(cid);
+      if (!entry) continue;
+      const dim = active && !keep(c.from) && !keep(c.to);
+      entry.g.classList.toggle('filtered-out', dim);
+      entry.labelEl.classList.toggle('filtered-out', dim);
+    }
+  }
+
+  // Rebuild the legend from the colors actually on the board; hide it (and any
+  // stale filter entries) when a color disappears.
+  function refreshColorFilter() {
+    const used = colorsInUse();
+    for (const key of [...colorFilter]) if (!used.has(key)) colorFilter.delete(key);
+    colorFilterEl.innerHTML = '';
+    if (!used.size) {
+      colorFilterEl.classList.add('hidden');
+      applyColorFilter();
+      return;
+    }
+    for (const c of NODE_COLORS) {
+      if (!used.has(c.key)) continue;
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'cf-dot' + (colorFilter.has(c.key) ? ' active' : '');
+      dot.title = colorFilter.has(c.key) ? `Stop filtering ${c.label}` : `Show only ${c.label}`;
+      dot.style.setProperty('--sw', c.hex);
+      dot.addEventListener('click', () => {
+        if (colorFilter.has(c.key)) colorFilter.delete(c.key); else colorFilter.add(c.key);
+        refreshColorFilter();
+      });
+      colorFilterEl.appendChild(dot);
+    }
+    if (colorFilter.size) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'cf-clear';
+      clear.title = 'Clear color filter';
+      clear.textContent = '×';
+      clear.addEventListener('click', () => { colorFilter.clear(); refreshColorFilter(); });
+      colorFilterEl.appendChild(clear);
+    }
+    colorFilterEl.classList.remove('hidden');
+    applyColorFilter();
   }
 
   function renderCard(id) {
@@ -1672,6 +1743,7 @@
     // connections after nodes exist so geometry is available
     for (const id of Object.keys(board.connections)) renderConnection(id);
     applyViewport();
+    refreshColorFilter();
   }
 
   // Sync the DOM to the current board WITHOUT tearing everything down:
@@ -1699,6 +1771,7 @@
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
     applyViewport();
     updateEmptyState();
+    refreshColorFilter();
   }
 
   // ════════════════════════════════════════════════════════
