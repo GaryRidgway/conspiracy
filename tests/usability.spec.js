@@ -609,6 +609,58 @@ test('Find button opens quick jump; Escape closes it', async ({ page }) => {
   await expect(page.locator('#jump')).toBeHidden();
 });
 
+// Paste a screenshot on the canvas → it becomes a card holding the image as a
+// data URI (downscaled, no remote fetch), which persists like any card.
+async function pasteImage(page) {
+  await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 60; canvas.height = 40;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#F87171'; ctx.fillRect(0, 0, 60, 40);
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+}
+
+test('pasting an image on the canvas creates an image card that persists', async ({ page }) => {
+  await pasteImage(page);
+  const img = page.locator('.node.card .card-body img');
+  await expect(img).toHaveCount(1);
+  const src = await img.getAttribute('src');
+  expect(src.startsWith('data:image/')).toBe(true);
+
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.node.card .card-body img')).toHaveCount(1);
+});
+
+// Pasting while editing a card drops the image inline; remote <img> tags are
+// stripped by the sanitizer (data URIs only — no tracking pixels).
+test('image pastes inline into a card being edited; remote images are stripped', async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  await node.locator('.card-body').click();
+  await page.keyboard.type('evidence: ');
+  await pasteImage(page);
+  await expect(node.locator('.card-body img')).toHaveCount(1);
+  await expect(node.locator('.card-body')).toContainText('evidence:');
+  await expect(page.locator('#saveState')).toHaveText('saved');   // debounced save landed
+
+  // a remote image sneaked into the stored body must not survive a re-render
+  await page.evaluate(() => {
+    const id = document.querySelector('.node.card').dataset.id;
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const content = JSON.parse(localStorage.getItem(key));
+    content.cards[id].body += '<img src="https://evil.example/pixel.png">';
+    localStorage.setItem(key, JSON.stringify(content));
+  });
+  await page.reload();
+  const srcs = await page.locator('.card-body img').evaluateAll((els) => els.map((el) => el.getAttribute('src')));
+  expect(srcs.length).toBe(1);                       // remote img dropped
+  expect(srcs[0].startsWith('data:image/')).toBe(true);
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

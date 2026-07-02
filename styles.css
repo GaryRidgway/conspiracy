@@ -406,6 +406,14 @@ body.space-pan #viewport.panning,
 #connections .conn.filtered-out { opacity: 0.08; }
 .conn-label.filtered-out { opacity: 0.08; }
 
+/* Pasted images inside card bodies */
+.card-body img {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 0.25rem 0;
+}
+
 .tool-btn {
   display: flex;
   flex-direction: column;

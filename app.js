@@ -1735,6 +1735,86 @@
   }
 
   // ════════════════════════════════════════════════════════
+  //  IMAGE PASTE — a screenshot pasted on the canvas becomes a card holding
+  //  the image; pasted while editing a card it lands inline at the caret.
+  //  Images are downscaled and stored as data URIs in the card body, so they
+  //  merge/undo/copy like any other card content (and never touch a server).
+  // ════════════════════════════════════════════════════════
+  const MAX_IMG_DIM = 1600;                 // px, longest edge after downscale
+  const MAX_IMG_CHARS = 1.5 * 1024 * 1024;  // ~data-URI budget per image
+
+  function imageFileToDataUri(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let uri = '';
+        // Re-encode small (WebP where the browser can, else PNG); if the result
+        // is still huge, halve the dimensions and try again.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const scale = Math.min(1, MAX_IMG_DIM / Math.max(img.naturalWidth, img.naturalHeight)) / 2 ** attempt;
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          uri = canvas.toDataURL('image/webp', 0.85);
+          if (!uri.startsWith('data:image/webp')) uri = canvas.toDataURL('image/png');
+          if (uri.length <= MAX_IMG_CHARS) break;
+        }
+        resolve(uri);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+      img.src = url;
+    });
+  }
+
+  document.addEventListener('paste', (e) => {
+    const item = e.clipboardData && [...e.clipboardData.items].find((i) => i.type.startsWith('image/'));
+    if (!item) return;
+    const file = item.getAsFile();          // must be grabbed during the event
+    if (!file) return;
+
+    const ae = document.activeElement;
+    const inCardBody = ae && ae.classList && ae.classList.contains('card-body');
+    const editingElsewhere = !inCardBody && ae &&
+      (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+    if (editingElsewhere) return;           // don't hijack titles/modals
+
+    // If the user copied board nodes, the ⌘V keydown handler already pasted
+    // them — a stale screenshot on the OS clipboard shouldn't paste on top.
+    if (!inCardBody && clipboard) return;
+
+    e.preventDefault();
+    // Caret range must be captured before the async re-encode.
+    const sel = window.getSelection();
+    const range = inCardBody && sel && sel.rangeCount && ae.contains(sel.anchorNode)
+      ? sel.getRangeAt(0) : null;
+
+    imageFileToDataUri(file).then((uri) => {
+      if (inCardBody) {
+        const cardId = ae.closest('.node').dataset.id;
+        if (!board.cards[cardId]) return;
+        const imgEl = document.createElement('img');
+        imgEl.src = uri;
+        if (range) { range.deleteContents(); range.insertNode(imgEl); }
+        else ae.appendChild(imgEl);
+        saveCardBody(cardId, ae);
+      } else {
+        const r = visibleRect();
+        const id = newId('c_');
+        board.cards[id] = {
+          x: Math.round(r.x + r.w / 2 - 130), y: Math.round(r.y + r.h / 2 - 90),
+          title: '', body: '<img src="' + uri + '">',
+        };
+        renderCard(id);
+        selectNode(id);
+        commit();
+      }
+    }, () => { /* unreadable image: leave the board untouched */ });
+  });
+
+  // ════════════════════════════════════════════════════════
   //  RENDER ALL
   // ════════════════════════════════════════════════════════
   function renderAll() {
@@ -2445,7 +2525,7 @@
   //  RICH TEXT — card bodies are sanitized HTML, edited with a
   //  mini toolbar (bold / italic / list) and inline node links.
   // ════════════════════════════════════════════════════════
-  const ALLOWED_TAGS = new Set(['B', 'I', 'EM', 'STRONG', 'U', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'A']);
+  const ALLOWED_TAGS = new Set(['B', 'I', 'EM', 'STRONG', 'U', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'A', 'IMG']);
 
   function sanitizeHtml(html) {
     const src = document.createElement('div');
@@ -2456,6 +2536,17 @@
         if (n.nodeType === 3) {
           to.appendChild(document.createTextNode(n.nodeValue));
         } else if (n.nodeType === 1 && ALLOWED_TAGS.has(n.tagName)) {
+          // Images: embedded data URIs only — a remote src would leak views
+          // (and break offline), so anything else is dropped outright.
+          if (n.tagName === 'IMG') {
+            const src = n.getAttribute('src') || '';
+            if (/^data:image\//.test(src)) {
+              const img = document.createElement('img');
+              img.setAttribute('src', src);
+              to.appendChild(img);
+            }
+            return;
+          }
           const el = document.createElement(n.tagName.toLowerCase());
           if (n.tagName === 'A') {
             const href = n.getAttribute('href') || '';
@@ -2508,7 +2599,8 @@
     const tmp = document.createElement('div');
     tmp.innerHTML = sanitizeHtml(data.body || '');
     const t = (tmp.textContent || '').trim().replace(/\s+/g, ' ');
-    return t ? t.slice(0, 40) : '(untitled)';
+    if (t) return t.slice(0, 40);
+    return tmp.querySelector('img') ? '(image)' : '(untitled)';
   }
   function nodeTitle(id) {
     const n = getNode(id);
