@@ -495,8 +495,10 @@ body.space-pan #viewport.panning,
   top: calc(100% + 10px);
   left: 0;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: space-evenly;
   align-items: center;
+  width: 100%;
   gap: 0;                    /* the 24px targets carry their own 4px of air */
   background: var(--surface);
   border: 1px solid var(--border);
@@ -546,8 +548,16 @@ body.space-pan #viewport.panning,
   inset: 4px;
   border-radius: 50%;
   background: var(--surface2);
+  border: 1px solid transparent;
+  transition: transform 0.1s, background 0.1s, border-color 0.1s;
 }
-.cf-clear:hover { color: var(--text); }
+/* hover reads as "this clears": danger tint + grow, matching the dots' scale */
+.cf-clear:hover { color: var(--danger); }
+.cf-clear:hover::before {
+  transform: scale(1.15);
+  background: rgba(255, 138, 122, 0.16);
+  border-color: rgba(255, 138, 122, 0.5);
+}
 
 /* Filtered-out items fade back but stay in place (and stay clickable). */
 .node.filtered-out { opacity: 0.15; transition: opacity 0.15s; }
