@@ -43,14 +43,16 @@
   //  non-overlapping edits both survive; only the SAME field of the
   //  SAME node edited on both sides is a true conflict (local wins).
   // ════════════════════════════════════════════════════════
-  // Node/connection records are flat objects of primitives, so a shallow
-  // key+value compare is a correct equality test.
-  function shallowEqual(a, b) {
+  // Records are MOSTLY primitives, but some fields nest one object deep
+  // (a button's action: { type, target }), and the three sides come from
+  // different JSON parses — so equality must be by VALUE, recursively.
+  // Strict === here would flag every button as "edited on both sides".
+  function valueEqual(a, b) {
     if (a === b) return true;
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
     const ka = Object.keys(a), kb = Object.keys(b);
     if (ka.length !== kb.length) return false;
-    return ka.every((k) => a[k] === b[k]);
+    return ka.every((k) => valueEqual(a[k], b[k]));
   }
   // Merge one record (node/connection) edited on both sides, field by field.
   // Returns [mergedRecord, hadFieldConflict].
@@ -61,11 +63,15 @@
     const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
     for (const k of keys) {
       const bv = base[k], lv = local[k], rv = remote[k];
-      const lChanged = lv !== bv, rChanged = rv !== bv;
-      if (lChanged && rChanged && lv !== rv) { merged[k] = lv; conflict = true; }  // true tie → local wins
-      else if (lChanged) merged[k] = lv;
-      else if (rChanged) merged[k] = rv;
-      else merged[k] = lv !== undefined ? lv : rv;
+      const lChanged = !valueEqual(lv, bv), rChanged = !valueEqual(rv, bv);
+      let v;
+      if (lChanged && rChanged && !valueEqual(lv, rv)) { v = lv; conflict = true; }  // true tie → local wins
+      else if (lChanged) v = lv;
+      else if (rChanged) v = rv;
+      else v = lv !== undefined ? lv : rv;
+      // a side deleting a field yields undefined — leave the key out entirely
+      // (a present-but-undefined key would break value equality on later merges)
+      if (v !== undefined) merged[k] = v;
     }
     return [merged, conflict];
   }
@@ -76,8 +82,8 @@
     const ids = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
     for (const id of ids) {
       const b = base[id], l = local[id], r = remote[id];
-      const lChanged = !shallowEqual(b, l);   // includes add (b undefined) and delete (l undefined)
-      const rChanged = !shallowEqual(b, r);
+      const lChanged = !valueEqual(b, l);   // includes add (b undefined) and delete (l undefined)
+      const rChanged = !valueEqual(b, r);
       if (!lChanged && !rChanged) { if (l !== undefined) out[id] = l; continue; }   // untouched
       if (lChanged && !rChanged)  { if (l !== undefined) out[id] = l; continue; }   // only this side (edit/add/delete)
       if (!lChanged && rChanged)  { if (r !== undefined) out[id] = r; continue; }   // only the other side
@@ -3350,8 +3356,13 @@
     try {
       const picked = await DRIVE.pickFile();
       if (!picked) { updateDriveUI(); return; }
-      const content = normalizeBoard(await DRIVE.getFile(picked.id));
+      // Meta BEFORE content: if another device pushes between the two reads we
+      // record an older version than the content we fetched, which just causes
+      // a redundant pull next tick. The other order records a NEWER version
+      // than our content — "in sync" with edits we never saw, so a later local
+      // push would silently overwrite them.
       const meta = await DRIVE.getMeta(picked.id);
+      const content = normalizeBoard(await DRIVE.getFile(picked.id));
       const lib = loadLibrary();
       let entry = lib.find((b) => b.driveFileId === picked.id);
       let id;
@@ -3483,9 +3494,16 @@
       if (!loadBase(id)) saveBase(id, localBoard);   // establish a base for future merges
       return 'done';
     }
+    // The user can keep editing while our Drive calls are in flight. Any branch
+    // that REPLACES the live board must re-check for that before applying, or
+    // those mid-flight edits are silently thrown away. 'retry' re-reconciles,
+    // now seeing them as local changes to merge.
+    const editedMeanwhile = () => isCurrent && board.version !== localVersion;
+
     if (remoteChanged && !localChanged) {            // Drive is newer → pull
       setDriveState('syncing', 'Drive: updating…');
       const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+      if (editedMeanwhile()) return 'retry';         // edited during the fetch → merge instead
       applyPulledBoard(id, content);
       saveBase(id, content);
       setDriveSyncMeta(id, content.version, meta.version);
@@ -3494,10 +3512,15 @@
     }
     if (localChanged && !remoteChanged) {            // this device is ahead → push
       setDriveState('syncing', 'Drive: syncing…');
-      const g = await guardedUpdate(entry, localBoard, meta.version);
+      // Deep-snapshot BEFORE pushing: updateFile serializes at fetch time, so
+      // pushing the live board can send content newer than localVersion — and
+      // then the saved base wouldn't match what Drive actually holds, which
+      // makes a later merge resurrect stale remote values over our edit.
+      const snapshot = JSON.parse(JSON.stringify(contentForStore(localBoard)));
+      const g = await guardedUpdate(entry, snapshot, meta.version);
       if (g.stale) return 'retry';                   // Drive moved under us → re-reconcile & merge
-      saveBase(id, localBoard);
-      setDriveSyncMeta(id, localVersion, g.res.version);
+      saveBase(id, snapshot);
+      setDriveSyncMeta(id, snapshot.version, g.res.version);
       updateDriveUI();
       return 'done';
     }
@@ -3509,6 +3532,7 @@
       const { merged, conflicts, conflictItems } = mergeBoards(base, localBoard, remoteContent);
       const g = await guardedUpdate(entry, merged, meta.version);
       if (g.stale) return 'retry';                   // don't apply locally either — retry re-merges
+      if (editedMeanwhile()) return 'retry';         // edited during the write → re-merge those in
       applyPulledBoard(id, merged);
       saveBase(id, merged);
       setDriveSyncMeta(id, merged.version, g.res.version);

@@ -906,6 +906,44 @@ test('merge: delete on one side vs edit on the other keeps the edit', async ({ p
   expect(merged.cards.a.body).toBe('edited');   // don't lose the edit
 });
 
+// Button nodes nest an object (action: {type, target}) inside a record. Each
+// merge side comes from a separate JSON parse, so equality must be by value —
+// reference compare would flag every configured button as edited on both sides.
+test('merge: untouched button with a nested action is not a conflict', async ({ page }) => {
+  const btn = () => ({ x: 0, y: 0, title: 'Go', kind: 'button', action: { type: 'url', target: 'https://a.example' } });
+  const base = boardOf({ b1: btn() });
+  const local = boardOf({ b1: btn() });                      // untouched here
+  const remote = boardOf({ b1: btn(), c: card(5, 5, 'C') }); // other device added a card
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.b1.action).toEqual({ type: 'url', target: 'https://a.example' });
+  expect(merged.cards.c).toBeTruthy();
+});
+
+test('merge: remote changing a button link wins when this device did not touch it', async ({ page }) => {
+  const btn = (target) => ({ x: 0, y: 0, title: 'Go', kind: 'button', action: { type: 'url', target } });
+  const base = boardOf({ b1: btn('https://old.example') });
+  const local = boardOf({ b1: btn('https://old.example') });   // untouched here
+  const remote = boardOf({ b1: btn('https://new.example') });  // relinked there
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.b1.action.target).toBe('https://new.example');
+});
+
+// Removing a field (e.g. deleting a connection label, unsetting a button link)
+// must survive a merge as a removal — not resurrect, not leave a phantom key.
+test('merge: a field deleted on one side stays deleted', async ({ page }) => {
+  const base = boardOf({});
+  base.connections = { k: { from: 'a', to: 'b', label: 'old' } };
+  const local = boardOf({});
+  local.connections = { k: { from: 'a', to: 'b' } };            // label removed here
+  const remote = boardOf({});
+  remote.connections = { k: { from: 'a', to: 'b', label: 'old' } };
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect('label' in merged.connections.k).toBe(false);          // gone, not undefined
+});
+
 // The Drive conflict prompt exists but stays hidden for normal (device-board) use.
 test('Drive conflict modal is present and hidden by default', async ({ page }) => {
   await expect(page.locator('#conflict-modal')).toBeHidden();
