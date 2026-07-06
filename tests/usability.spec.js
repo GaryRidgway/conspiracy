@@ -665,6 +665,67 @@ test('image pastes inline into a card being edited; remote images are stripped',
   expect(srcs[0].startsWith('data:image/')).toBe(true);
 });
 
+// Button nodes: click to fly to a board item — the link is set in the modal
+// that opens on creation (and later via right-click → Change link…).
+test('a button linked to a board item flies the viewport there on click', async ({ page }) => {
+  const card = await addCardAt(page, 450, 350);
+  await card.locator('.card-title').dblclick();
+  await page.keyboard.type('Target Dossier');
+  await page.keyboard.press('Enter');
+
+  // pan far away, then create the button at the (new) view center
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 500, deltaY: 500, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(async () => within(await card.boundingBox(), page.viewportSize().width, page.viewportSize().height)).toBe(false);
+
+  await page.click('#addButton');
+  const modal = page.locator('#button-link-modal');
+  await expect(modal).toBeVisible();                       // creation prompts for the link
+  await page.keyboard.type('dossier');
+  await expect(modal.locator('.np-item')).toHaveCount(1);
+  await modal.locator('.np-item').click();
+  await expect(modal).toBeHidden();
+
+  const btn = page.locator('.btn-node');
+  await expect(btn).toHaveText(/Button/);
+  await btn.click();
+  const vp = page.viewportSize();
+  expect(within(await card.boundingBox(), vp.width, vp.height)).toBe(true);
+  await expect(card).toHaveClass(/selected/);
+
+  // rename via the context menu, and everything survives a reload
+  await page.click('#fitContent');           // the fly-to left the button off-screen
+  await btn.click({ button: 'right' });
+  await expect(page.locator('#context-menu')).toContainText('Change link…');
+  await page.locator('#context-menu .ctx-item', { hasText: 'Rename' }).click();
+  await page.keyboard.type('Go to dossier');
+  await page.keyboard.press('Enter');
+  await expect(btn).toHaveText('Go to dossier');
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.btn-node')).toHaveText('Go to dossier');
+});
+
+// A URL button opens the link in a new tab (noopener), like body links do.
+test('a button linked to a URL opens it in a new tab on click', async ({ page }) => {
+  await page.click('#addButton');
+  const modal = page.locator('#button-link-modal');
+  await expect(modal).toBeVisible();
+  const target = new URL('tests/fixtures/embed.html', page.url()).href;
+  await page.fill('#bl-input', target);
+  await expect(page.locator('#bl-use-url')).toBeEnabled();
+  await page.click('#bl-use-url');
+  await expect(modal).toBeHidden();
+
+  const [popup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.locator('.btn-node').click(),
+  ]);
+  expect(popup.url()).toContain('embed.html');
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

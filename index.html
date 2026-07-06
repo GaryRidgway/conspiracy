@@ -57,6 +57,9 @@
     <button class="tool-btn" id="addFrame" title="Embed a web page">
       <span class="icon icon-fit_screen"></span><span class="tool-label">Frame</span>
     </button>
+    <button class="tool-btn" id="addButton" title="Add a button that jumps to a board item or opens a URL">
+      <span class="icon icon-link"></span><span class="tool-label">Button</span>
+    </button>
   </div>
 
   <!-- Color legend/filter: one dot per color in use; click to spotlight.
@@ -126,6 +129,21 @@
       <div class="modal-actions">
         <button class="btn" id="clear-cancel">Cancel</button>
         <button class="btn danger" id="clear-confirm-btn" disabled>Clear board</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Button link picker: a URL, or a board item to fly to -->
+  <div id="button-link-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="button-link-title">
+      <h2 id="button-link-title">Button link</h2>
+      <label class="modal-label" for="bl-input">Paste a URL, or search this board</label>
+      <input id="bl-input" type="text" placeholder="https://… or a card/frame name"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="bl-list"></div>
+      <div class="modal-actions">
+        <button class="btn" id="bl-cancel">Cancel</button>
+        <button class="btn primary" id="bl-use-url" disabled>Link to URL</button>
       </div>
     </div>
   </div>

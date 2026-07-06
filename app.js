@@ -1006,6 +1006,9 @@
   function renderCard(id) {
     const data = board.cards[id];
     if (!data) return;
+    // Buttons live in the cards collection (so they merge/undo/copy like any
+    // card) but render and behave as their own node type.
+    if (data.kind === 'button') return renderButton(id);
 
     let el = nodeEls.get(id);
     if (!el) {
@@ -1088,6 +1091,108 @@
     const el = renderCard(id);
     selectNode(id);
     beginRename(el.querySelector('.card-title'));   // element is already in the DOM
+    return id;
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  BUTTON NODE — a pill that navigates on click: fly to a board item, or
+  //  open a URL in a new tab. The link is set via the right-click menu (or
+  //  the modal that opens on creation). data: { kind:'button', title,
+  //  action?: { type:'node'|'url', target } }.
+  // ════════════════════════════════════════════════════════
+  function renderButton(id) {
+    const data = board.cards[id];
+    let el = nodeEls.get(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'node btn-node';
+      el.dataset.id = id;
+      el.innerHTML = `<span class="icon"></span><span class="btn-node-label" spellcheck="false"></span>`;
+      world.appendChild(el);
+      nodeEls.set(id, el);
+      wireButton(id, el);
+      addPorts(el, id);
+    }
+    el.style.left = data.x + 'px';
+    el.style.top = data.y + 'px';
+    applyNodeColor(el, data.color);
+
+    const labelEl = el.querySelector('.btn-node-label');
+    if (document.activeElement !== labelEl) labelEl.textContent = data.title || 'Button';
+    // the icon telegraphs what the click does
+    const a = data.action;
+    el.querySelector('.icon').className = 'icon ' +
+      (!a || !a.target ? 'icon-add' : a.type === 'url' ? 'icon-link' : 'icon-center_focus_strong');
+    el.title = !a || !a.target ? 'Click to set this button’s link'
+      : a.type === 'url' ? a.target : 'Go to: ' + nodeTitle(a.target);
+    return el;
+  }
+
+  function wireButton(id, el) {
+    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+
+    const labelEl = el.querySelector('.btn-node-label');
+    // Click (press without moving) fires the action; any real movement is a
+    // drag. Renaming happens via the context menu, never a click.
+    let down = null;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.classList.contains('port')) return;
+      down = { x: e.clientX, y: e.clientY, shift: e.shiftKey };
+      if (!labelEl.isContentEditable) startNodeDrag(id, el, e);
+    });
+    el.addEventListener('pointerup', (e) => {
+      if (!down) return;
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4;
+      const shift = down.shift;
+      down = null;
+      if (!moved && !shift && !labelEl.isContentEditable) runButtonAction(id);
+    });
+
+    // inline rename (opened from the context menu): commit on blur/Enter
+    labelEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); labelEl.blur(); }
+    });
+    labelEl.addEventListener('input', () => { board.cards[id].title = labelEl.textContent; commit({ coalesce: true }); });
+    labelEl.addEventListener('blur', () => {
+      labelEl.removeAttribute('contenteditable');
+      const d = board.cards[id];
+      if (!d) return;
+      d.title = labelEl.textContent.trim();
+      renderButton(id);
+      commit();
+    });
+  }
+
+  function runButtonAction(id) {
+    const data = board.cards[id];
+    if (!data || data.kind !== 'button') return;
+    const a = data.action;
+    // no link yet (or the target item was deleted): configure instead
+    if (!a || !a.target || (a.type === 'node' && !getNode(a.target))) { openButtonLinkModal(id); return; }
+    if (a.type === 'url') {
+      window.open(a.target, '_blank', 'noopener');
+    } else {
+      frameNode(a.target);
+      selectNode(a.target);
+      flashNode(a.target);
+    }
+  }
+
+  function setButtonAction(id, action) {
+    const data = board.cards[id];
+    if (!data || data.kind !== 'button') return;
+    if (action) data.action = action; else delete data.action;
+    renderButton(id);
+    commit();
+  }
+
+  function createButton(worldX, worldY) {
+    const id = newId('c_');
+    board.cards[id] = { kind: 'button', x: Math.round(worldX), y: Math.round(worldY), title: 'Button' };
+    commit();
+    renderCard(id);
+    selectNode(id);
+    openButtonLinkModal(id);   // a button without a link does nothing — set it now
     return id;
   }
 
@@ -1641,7 +1746,7 @@
       if (c.from === id || c.to === id) {
         delete board.connections[cid];
         const ce = connEls.get(cid);
-        if (ce) { ce.g.remove(); connEls.delete(cid); }
+        if (ce) { ce.g.remove(); ce.labelEl.remove(); connEls.delete(cid); }
       }
     }
     selectedNodes.delete(id);
@@ -2042,7 +2147,16 @@
       const id = nodeEl.dataset.id;
       if (!selectedNodes.has(id)) selectNode(id);     // right-click grabs the node it's on
       const many = selectedNodes.size > 1;
-      const isFrame = getNode(id) && getNode(id).type === 'iframe';
+      const gn0 = getNode(id);
+      const isFrame = gn0 && gn0.type === 'iframe';
+      const isButton = gn0 && gn0.type === 'card' && gn0.data.kind === 'button';
+      if (isButton) {
+        const configured = gn0.data.action && gn0.data.action.target;
+        items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
+        items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.btn-node-label')) });
+        if (configured) items.push({ label: 'Remove link', action: () => setButtonAction(id, null) });
+        items.push('sep');
+      }
       items.push({ label: many ? 'Duplicate selection' : 'Duplicate', hint: '⌘D', action: duplicateSelection });
       items.push({ label: 'Copy', hint: '⌘C', action: copySelection });
       items.push({ label: 'Cut', hint: '⌘X', action: () => { copySelection(); for (const nid of [...selectedNodes]) deleteNode(nid); } });
@@ -2052,7 +2166,7 @@
       const curColor = (gn && gn.data.color) || null;   // reflects the right-clicked node
       items.push({ swatches: true, current: curColor, onPick: (key) => setNodesColor([...selectedNodes], key) });
       items.push('sep');
-      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete frame' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
+      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete frame' : isButton ? 'Delete button' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
     } else if (connG) {
       const id = connG.dataset.id;
       selectConn(id);
@@ -2231,6 +2345,87 @@
     const c = toWorld(innerWidth / 2, innerHeight / 2);
     createCard(c.x - 120, c.y - 24);
   });
+  document.getElementById('addButton').addEventListener('click', () => {
+    const c = toWorld(innerWidth / 2, innerHeight / 2);
+    createButton(c.x - 60, c.y - 18);
+  });
+
+  // ── Button-link modal: paste a URL, or pick a board item to fly to ──
+  const blModal = document.getElementById('button-link-modal');
+  const blInput = document.getElementById('bl-input');
+  const blList = document.getElementById('bl-list');
+  const blUseUrl = document.getElementById('bl-use-url');
+  let blButtonId = null;
+
+  function openButtonLinkModal(id) {
+    blButtonId = id;
+    blModal.classList.remove('hidden');
+    const a = board.cards[id] && board.cards[id].action;
+    blInput.value = a && a.type === 'url' ? a.target : '';
+    renderBlList(blInput.value);
+    blInput.focus();
+    blInput.select();
+  }
+  function closeButtonLinkModal() {
+    blModal.classList.add('hidden');
+    blButtonId = null;
+  }
+
+  // A plain search term filters board items; anything URL-shaped enables the
+  // "Link to URL" action instead.
+  function blLooksLikeUrl(v) {
+    const s = (v || '').trim();
+    return /^https?:\/\/\S+$/i.test(s) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s);
+  }
+  function renderBlList(query) {
+    const q = (query || '').trim().toLowerCase();
+    blUseUrl.disabled = !blLooksLikeUrl(q);
+    blList.innerHTML = '';
+    let any = false;
+    for (const id of nodeEls.keys()) {
+      if (id === blButtonId) continue;                    // a button linking to itself is a no-op
+      if (q && !nodeSearchText(id).includes(q)) continue;
+      any = true;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'np-item';
+      item.innerHTML = '<span class="np-type"></span><span class="np-label"></span>';
+      item.querySelector('.np-type').textContent = nodeKind(id);
+      item.querySelector('.np-label').textContent = nodeTitle(id);
+      item.addEventListener('click', () => {
+        const btn = blButtonId;
+        closeButtonLinkModal();
+        setButtonAction(btn, { type: 'node', target: id });
+      });
+      blList.appendChild(item);
+    }
+    if (!any) {
+      const empty = document.createElement('div');
+      empty.className = 'np-empty';
+      empty.textContent = blLooksLikeUrl(q) ? 'Press Enter to link this URL' : 'No matching items';
+      blList.appendChild(empty);
+    }
+  }
+  function submitBlUrl() {
+    const url = normalizeUrl(blInput.value);
+    if (!url || !blLooksLikeUrl(blInput.value)) { blInput.focus(); return; }
+    const btn = blButtonId;
+    closeButtonLinkModal();
+    setButtonAction(btn, { type: 'url', target: url });
+  }
+  blInput.addEventListener('input', () => renderBlList(blInput.value));
+  blInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeButtonLinkModal(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (blLooksLikeUrl(blInput.value)) { submitBlUrl(); return; }
+      const first = blList.querySelector('.np-item');
+      if (first) first.click();
+    }
+  });
+  blUseUrl.addEventListener('click', submitBlUrl);
+  document.getElementById('bl-cancel').addEventListener('click', closeButtonLinkModal);
+  blModal.addEventListener('pointerdown', (e) => { if (e.target === blModal) closeButtonLinkModal(); });
 
   // ── Themed modal — creates a new frame, or edits an existing frame's URL ──
   const frameModal = document.getElementById('frame-modal');
@@ -2606,12 +2801,14 @@
   function nodeTitle(id) {
     const n = getNode(id);
     if (!n) return 'node';
-    if (n.type === 'card') return cardSnippet(n.data);
+    if (n.type === 'card') return n.data.kind === 'button' ? (n.data.title || 'Button') : cardSnippet(n.data);
     return n.data.title || labelFor(n.data.src);
   }
   function nodeKind(id) {
     const n = getNode(id);
-    return n ? (n.type === 'card' ? 'Card' : 'Frame') : '';
+    if (!n) return '';
+    if (n.type === 'card') return n.data.kind === 'button' ? 'Button' : 'Card';
+    return 'Frame';
   }
 
   // ── floating toolbar ──
