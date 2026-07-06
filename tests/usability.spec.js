@@ -726,6 +726,68 @@ test('a button linked to a URL opens it in a new tab on click', async ({ page })
   expect(popup.url()).toContain('embed.html');
 });
 
+// Frames: a named region of the board, linkable like any node, sitting behind
+// content with a click-through interior.
+test('a frame is a named, linkable region whose interior stays click-through', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.type('Evidence wall');
+  await page.keyboard.press('Enter');
+  const frame = page.locator('.frame-node');
+  await expect(frame.locator('.frame-name')).toHaveText('Evidence wall');
+
+  // interior is click-through: a card can be created and selected inside it
+  const card = await addCardAt(page, 640, 360);
+  await expect(card).toBeVisible();
+
+  // pan far away, then fly back to the frame by name via quick jump
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 500, deltaY: 500, bubbles: true, cancelable: true }));
+  });
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.keyboard.type('evidence wall');
+  await expect(page.locator('#jump-list .np-item')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  const vp = page.viewportSize();
+  expect(within(await frame.boundingBox(), vp.width, vp.height)).toBe(true);
+
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.frame-node .frame-name')).toHaveText('Evidence wall');
+});
+
+// The context-menu toggle: a frame set to "move items with frame" carries
+// everything fully inside it when dragged; toggled off, it moves alone.
+test('the move-items-with-frame toggle carries contents only while enabled', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');                     // keep default name
+  const frame = page.locator('.frame-node');
+  const card = await addCardAt(page, 640, 360);            // fully inside the frame
+  const tab = frame.locator('.frame-tab');
+
+  // enable the toggle
+  await tab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Move items with frame' }).click();
+
+  const cardBefore = await card.boundingBox();
+  let t = await tab.boundingBox();
+  await drag(page, { x: t.x + t.width / 2, y: t.y + t.height / 2 },
+                   { x: t.x + t.width / 2 + 150, y: t.y + t.height / 2 + 100 });
+  const cardAfter = await card.boundingBox();
+  expect(Math.round(cardAfter.x - cardBefore.x)).toBe(150);  // card came along
+  expect(Math.round(cardAfter.y - cardBefore.y)).toBe(100);
+
+  // disable (the item now shows a checkmark) and drag again: card stays put
+  await tab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: '✓ Move items with frame' }).click();
+  t = await tab.boundingBox();
+  await drag(page, { x: t.x + t.width / 2, y: t.y + t.height / 2 },
+                   { x: t.x + t.width / 2 - 150, y: t.y + t.height / 2 - 100 });
+  const cardFinal = await card.boundingBox();
+  expect(Math.round(cardFinal.x)).toBe(Math.round(cardAfter.x));
+  expect(Math.round(cardFinal.y)).toBe(Math.round(cardAfter.y));
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

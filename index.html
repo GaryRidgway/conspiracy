@@ -15,7 +15,7 @@
   <div id="empty-hint" class="hidden">
     <span class="icon icon-add"></span>
     <p>This board is empty.</p>
-    <p class="empty-sub">Add a <strong>Card</strong> or <strong>Frame</strong> from the palette on the left to start.</p>
+    <p class="empty-sub">Add a <strong>Card</strong>, <strong>Frame</strong>, or <strong>Embed</strong> from the palette on the left to start.</p>
   </div>
 
   <div id="toolbar">
@@ -54,8 +54,11 @@
     <button class="tool-btn" id="addCard" title="Add a card">
       <span class="icon icon-add"></span><span class="tool-label">Card</span>
     </button>
+    <button class="tool-btn" id="addFrameNode" title="Add a frame — a named area of the board you can link to">
+      <span class="icon icon-center_focus_strong"></span><span class="tool-label">Frame</span>
+    </button>
     <button class="tool-btn" id="addFrame" title="Embed a web page">
-      <span class="icon icon-fit_screen"></span><span class="tool-label">Frame</span>
+      <span class="icon icon-fit_screen"></span><span class="tool-label">Embed</span>
     </button>
     <button class="tool-btn" id="addButton" title="Add a button that jumps to a board item or opens a URL">
       <span class="icon icon-link"></span><span class="tool-label">Button</span>
@@ -99,7 +102,7 @@
 
   <!-- Quick jump (⌘K): search every card/frame by its text and fly to it -->
   <div id="jump" class="hidden">
-    <input id="jump-input" type="text" placeholder="Jump to a card or frame…" autocomplete="off" spellcheck="false">
+    <input id="jump-input" type="text" placeholder="Jump to anything on this board…" autocomplete="off" spellcheck="false">
     <div id="jump-list"></div>
   </div>
 
@@ -113,7 +116,7 @@
       <p class="modal-note">Many sites block embedding (X-Frame-Options / CSP) and will show blank.</p>
       <div class="modal-actions">
         <button class="btn" id="frame-cancel">Cancel</button>
-        <button class="btn primary" id="frame-add">Add frame</button>
+        <button class="btn primary" id="frame-add">Add embed</button>
       </div>
     </div>
   </div>

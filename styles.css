@@ -123,6 +123,79 @@ body.space-pan #viewport.panning,
 }
 .node.colored .port { background: var(--node-color-hi); }
 
+/* ── Frame node — a named region behind everything. The interior is
+   click-through (pointer-events pierce to the canvas / items inside);
+   only the title tab and resize corner are interactive. ── */
+.frame-node {
+  position: absolute;
+  z-index: -1;                       /* behind cards, embeds, and connections */
+  pointer-events: none;
+  border: 1.5px solid var(--border2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  transition: border-color 0.12s;
+}
+.frame-node .frame-tab {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.15rem 0.3rem 0.15rem 0.55rem;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  pointer-events: auto;              /* the grab/rename/menu surface */
+  cursor: grab;
+}
+.frame-node.dragging .frame-tab { cursor: grabbing; }
+.frame-node .frame-name {
+  min-width: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  outline: none;
+  border-radius: 4px;
+}
+.frame-node .frame-name[contenteditable] {
+  cursor: text;
+  overflow: visible;
+  background: var(--surface2);
+  padding: 0 0.2rem;
+}
+.frame-node .frame-resize {
+  position: absolute;
+  right: -7px; bottom: -7px;
+  width: 16px; height: 16px;
+  border-right: 3px solid var(--border2);
+  border-bottom: 3px solid var(--border2);
+  border-radius: 0 0 8px 0;
+  pointer-events: auto;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.frame-node:hover .frame-resize, .frame-node.selected .frame-resize { opacity: 1; }
+.frame-node.selected { border-color: var(--accent); }
+.frame-node.selected .frame-tab { border-color: var(--accent); }
+.frame-node.colored {
+  border-color: var(--node-color);
+  background: color-mix(in srgb, var(--node-color) 5%, transparent);
+}
+.frame-node.colored .frame-tab {
+  border-color: color-mix(in srgb, var(--node-color) 55%, transparent);
+  background: color-mix(in srgb, var(--node-color) 15%, var(--surface));
+}
+.frame-node.colored .frame-name { color: var(--text); }
+.frame-node.colored.selected,
+.frame-node.colored.selected .frame-tab { border-color: var(--node-color-hi); }
+
 /* ── Button node — looks pushable: a raised face on a hard bottom edge that
    physically depresses on click (drag still moves it). ── */
 .btn-node {

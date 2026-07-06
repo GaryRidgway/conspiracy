@@ -110,7 +110,7 @@
     for (const it of conflictItems) {
       const n = normalized[it.coll][it.id];
       it.label = it.coll === 'cards' ? ((n && n.title) || 'Untitled card')
-        : it.coll === 'iframes' ? ((n && (n.src || '').replace(/^https?:\/\//, '').split('/')[0]) || 'Frame')
+        : it.coll === 'iframes' ? ((n && (n.src || '').replace(/^https?:\/\//, '').split('/')[0]) || 'Embed')
         : 'a connection';
     }
     return { merged: normalized, conflicts: conflictItems.length, conflictItems };
@@ -777,8 +777,16 @@
     // isn't in the selection (edge case), fall back to selecting just it.
     if (!selectedNodes.has(id)) selectNode(id);
 
-    // move every selected node together
-    const movers = [...selectedNodes].map((nid) => {
+    // move every selected node together — and a frame set to move its
+    // contents also carries whatever sits fully inside it right now
+    const carried = new Set(selectedNodes);
+    for (const nid of selectedNodes) {
+      const n = getNode(nid);
+      if (n && n.data.kind === 'frame' && n.data.moveContents) {
+        for (const cid of frameContents(nid)) carried.add(cid);
+      }
+    }
+    const movers = [...carried].map((nid) => {
       const d = getNode(nid).data;
       return { nid, d, ox: d.x, oy: d.y, el: nodeEls.get(nid) };
     });
@@ -1006,9 +1014,10 @@
   function renderCard(id) {
     const data = board.cards[id];
     if (!data) return;
-    // Buttons live in the cards collection (so they merge/undo/copy like any
-    // card) but render and behave as their own node type.
+    // Buttons and frames live in the cards collection (so they merge/undo/copy
+    // like any card) but render and behave as their own node types.
     if (data.kind === 'button') return renderButton(id);
+    if (data.kind === 'frame') return renderFrameNode(id);
 
     let el = nodeEls.get(id);
     if (!el) {
@@ -1197,6 +1206,112 @@
   }
 
   // ════════════════════════════════════════════════════════
+  //  FRAME NODE — a named region of the board (Miro-style frame): sits behind
+  //  everything, its interior is click-through, and only the title tab and
+  //  resize handle are interactive. Linkable like any node (deep links,
+  //  buttons, ⌘K). data: { kind:'frame', x, y, w, h, title, moveContents? }.
+  // ════════════════════════════════════════════════════════
+  function renderFrameNode(id) {
+    const data = board.cards[id];
+    let el = nodeEls.get(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'node frame-node';
+      el.dataset.id = id;
+      el.innerHTML = `
+        <div class="frame-tab">
+          <span class="frame-name" title="Double-click to rename" spellcheck="false"></span>
+          <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
+        </div>
+        <div class="frame-resize" title="Resize"></div>`;
+      world.appendChild(el);
+      nodeEls.set(id, el);
+      wireFrameNode(id, el);
+      // no ports: arrows connect ideas, not regions
+    }
+    el.style.left = data.x + 'px';
+    el.style.top = data.y + 'px';
+    el.style.width = data.w + 'px';
+    el.style.height = data.h + 'px';
+    applyNodeColor(el, data.color);
+    const nameEl = el.querySelector('.frame-name');
+    if (document.activeElement !== nameEl) nameEl.textContent = data.title || 'Frame';
+    return el;
+  }
+
+  function wireFrameNode(id, el) {
+    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+
+    const tab = el.querySelector('.frame-tab');
+    const nameEl = el.querySelector('.frame-name');
+    tab.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      if (nameEl.isContentEditable) return;
+      startNodeDrag(id, el, e);
+    });
+    makeRenamable(nameEl, {
+      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true }); },
+      onCommit: (v) => { board.cards[id].title = v; renderFrameNode(id); commit(); },
+    });
+    el.querySelector('.copy-link').addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyNodeLink(id, e.currentTarget);
+    });
+
+    el.querySelector('.frame-resize').addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      selectNode(id);
+      const data = board.cards[id];
+      const start = toWorld(e.clientX, e.clientY);
+      const ow = data.w, oh = data.h;
+      let moved = false;
+      const onMove = (ev) => {
+        const now = toWorld(ev.clientX, ev.clientY);
+        data.w = Math.max(200, Math.round(ow + (now.x - start.x)));
+        data.h = Math.max(140, Math.round(oh + (now.y - start.y)));
+        el.style.width = data.w + 'px';
+        el.style.height = data.h + 'px';
+        moved = true;
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        if (moved) commit();
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    });
+  }
+
+  function createFrameNode(worldX, worldY) {
+    const id = newId('c_');
+    board.cards[id] = { kind: 'frame', x: Math.round(worldX), y: Math.round(worldY), w: 640, h: 400, title: 'Frame' };
+    commit();
+    const el = renderCard(id);
+    selectNode(id);
+    beginRename(el.querySelector('.frame-name'));
+    return id;
+  }
+
+  // Ids of nodes sitting fully inside the frame's rectangle — what a
+  // "moves its contents" frame carries along when dragged.
+  function frameContents(frameId) {
+    const fg = nodeGeom(frameId);
+    if (!fg) return [];
+    const out = [];
+    for (const nid of nodeEls.keys()) {
+      if (nid === frameId) continue;
+      const g = nodeGeom(nid);
+      if (g && g.x >= fg.x && g.y >= fg.y && g.x + g.w <= fg.x + fg.w && g.y + g.h <= fg.y + fg.h) out.push(nid);
+    }
+    return out;
+  }
+
+  // ════════════════════════════════════════════════════════
   //  IFRAME NODE
   // ════════════════════════════════════════════════════════
   let interactiveId = null; // which iframe is in interact mode (runtime only)
@@ -1229,7 +1344,7 @@
         <div class="iframe-header">
           <span class="iframe-label" title="Double-click to rename" spellcheck="false"></span>
           <button class="iframe-edit icon-btn" title="Edit URL"><span class="icon icon-edit"></span></button>
-          <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
+          <button class="copy-link icon-btn" title="Copy link to this embed"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
             <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
@@ -1237,7 +1352,7 @@
           </span>
           <button class="iframe-zoom icon-btn" title="Zoom canvas to this frame"><span class="icon icon-center_focus_strong"></span></button>
           <button class="iframe-toggle" title="Toggle interact mode">interact</button>
-          <button class="card-delete icon-btn" title="Delete frame"><span class="icon icon-delete"></span></button>
+          <button class="card-delete icon-btn" title="Delete embed"><span class="icon icon-delete"></span></button>
         </div>
         <div class="iframe-wrap">
           <div class="frame-placeholder" title="Click to load">
@@ -2020,6 +2135,10 @@
       const a = toWorld(x, y), b = toWorld(x + w, y + h);   // box in world coords
       const sel = new Set(baseSel);
       for (const id of nodeEls.keys()) {
+        // frames span whole regions — any large box-select would always grab
+        // them (and drag their contents), so they only select via their tab
+        const n = getNode(id);
+        if (n && n.data.kind === 'frame') continue;
         const g = nodeGeom(id);
         if (g && rectsOverlap(g.x, g.y, g.w, g.h, a.x, a.y, b.x - a.x, b.y - a.y)) sel.add(id);
       }
@@ -2150,6 +2269,19 @@
       const gn0 = getNode(id);
       const isFrame = gn0 && gn0.type === 'iframe';
       const isButton = gn0 && gn0.type === 'card' && gn0.data.kind === 'button';
+      const isFrameRegion = gn0 && gn0.type === 'card' && gn0.data.kind === 'frame';
+      if (isFrameRegion) {
+        const on = !!gn0.data.moveContents;
+        items.push({
+          label: (on ? '✓ ' : '') + 'Move items with frame',
+          action: () => {
+            if (on) delete gn0.data.moveContents; else gn0.data.moveContents = true;
+            commit();
+          },
+        });
+        items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.frame-name')) });
+        items.push('sep');
+      }
       if (isButton) {
         const configured = gn0.data.action && gn0.data.action.target;
         items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
@@ -2166,7 +2298,7 @@
       const curColor = (gn && gn.data.color) || null;   // reflects the right-clicked node
       items.push({ swatches: true, current: curColor, onPick: (key) => setNodesColor([...selectedNodes], key) });
       items.push('sep');
-      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete frame' : isButton ? 'Delete button' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
+      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete embed' : isButton ? 'Delete button' : isFrameRegion ? 'Delete frame' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
     } else if (connG) {
       const id = connG.dataset.id;
       selectConn(id);
@@ -2176,7 +2308,8 @@
       items.push({ label: 'Delete connection', hint: 'Del', danger: true, action: () => deleteConnection(id) });
     } else {
       items.push({ label: 'Add card here', action: () => createCard(world.x - 120, world.y - 24) });
-      items.push({ label: 'Add frame here', action: () => openFrameModal({ type: 'create', at: world }) });
+      items.push({ label: 'Add frame here', action: () => createFrameNode(world.x - 320, world.y - 200) });
+      items.push({ label: 'Add embed here', action: () => openFrameModal({ type: 'create', at: world }) });
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
       items.push('sep');
       items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
@@ -2349,6 +2482,10 @@
     const c = toWorld(innerWidth / 2, innerHeight / 2);
     createButton(c.x - 60, c.y - 18);
   });
+  document.getElementById('addFrameNode').addEventListener('click', () => {
+    const c = toWorld(innerWidth / 2, innerHeight / 2);
+    createFrameNode(c.x - 320, c.y - 200);
+  });
 
   // ── Button-link modal: paste a URL, or pick a board item to fly to ──
   const blModal = document.getElementById('button-link-modal');
@@ -2437,8 +2574,8 @@
   function openFrameModal(mode) {
     frameModalMode = mode;
     const isEdit = mode.type === 'edit';
-    frameModalTitle.textContent = isEdit ? 'Edit frame URL' : 'Embed a web page';
-    frameAddBtn.textContent = isEdit ? 'Save' : 'Add frame';
+    frameModalTitle.textContent = isEdit ? 'Edit embed URL' : 'Embed a web page';
+    frameAddBtn.textContent = isEdit ? 'Save' : 'Add embed';
     frameModal.classList.remove('hidden');
     frameUrl.value = isEdit ? (mode.src || '') : '';
     frameUrl.focus();
@@ -2801,14 +2938,18 @@
   function nodeTitle(id) {
     const n = getNode(id);
     if (!n) return 'node';
-    if (n.type === 'card') return n.data.kind === 'button' ? (n.data.title || 'Button') : cardSnippet(n.data);
+    if (n.type === 'card') {
+      if (n.data.kind === 'button') return n.data.title || 'Button';
+      if (n.data.kind === 'frame') return n.data.title || 'Frame';
+      return cardSnippet(n.data);
+    }
     return n.data.title || labelFor(n.data.src);
   }
   function nodeKind(id) {
     const n = getNode(id);
     if (!n) return '';
-    if (n.type === 'card') return n.data.kind === 'button' ? 'Button' : 'Card';
-    return 'Frame';
+    if (n.type === 'card') return n.data.kind === 'button' ? 'Button' : n.data.kind === 'frame' ? 'Frame' : 'Card';
+    return 'Embed';
   }
 
   // ── floating toolbar ──
@@ -2904,7 +3045,7 @@
     nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
     nodePicker.style.top = (r.bottom + 6) + 'px';
     npFilter.value = '';
-    npFilter.placeholder = editingLink ? 'Change link target…' : 'Card, frame, or paste an ID…';
+    npFilter.placeholder = editingLink ? 'Change link target…' : 'Search this board, or paste an ID…';
     npFilter.focus();
   }
   function closeNodePicker() { nodePicker.classList.add('hidden'); editingLink = null; }
