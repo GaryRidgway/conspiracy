@@ -1162,3 +1162,27 @@ test('modals trap Tab: focus cycles inside the embed dialog', async ({ page }) =
   }
   await page.keyboard.press('Escape');
 });
+
+// The link picker hangs off the edit toolbar's link button; like the toolbar
+// (see the 2d test above) it must re-anchor as the board pans, not stick to
+// its original screen position.
+test('the link picker stays anchored to the toolbar when the board is panned', async ({ page }) => {
+  await addCardAt(page, 500, 350);
+  await page.locator('.node.card .card-body').first().click();
+  await page.click('#tt-link');
+  const picker = page.locator('#node-picker');
+  await expect(picker).toBeVisible();
+  const before = await picker.evaluate((el) => parseFloat(el.style.top));
+  await page.evaluate(() => document.getElementById('viewport').dispatchEvent(
+    new WheelEvent('wheel', { deltaY: 220, clientX: 600, clientY: 400, bubbles: true, cancelable: true })));
+  // the card (and toolbar) moved up on screen — the picker must follow (~ the pan delta)
+  await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.top))).toBeLessThan(before - 100);
+  // and it still hangs just below the toolbar's link button
+  const gap = await page.evaluate(() => {
+    const b = document.getElementById('tt-link').getBoundingClientRect();
+    const p = document.getElementById('node-picker').getBoundingClientRect();
+    return p.top - b.bottom;
+  });
+  expect(gap).toBeGreaterThan(0);
+  expect(gap).toBeLessThan(12);
+});

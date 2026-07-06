@@ -3241,7 +3241,12 @@
     positionTextToolbar(cardEl);
   }
   function repositionTextToolbar() {
-    if (textToolbarEl && !textToolbar.classList.contains('hidden')) positionTextToolbar(textToolbarEl);
+    if (textToolbarEl && !textToolbar.classList.contains('hidden')) {
+      positionTextToolbar(textToolbarEl);
+      // the node picker hangs off the toolbar's link button — after the
+      // toolbar re-anchors, move the picker with it (same pan/zoom bug)
+      if (!nodePicker.classList.contains('hidden')) positionNodePicker();
+    }
   }
   function hideTextToolbarIfIdle() {
     const ae = document.activeElement;
@@ -3273,13 +3278,16 @@
   });
   ttLink.addEventListener('click', () => openNodePicker());
 
+  function positionNodePicker() {
+    const r = ttLink.getBoundingClientRect();
+    nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
+    nodePicker.style.top = (r.bottom + 6) + 'px';
+  }
   function openNodePicker() {
     if (!activeBody) return;
     renderPickerList('');
     nodePicker.classList.remove('hidden');
-    const r = ttLink.getBoundingClientRect();
-    nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
-    nodePicker.style.top = (r.bottom + 6) + 'px';
+    positionNodePicker();
     npFilter.value = '';
     npFilter.placeholder = editingLink ? 'Change link target…' : 'Search this board, or paste an ID…';
     npFilter.focus();
