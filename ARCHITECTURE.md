@@ -210,8 +210,13 @@ exercise it without OAuth — keep it pure.
 - Pasted images are canvas-downscaled (longest edge 1600px, WebP 0.85 with
   PNG fallback, halving until ≤ ~1.5MB) before becoming data URIs —
   localStorage quota is the whole database.
-- Embeds are plain `<iframe>`s: cross-origin isolation is the sandbox. Many
-  sites refuse framing (X-Frame-Options/CSP) and show blank; that's expected.
+- Embed and button URLs are untrusted (a shared/imported board is authored by
+  someone else). **Every URL that reaches an `<iframe src>` or `window.open()`
+  must pass `safeNavUrl()` (http/https only)** — the iframe has no sandbox, so
+  a `javascript:` src would execute in this origin (stored XSS). The create
+  paths normalize via the modal; the load/render paths guard at the sink.
+  Many real sites refuse framing (X-Frame-Options/CSP) and show blank; that's
+  expected, not the guard.
 - `config.js` values are origin-restricted client identifiers, not secrets.
   Gotcha: the API key's Website restriction must include the **bare origin**
   (`https://garyridgway.github.io/*`) — the Picker validates against the
