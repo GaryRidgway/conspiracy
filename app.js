@@ -949,15 +949,6 @@
   const colorFilterEl = document.getElementById('color-filter');
   const colorFilter = new Set();          // active palette keys; empty = show all
 
-  // Keep the legend glued under the tools palette, whatever the palette's
-  // height (it grows as tools are added) or the window size.
-  function positionColorFilter() {
-    if (colorFilterEl.classList.contains('hidden')) return;
-    const tools = document.getElementById('tools');
-    colorFilterEl.style.top = (tools.getBoundingClientRect().bottom + 10) + 'px';
-  }
-  window.addEventListener('resize', positionColorFilter);
-
   function colorsInUse() {
     const used = new Set();
     for (const n of Object.values(board.cards)) if (n.color) used.add(n.color);
@@ -1017,7 +1008,6 @@
       colorFilterEl.appendChild(clear);
     }
     colorFilterEl.classList.remove('hidden');
-    positionColorFilter();
     applyColorFilter();
   }
 

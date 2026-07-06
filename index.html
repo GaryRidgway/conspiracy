@@ -63,11 +63,11 @@
     <button class="tool-btn" id="addButton" title="Add a button that jumps to a board item or opens a URL">
       <span class="icon icon-link"></span><span class="tool-label">Button</span>
     </button>
+    <!-- Color legend/filter: one dot per color in use; click to spotlight.
+         Populated by JS, hidden while the board has no colored items.
+         Lives inside #tools so CSS can hang it off the palette's bottom. -->
+    <div id="color-filter" class="hidden"></div>
   </div>
-
-  <!-- Color legend/filter: one dot per color in use; click to spotlight.
-       Populated by JS, hidden while the board has no colored items. -->
-  <div id="color-filter" class="hidden"></div>
 
   <div id="status">
     <span id="coords">x: 0  y: 0</span>

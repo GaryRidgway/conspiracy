@@ -487,12 +487,13 @@ body.space-pan #viewport.panning,
   padding: 0.4rem;
   box-shadow: 0 6px 22px rgba(0,0,0,0.35);
 }
-/* ── Color legend/filter — anchored just below the tools palette
-   (top is set in JS from the palette's measured bottom edge) ── */
+/* ── Color legend/filter — its own panel hung off the palette's bottom edge.
+   Absolute inside #tools: it tracks the palette at any height without
+   nudging the palette's centering when it appears. ── */
 #color-filter {
-  position: fixed;
-  left: 1rem;
-  z-index: 10;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
