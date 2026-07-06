@@ -123,26 +123,36 @@ body.space-pan #viewport.panning,
 }
 .node.colored .port { background: var(--node-color-hi); }
 
-/* ── Button node — a pill that navigates on click (drag to move) ── */
+/* ── Button node — looks pushable: a raised face on a hard bottom edge that
+   physically depresses on click (drag still moves it). ── */
 .btn-node {
   position: absolute;
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
   max-width: 320px;
-  padding: 0.45rem 0.95rem;
-  background: var(--surface);
+  padding: 0.5rem 1.05rem 0.55rem;
+  /* raised face: lit top edge fading into the base color */
+  --btn-face-hi: color-mix(in srgb, var(--surface2) 86%, white);
+  --btn-face-lo: var(--surface2);
+  --btn-edge: #0B0C10;               /* the hard 3D edge underneath */
+  --btn-ring: transparent;           /* selection ring slot */
+  background: linear-gradient(180deg, var(--btn-face-hi), var(--btn-face-lo));
   border: 1px solid var(--border2);
-  border-radius: 999px;
+  border-radius: 9px;
   font-size: 0.85rem;
   font-weight: 650;
   color: var(--text);
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
-  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  box-shadow: 0 0 0 1px var(--btn-ring), 0 3px 0 var(--btn-edge), 0 7px 16px rgba(0,0,0,0.4);
+  transition: border-color 0.12s, box-shadow 0.1s, transform 0.06s, background 0.12s;
 }
-.btn-node:hover { background: var(--surface2); border-color: var(--border2); }
+.btn-node:hover { --btn-face-hi: color-mix(in srgb, var(--surface2) 78%, white); }
+.btn-node:active {
+  transform: translateY(2px);        /* the press: sink onto the edge */
+  box-shadow: 0 0 0 1px var(--btn-ring), 0 1px 0 var(--btn-edge), 0 3px 8px rgba(0,0,0,0.35);
+}
 .btn-node .icon { flex: none; width: 15px; height: 15px; color: var(--text-2); }
 .btn-node .btn-node-label {
   min-width: 0;
@@ -155,20 +165,20 @@ body.space-pan #viewport.panning,
 .btn-node .btn-node-label[contenteditable] {
   cursor: text;
   overflow: visible;
-  background: var(--surface2);
+  background: var(--bg);
   padding: 0 0.2rem;
   margin: 0 -0.2rem;
 }
-.btn-node.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 6px 18px rgba(0,0,0,0.4);
+.btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
+/* colored buttons wear their color as the face, with a darker edge of it */
+.btn-node.colored {
+  border-color: color-mix(in srgb, var(--node-color) 70%, black);
+  --btn-face-hi: color-mix(in srgb, var(--node-color) 42%, var(--surface2));
+  --btn-face-lo: color-mix(in srgb, var(--node-color) 22%, var(--surface));
+  --btn-edge: color-mix(in srgb, var(--node-color) 38%, black);
 }
-.btn-node.colored { border-color: var(--node-color); background: color-mix(in srgb, var(--node-color) 12%, var(--surface)); }
-.btn-node.colored .icon { color: var(--node-color); }
-.btn-node.colored.selected {
-  border-color: var(--node-color-hi);
-  box-shadow: 0 0 0 1px var(--node-color-hi), 0 6px 18px rgba(0,0,0,0.4);
-}
+.btn-node.colored .icon { color: var(--node-color-hi); }
+.btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 
 /* ── Shared node header (cards + iframes) ── */
 .card-header {
