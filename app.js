@@ -3232,39 +3232,75 @@
   // they hug the edge, detached from anything visible.
   const anchorOnScreen = (r) =>
     r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
-  // True once the anchored card has left the screen, so the off-screen glide
-  // runs exactly ONCE at the crossing. Re-pointing the target every frame of a
-  // fast pan would restart the 0.3s ease each frame — the toolbar could never
-  // keep up and would hang near the edge. Instead we glide it off once and
-  // freeze (it's invisible) until the card comes back.
+
+  // Off/return glide, shared by the toolbar and its picker.
+  //
+  // While the card is on screen the controls track it every frame with NO
+  // transition (instant, no lag). The 0.3s ease runs only at the two crossings:
+  // once when the card leaves the screen (glide OFF, fully out of view) and once
+  // when it returns (glide BACK to its tracked spot). Between crossings, while
+  // off screen, the control is frozen — re-pointing its target every frame of a
+  // fast pan would restart the ease each frame, so it could never keep up and
+  // would hang at the edge (the bug this replaced). A per-element flag marks the
+  // released (off-screen, frozen) state; a `.gliding` class marks an ease in
+  // flight, during which we don't re-target. When an ease finishes we re-run the
+  // positioner so a card that came back mid-glide is caught (self-healing).
+  const GLIDE_MS = 300;
+  // Push a control fully off screen toward whichever edge(s) its card exited,
+  // keeping its natural coordinate on the perpendicular axis so it slides
+  // straight off rather than diagonally to a corner.
+  function offScreenTarget(r, natLeft, natTop, w, h) {
+    let left = natLeft, top = natTop;
+    if (r.right <= 0) left = -w - 24;
+    else if (r.left >= innerWidth) left = innerWidth + 24;
+    if (r.bottom <= 0) top = -h - 24;
+    else if (r.top >= innerHeight) top = innerHeight + 24;
+    return { left, top };
+  }
+  function glide(el, left, top, onDone) {
+    clearTimeout(el._glideTimer);
+    el.classList.add('gliding');
+    void el.offsetWidth;                       // commit the current spot as the ease's start
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    el._glideTimer = setTimeout(() => {
+      el.classList.remove('gliding');
+      if (onDone) onDone();                    // re-evaluate: state may have changed mid-ease
+    }, GLIDE_MS + 40);
+  }
+
   let toolbarReleased = false;
-  // Returns true if it (re)positioned, false if it left a frozen off-screen
+  // Returns true if it (re)positioned, false if it left a frozen/gliding
   // toolbar untouched — so the picker only re-tracks when the toolbar moved.
   function positionTextToolbar(cardEl) {
+    if (textToolbar.classList.contains('gliding')) return false;   // ease in flight → let it finish
     const r = cardEl.getBoundingClientRect();
-    const th = textToolbar.offsetHeight;
-    if (anchorOnScreen(r)) {                                  // on screen → instant, clamped
-      const tw = textToolbar.offsetWidth;
-      let left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
-      let top = r.top - th - 8;
-      if (top < 8) top = r.bottom + 8;                        // flip below when clipped above
-      top = Math.max(8, Math.min(top, innerHeight - th - 8)); // …and never off the bottom
-      textToolbar.classList.remove('gliding');
-      textToolbar.style.left = left + 'px';
-      textToolbar.style.top = top + 'px';
-      toolbarReleased = false;
+    const th = textToolbar.offsetHeight, tw = textToolbar.offsetWidth;
+    let left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
+    let top = r.top - th - 8;
+    if (top < 8) top = r.bottom + 8;                          // flip below when clipped above
+    top = Math.max(8, Math.min(top, innerHeight - th - 8));   // …and never off the bottom
+    if (!anchorOnScreen(r)) {
+      if (toolbarReleased) return false;                      // already off → freeze
+      toolbarReleased = true;                                 // just crossed off → one glide out
+      const t = offScreenTarget(r, left, top, tw, th);
+      glide(textToolbar, t.left, t.top, repositionTextToolbar);
       return true;
     }
-    if (toolbarReleased) return false;                        // already glided off → leave it
-    toolbarReleased = true;                                   // just crossed off → one glide off
-    textToolbar.classList.add('gliding');
-    void textToolbar.offsetWidth;                             // commit the edge start before moving
-    textToolbar.style.left = r.left + 'px';                   // unclamped → follows the card off
-    textToolbar.style.top = (r.top - th - 8) + 'px';
+    if (toolbarReleased) {                                    // returning → one glide back in
+      toolbarReleased = false;
+      glide(textToolbar, left, top, repositionTextToolbar);
+      return true;
+    }
+    textToolbar.style.left = left + 'px';                     // steady on-screen tracking → instant
+    textToolbar.style.top = top + 'px';
     return true;
   }
   function showTextToolbar(cardEl) {
     textToolbarEl = cardEl;
+    toolbarReleased = false;
+    textToolbar.classList.remove('gliding');
+    clearTimeout(textToolbar._glideTimer);
     textToolbar.classList.remove('hidden');
     positionTextToolbar(cardEl);
   }
@@ -3307,8 +3343,12 @@
   });
   ttLink.addEventListener('click', () => openNodePicker());
 
+  let pickerReleased = false;
   function positionNodePicker() {
-    const on = !!textToolbarEl && anchorOnScreen(textToolbarEl.getBoundingClientRect());
+    if (nodePicker.classList.contains('gliding')) return;     // ease in flight → let it finish
+    if (!textToolbarEl) return;
+    const cardR = textToolbarEl.getBoundingClientRect();
+    const on = anchorOnScreen(cardR);
     // Anchor to the toolbar's TARGET position (its inline left/top) plus the
     // link button's fixed offset within it — NOT the button's live rect. While
     // the toolbar glides off screen that rect is mid-transition; reading it
@@ -3316,23 +3356,32 @@
     // same 0.3s ease) keeps the picker glued to the toolbar throughout.
     const barLeft = parseFloat(textToolbar.style.left) || 0;
     const barTop = parseFloat(textToolbar.style.top) || 0;
+    const pw = nodePicker.offsetWidth, ph = nodePicker.offsetHeight;
     let left = barLeft + ttLink.offsetLeft;
     const top = barTop + ttLink.offsetTop + ttLink.offsetHeight + 6;
-    // same clamp-release rule as the toolbar: clamp only while the anchored
-    // card is on screen, so the picker slides off together with the toolbar
-    if (on) {
-      left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
-      nodePicker.classList.remove('gliding');
-    } else if (!nodePicker.classList.contains('gliding')) {
-      nodePicker.classList.add('gliding');         // ease off once, matching the toolbar
-      void nodePicker.offsetWidth;                 // commit the edge start before moving
+    if (!on) {
+      if (pickerReleased) return;                             // already off → freeze
+      pickerReleased = true;                                  // glide fully off in the card's exit dir
+      const t = offScreenTarget(cardR, left, top, pw, ph);
+      glide(nodePicker, t.left, t.top, positionNodePicker);
+      return;
     }
+    if (pickerReleased) {                                     // returning → glide back in
+      pickerReleased = false;
+      left = Math.max(8, Math.min(left, innerWidth - pw - 8));
+      glide(nodePicker, left, top, positionNodePicker);
+      return;
+    }
+    left = Math.max(8, Math.min(left, innerWidth - pw - 8));  // steady tracking → instant
     nodePicker.style.left = left + 'px';
     nodePicker.style.top = top + 'px';
   }
   function openNodePicker() {
     if (!activeBody) return;
     renderPickerList('');
+    pickerReleased = false;
+    nodePicker.classList.remove('gliding');
+    clearTimeout(nodePicker._glideTimer);
     nodePicker.classList.remove('hidden');
     positionNodePicker();
     npFilter.value = '';

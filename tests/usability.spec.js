@@ -1242,3 +1242,31 @@ test('the toolbar glides only when released off screen, tracks instantly on scre
   });
   await expect(bar).not.toHaveClass(/gliding/);             // back on screen → instant again
 });
+
+// After gliding off, the toolbar/picker must glide BACK to their tracked spot
+// when the card returns — not stay frozen off screen (the "doesn't go back"
+// bug). And the picker must land fully off, never half-on hugging the edge.
+test('the toolbar and picker glide back on screen when their card returns', async ({ page }) => {
+  await addCardAt(page, 400, 350);
+  await page.locator('.node.card .card-body').first().click();
+  await page.click('#tt-link');
+  const bar = page.locator('#text-toolbar');
+  const picker = page.locator('#node-picker');
+  await expect(picker).toBeVisible();
+  const panBy = (dx) => page.evaluate((d) => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: d, deltaY: 0, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  }, dx);
+
+  await panBy(300);                                          // card off to the left
+  await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
+  await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
+
+  await panBy(-300);                                         // bring it back
+  // both settle back on screen (the glide-back plus self-healing reposition)
+  await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.left)), { timeout: 3000 })
+    .toBeGreaterThanOrEqual(0);
+  await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.left)), { timeout: 3000 })
+    .toBeGreaterThanOrEqual(0);
+});
