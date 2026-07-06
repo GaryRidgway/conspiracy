@@ -677,6 +677,47 @@ test('image pastes inline into a card being edited; remote images are stripped',
   expect(srcs[0].startsWith('data:image/')).toBe(true);
 });
 
+// SECURITY: board content is untrusted (a shared Drive board or imported JSON
+// is authored by someone else). An <iframe src="javascript:…"> executes in
+// THIS page's origin (the frame has no sandbox), which would be stored XSS
+// with access to every board and the Drive token. Such a src must never reach
+// the element — the frame loads blank instead.
+test('security: a javascript: iframe src from stored content never loads', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('whiteboard', JSON.stringify({
+      schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
+      cards: {}, connections: {},
+      iframes: { f_x: { x: 60, y: 60, w: 480, h: 320, src: 'javascript:window.__pwned=1', logicalWidth: 1440 } },
+    }));
+  });
+  await page.reload();
+  await expect(page.locator('.node.iframe-node')).toHaveCount(1);
+  await page.click('#fitContent');                    // force it into loadable range
+  // src is blanked, and the payload never ran
+  const src = await page.locator('.node.iframe-node iframe').getAttribute('src');
+  expect(src === '' || src === null).toBe(true);
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+});
+
+// SECURITY: same untrusted-scheme concern for a button's URL action — a
+// javascript:/data: target must not be handed to window.open().
+test('security: a button with a javascript: URL action does not navigate', async ({ page }) => {
+  let opened = null;
+  await page.exposeFunction('__recordOpen', (u) => { opened = u; });
+  await page.addInitScript(() => { window.open = (u) => { window.__recordOpen(u); return null; }; });
+  await page.evaluate(() => {
+    localStorage.setItem('whiteboard', JSON.stringify({
+      schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
+      cards: { b_x: { kind: 'button', x: 200, y: 200, title: 'Evil', action: { type: 'url', target: 'javascript:window.__pwned=1' } } },
+      connections: {}, iframes: {},
+    }));
+  });
+  await page.reload();
+  await page.locator('.btn-node').click();
+  expect(opened).toBeNull();                           // window.open was never called
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+});
+
 // Button nodes: click to fly to a board item — the link is set in the modal
 // that opens on creation (and later via right-click → Change link…).
 test('a button linked to a board item flies the viewport there on click', async ({ page }) => {

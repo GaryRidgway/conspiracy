@@ -1185,7 +1185,8 @@
     // no link yet (or the target item was deleted): configure instead
     if (!a || !a.target || (a.type === 'node' && !getNode(a.target))) { openButtonLinkModal(id); return; }
     if (a.type === 'url') {
-      window.open(a.target, '_blank', 'noopener');
+      const url = safeNavUrl(a.target);   // untrusted board data — never window.open a javascript: URL
+      if (url) window.open(url, '_blank', 'noopener');
     } else {
       frameNode(a.target);
       selectNode(a.target);
@@ -1389,8 +1390,9 @@
     // if an already-loaded frame's src changed (e.g. undo of a URL edit), reload
     // it — but a move/resize leaves src untouched so the page is preserved
     const frame = el.querySelector('.iframe-frame');
-    if (el.classList.contains('loaded') && frame.getAttribute('src') !== data.src) {
-      frame.setAttribute('src', data.src);
+    const safeSrc = safeNavUrl(data.src);
+    if (el.classList.contains('loaded') && frame.getAttribute('src') !== safeSrc) {
+      frame.setAttribute('src', safeSrc);
     }
     layoutFrame(el);
     return el;
@@ -1412,7 +1414,8 @@
     const data = board.iframes[id];
     if (!el || !data) return;
     const frame = el.querySelector('.iframe-frame');
-    if (frame.getAttribute('src') !== data.src) frame.setAttribute('src', data.src);
+    const safeSrc = safeNavUrl(data.src);   // block javascript:/data: from untrusted board content
+    if (frame.getAttribute('src') !== safeSrc) frame.setAttribute('src', safeSrc);
     el.classList.add('loaded');
   }
 
@@ -1592,6 +1595,16 @@
     const s = (input || '').trim();
     if (!s) return null;
     return /^https?:\/\//i.test(s) ? s : 'https://' + s;
+  }
+  // Only http(s) may reach an <iframe src> or window.open(). Board content is
+  // untrusted input — a shared Drive board or imported JSON can carry any
+  // string — and an iframe with a `javascript:` src executes IN THIS PAGE's
+  // origin (no sandbox), which would be stored XSS with access to every board
+  // in localStorage and the Drive token in sessionStorage. `data:` embeds get
+  // an opaque origin (can't touch us) but can host phishing, so block them too.
+  // Returns the URL if safe, else '' — callers treat '' as "don't navigate".
+  function safeNavUrl(u) {
+    return /^https?:\/\//i.test((u || '').trim()) ? u : '';
   }
 
   function createIframe(worldX, worldY, src) {
