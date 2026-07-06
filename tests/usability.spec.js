@@ -570,6 +570,13 @@ test('clicking a legend dot spotlights that color and dims the rest', async ({ p
   // view-only: filtering must not bump the content version
   expect(await storedVersion()).toBe(versionBefore);
 
+  // WCAG 2.2 AA (SC 2.5.8): every legend control is at least a 24×24 target
+  for (const ctl of await legend.locator('.cf-dot, .cf-clear').all()) {
+    const b = await ctl.boundingBox();
+    expect(b.width).toBeGreaterThanOrEqual(24);
+    expect(b.height).toBeGreaterThanOrEqual(24);
+  }
+
   await legend.locator('.cf-clear').click();
   await expect(B).not.toHaveClass(/filtered-out/);
 
