@@ -3235,17 +3235,23 @@
 
   // Off/return glide, shared by the toolbar and its picker.
   //
-  // While the card is on screen the controls track it every frame with NO
-  // transition (instant, no lag). The 0.3s ease runs only at the two crossings:
-  // once when the card leaves the screen (glide OFF, fully out of view) and once
-  // when it returns (glide BACK to its tracked spot). Between crossings, while
-  // off screen, the control is frozen — re-pointing its target every frame of a
-  // fast pan would restart the ease each frame, so it could never keep up and
-  // would hang at the edge (the bug this replaced). A per-element flag marks the
-  // released (off-screen, frozen) state; a `.gliding` class marks an ease in
-  // flight, during which we don't re-target. When an ease finishes we re-run the
-  // positioner so a card that came back mid-glide is caught (self-healing).
+  // On screen the controls track the card every frame with NO transition
+  // (instant, no lag). The 0.3s ease runs only around the two crossings, and the
+  // two directions are NOT symmetric:
+  //
+  //  • Leaving: the card is fleeing, so re-pointing the target every frame would
+  //    restart the ease and the control could never keep up — it'd hang at the
+  //    edge. So we ease ONCE to a fully-off target, then FREEZE (a released flag)
+  //    until the card comes back.
+  //  • Returning: the card comes to REST, so we CHASE it — each frame eases
+  //    toward its CURRENT spot (never a stale one it can overshoot past) and lock
+  //    on the moment the control lands within LOCK_DIST. That kills both the
+  //    overshoot and the freeze-then-snap.
+  //
+  // A `.gliding` class carries the transition; a settle timer re-runs the
+  // positioner after an ease so a card at rest still locks with no further pans.
   const GLIDE_MS = 300;
+  const LOCK_DIST = 40;   // px: how near the card the returning control locks on
   // Push a control fully off screen toward whichever edge(s) its card exited,
   // keeping its natural coordinate on the perpendicular axis so it slides
   // straight off rather than diagonally to a corner.
@@ -3257,23 +3263,28 @@
     else if (r.top >= innerHeight) top = innerHeight + 24;
     return { left, top };
   }
-  function glide(el, left, top, onDone) {
+  function glideTo(el, left, top, onSettle) {
     clearTimeout(el._glideTimer);
-    el.classList.add('gliding');
-    void el.offsetWidth;                       // commit the current spot as the ease's start
+    if (!el.classList.contains('gliding')) { el.classList.add('gliding'); void el.offsetWidth; }
     el.style.left = left + 'px';
     el.style.top = top + 'px';
-    el._glideTimer = setTimeout(() => {
-      el.classList.remove('gliding');
-      if (onDone) onDone();                    // re-evaluate: state may have changed mid-ease
-    }, GLIDE_MS + 40);
+    el._glideTimer = setTimeout(onSettle, GLIDE_MS + 40);   // re-evaluate once the ease lands
   }
+  function lockTo(el, left, top) {
+    clearTimeout(el._glideTimer);
+    el.classList.remove('gliding');
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  }
+  const near = (el, left, top) => {
+    const c = el.getBoundingClientRect();
+    return Math.abs(c.left - left) <= LOCK_DIST && Math.abs(c.top - top) <= LOCK_DIST;
+  };
 
   let toolbarReleased = false;
-  // Returns true if it (re)positioned, false if it left a frozen/gliding
+  // Returns true if it (re)positioned, false if it left a frozen off-screen
   // toolbar untouched — so the picker only re-tracks when the toolbar moved.
   function positionTextToolbar(cardEl) {
-    if (textToolbar.classList.contains('gliding')) return false;   // ease in flight → let it finish
     const r = cardEl.getBoundingClientRect();
     const th = textToolbar.offsetHeight, tw = textToolbar.offsetWidth;
     let left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
@@ -3281,19 +3292,18 @@
     if (top < 8) top = r.bottom + 8;                          // flip below when clipped above
     top = Math.max(8, Math.min(top, innerHeight - th - 8));   // …and never off the bottom
     if (!anchorOnScreen(r)) {
-      if (toolbarReleased) return false;                      // already off → freeze
-      toolbarReleased = true;                                 // just crossed off → one glide out
+      if (toolbarReleased) return false;                      // fleeing card → freeze, don't chase
+      toolbarReleased = true;                                 // just crossed off → one ease out
       const t = offScreenTarget(r, left, top, tw, th);
-      glide(textToolbar, t.left, t.top, repositionTextToolbar);
+      glideTo(textToolbar, t.left, t.top, repositionTextToolbar);
       return true;
     }
-    if (toolbarReleased) {                                    // returning → one glide back in
-      toolbarReleased = false;
-      glide(textToolbar, left, top, repositionTextToolbar);
+    if (toolbarReleased) {                                    // returning → chase the card, lock when near
+      if (near(textToolbar, left, top)) { toolbarReleased = false; lockTo(textToolbar, left, top); }
+      else glideTo(textToolbar, left, top, repositionTextToolbar);
       return true;
     }
-    textToolbar.style.left = left + 'px';                     // steady on-screen tracking → instant
-    textToolbar.style.top = top + 'px';
+    lockTo(textToolbar, left, top);                           // steady on-screen tracking → instant
     return true;
   }
   function showTextToolbar(cardEl) {
@@ -3345,36 +3355,30 @@
 
   let pickerReleased = false;
   function positionNodePicker() {
-    if (nodePicker.classList.contains('gliding')) return;     // ease in flight → let it finish
     if (!textToolbarEl) return;
     const cardR = textToolbarEl.getBoundingClientRect();
-    const on = anchorOnScreen(cardR);
     // Anchor to the toolbar's TARGET position (its inline left/top) plus the
     // link button's fixed offset within it — NOT the button's live rect. While
-    // the toolbar glides off screen that rect is mid-transition; reading it
-    // would make the picker chase a moving anchor. Sharing the target (and the
-    // same 0.3s ease) keeps the picker glued to the toolbar throughout.
+    // the toolbar glides its rect is mid-transition; reading it would make the
+    // picker chase a moving anchor. The target keeps the picker glued to it.
     const barLeft = parseFloat(textToolbar.style.left) || 0;
     const barTop = parseFloat(textToolbar.style.top) || 0;
     const pw = nodePicker.offsetWidth, ph = nodePicker.offsetHeight;
-    let left = barLeft + ttLink.offsetLeft;
+    let left = Math.max(8, Math.min(barLeft + ttLink.offsetLeft, innerWidth - pw - 8));
     const top = barTop + ttLink.offsetTop + ttLink.offsetHeight + 6;
-    if (!on) {
-      if (pickerReleased) return;                             // already off → freeze
-      pickerReleased = true;                                  // glide fully off in the card's exit dir
+    if (!anchorOnScreen(cardR)) {                             // fleeing card → ease off once, freeze
+      if (pickerReleased) return;
+      pickerReleased = true;
       const t = offScreenTarget(cardR, left, top, pw, ph);
-      glide(nodePicker, t.left, t.top, positionNodePicker);
+      glideTo(nodePicker, t.left, t.top, positionNodePicker);
       return;
     }
-    if (pickerReleased) {                                     // returning → glide back in
-      pickerReleased = false;
-      left = Math.max(8, Math.min(left, innerWidth - pw - 8));
-      glide(nodePicker, left, top, positionNodePicker);
+    if (pickerReleased) {                                     // returning → chase, lock when near
+      if (near(nodePicker, left, top)) { pickerReleased = false; lockTo(nodePicker, left, top); }
+      else glideTo(nodePicker, left, top, positionNodePicker);
       return;
     }
-    left = Math.max(8, Math.min(left, innerWidth - pw - 8));  // steady tracking → instant
-    nodePicker.style.left = left + 'px';
-    nodePicker.style.top = top + 'px';
+    lockTo(nodePicker, left, top);                            // steady tracking → instant
   }
   function openNodePicker() {
     if (!activeBody) return;
