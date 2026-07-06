@@ -552,6 +552,11 @@ test('clicking a legend dot spotlights that color and dims the rest', async ({ p
   await expect(legend).toBeVisible();
   await expect(legend.locator('.cf-dot')).toHaveCount(2);  // only colors in use
 
+  // the legend hangs below the tools palette, never colliding with it
+  const toolsBox = await page.locator('#tools').boundingBox();
+  const legendBox = await legend.boundingBox();
+  expect(legendBox.y).toBeGreaterThanOrEqual(toolsBox.y + toolsBox.height);
+
   // let the debounced local save land so the stored version is current
   await expect(page.locator('#saveState')).toHaveText('saved');
   const storedVersion = () => page.evaluate(() =>
