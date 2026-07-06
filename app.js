@@ -3226,12 +3226,22 @@
   // The node the toolbar is anchored to, so it can re-track the card as the
   // board pans/zooms (the toolbar is fixed-positioned in screen space).
   let textToolbarEl = null;
+  // Clamping keeps the controls fully readable while their card is partly on
+  // screen (e.g. hugging a screen edge). Once the card is completely out of
+  // view the clamp must release so they scroll off WITH the card — otherwise
+  // they hug the edge, detached from anything visible.
+  const anchorOnScreen = (r) =>
+    r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
   function positionTextToolbar(cardEl) {
     const r = cardEl.getBoundingClientRect();
     const tw = textToolbar.offsetWidth, th = textToolbar.offsetHeight;
-    const left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
+    let left = r.left;
     let top = r.top - th - 8;
-    if (top < 8) top = r.bottom + 8;
+    if (anchorOnScreen(r)) {
+      left = Math.max(8, Math.min(left, innerWidth - tw - 8));
+      if (top < 8) top = r.bottom + 8;                        // flip below when clipped above
+      top = Math.max(8, Math.min(top, innerHeight - th - 8)); // …and never off the bottom
+    }
     textToolbar.style.left = left + 'px';
     textToolbar.style.top = top + 'px';
   }
@@ -3280,7 +3290,13 @@
 
   function positionNodePicker() {
     const r = ttLink.getBoundingClientRect();
-    nodePicker.style.left = Math.max(8, Math.min(r.left, innerWidth - nodePicker.offsetWidth - 8)) + 'px';
+    let left = r.left;
+    // same clamp-release rule as the toolbar: clamp only while the anchored
+    // card is on screen, so the picker slides off together with the toolbar
+    if (textToolbarEl && anchorOnScreen(textToolbarEl.getBoundingClientRect())) {
+      left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
+    }
+    nodePicker.style.left = left + 'px';
     nodePicker.style.top = (r.bottom + 6) + 'px';
   }
   function openNodePicker() {

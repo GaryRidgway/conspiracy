@@ -1186,3 +1186,34 @@ test('the link picker stays anchored to the toolbar when the board is panned', a
   expect(gap).toBeGreaterThan(0);
   expect(gap).toBeLessThan(12);
 });
+
+// While its card is partly visible the toolbar clamps to stay readable, but
+// once the card is fully off screen it must scroll off WITH the card — not
+// hug the screen edge detached from anything visible. (Both axes.)
+test('the edit toolbar releases the edge and scrolls off once its card leaves the screen', async ({ page }) => {
+  await addCardAt(page, 400, 350);
+  await page.locator('.node.card .card-body').first().click();
+  const bar = page.locator('#text-toolbar');
+  await expect(bar).toBeVisible();
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 300, deltaY: 0, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  // the card is now far past the left edge — the toolbar followed it off
+  await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
+});
+
+test('the link picker scrolls off with its card instead of hugging the edge', async ({ page }) => {
+  await addCardAt(page, 400, 350);
+  await page.locator('.node.card .card-body').first().click();
+  await page.click('#tt-link');
+  const picker = page.locator('#node-picker');
+  await expect(picker).toBeVisible();
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 300, deltaY: 0, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
+});
