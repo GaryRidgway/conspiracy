@@ -1854,6 +1854,61 @@
     commit();
   }
 
+  // ── Keyboard connect mode — ports are drag-only, so this is the keyboard
+  //    path to the same createConnection: C aims at the nearest node, Tab or
+  //    arrows retarget, Enter connects, Escape cancels. A preview arrow and
+  //    the shared .drop-target outline show where it will land. ──
+  let kbConnect = null;   // { fromId, targetId, temp } while aiming
+  function startKbConnect(fromId) {
+    const targets = orderedNodeIds().filter((id) => id !== fromId);
+    if (!targets.length) { announce('Nothing to connect to'); return; }
+    const temp = document.createElementNS(SVGNS, 'path');
+    temp.setAttribute('class', 'conn-temp');
+    temp.setAttribute('marker-end', 'url(#arrow)');
+    svg.appendChild(temp);
+    kbConnect = { fromId, targetId: null, temp };
+    // start aimed at the nearest node — most connections are local
+    const g0 = nodeGeom(fromId);
+    let best = targets[0], bd = Infinity;
+    for (const t of targets) {
+      const g = nodeGeom(t);
+      if (!g) continue;
+      const d = (g.x + g.w / 2 - g0.x - g0.w / 2) ** 2 + (g.y + g.h / 2 - g0.y - g0.h / 2) ** 2;
+      if (d < bd) { bd = d; best = t; }
+    }
+    setKbConnectTarget(best);
+  }
+  function setKbConnectTarget(id) {
+    const prev = kbConnect.targetId && nodeEls.get(kbConnect.targetId);
+    if (prev) prev.classList.remove('drop-target');
+    kbConnect.targetId = id;
+    const el = nodeEls.get(id);
+    if (el) el.classList.add('drop-target');
+    kbConnect.temp.setAttribute('d', pathBetween(kbConnect.fromId, id).d);
+    ensureNodeVisible(id);
+    announce(`Connect to ${nodeKind(id)} “${nodeTitle(id)}” — Enter confirms, Escape cancels`);
+  }
+  function stepKbConnect(dir) {
+    const targets = orderedNodeIds().filter((id) => id !== kbConnect.fromId);
+    if (!targets.length) { endKbConnect(false); return; }
+    const i = targets.indexOf(kbConnect.targetId);
+    setKbConnectTarget(targets[(i + dir + targets.length) % targets.length]);
+  }
+  function endKbConnect(create) {
+    if (!kbConnect) return;
+    const { fromId, targetId, temp } = kbConnect;
+    kbConnect = null;
+    temp.remove();
+    const el = targetId && nodeEls.get(targetId);
+    if (el) el.classList.remove('drop-target');
+    if (create && el && nodeEls.has(fromId)) {
+      createConnection(fromId, targetId);
+      announce('Connected');
+    }
+  }
+  // any pointer interaction means the user has moved on — drop the aim state
+  document.addEventListener('pointerdown', () => endKbConnect(false), true);
+
   // ════════════════════════════════════════════════════════
   //  DELETE (any node) — also removes attached connections
   // ════════════════════════════════════════════════════════
@@ -2500,6 +2555,24 @@
   const blUseUrl = document.getElementById('bl-use-url');
   let blButtonId = null;
 
+  // Focus trap: while a modal is open, Tab cycles inside it instead of
+  // wandering into the page behind the overlay. Capture-phase so it wins over
+  // the canvas Tab handler even when focus has landed on the body.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const overlay = document.querySelector('.modal-overlay:not(.hidden)');
+    if (!overlay) return;
+    const focusables = [...overlay.querySelectorAll('button:not([disabled]), input')]
+      .filter((el) => el.offsetParent !== null);
+    if (!focusables.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const i = focusables.indexOf(document.activeElement);
+    const next = i === -1 ? 0
+      : (i + (e.shiftKey ? -1 : 1) + focusables.length) % focusables.length;
+    focusables[next].focus();
+  }, true);
+
   // Modals steal keyboard focus on open; put it back where it was on close so
   // a keyboard user isn't dumped at the top of the page (WCAG focus order).
   let modalReturnFocus = null;
@@ -2822,6 +2895,18 @@
     // Tab must traverse the chrome, Enter must press the focused button.
     const onCanvas = !ae || ae === document.body;
 
+    // While aiming a keyboard connection, Tab/arrows/Enter/Escape belong to it.
+    if (kbConnect) {
+      if (e.key === 'Escape') { e.preventDefault(); endKbConnect(false); return; }
+      if (e.key === 'Enter') { e.preventDefault(); endKbConnect(true); return; }
+      if (e.key === 'Tab' || ARROW_DELTA[e.key]) {
+        e.preventDefault();
+        const back = e.shiftKey || e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+        stepKbConnect(back ? -1 : 1);
+        return;
+      }
+    }
+
     // F6 / Shift+F6 — hop keyboard focus between the app's regions
     // (toolbar → palette → zoom bar → canvas), the standard pane-cycling key.
     // Without it a keyboard user could never reach the chrome at all, since
@@ -2901,6 +2986,13 @@
     if (e.key === 'Enter' && onCanvas && selectedNodes.size === 1) {
       e.preventDefault();
       openSelectedNode([...selectedNodes][0]);
+      return;
+    }
+    // C starts a keyboard connection from the selected node (ports are drag-only)
+    if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey &&
+        onCanvas && selectedNodes.size === 1) {
+      e.preventDefault();
+      startKbConnect([...selectedNodes][0]);
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !editing && (selectedNodes.size || selectedConn)) {
@@ -3870,7 +3962,11 @@
     }
   }
 
-  function closeBoardMenu() { if (boardMenu) boardMenu.classList.add('hidden'); }
+  function closeBoardMenu() {
+    if (!boardMenu) return;
+    boardMenu.classList.add('hidden');
+    if (boardMenuBtn) boardMenuBtn.setAttribute('aria-expanded', 'false');
+  }
   function renderBoardMenu() {
     if (!boardList) return;
     boardList.innerHTML = '';
@@ -3889,6 +3985,19 @@
       row.addEventListener('click', (e) => {
         if (e.target.closest('button') || nameEl.isContentEditable) return;
         openBoard(entry.id);
+      });
+      // keyboard: rows are focusable; arrows move between them, Enter/Space opens
+      row.tabIndex = 0;
+      row.addEventListener('keydown', (e) => {
+        if (nameEl.isContentEditable || e.target.closest('button')) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault(); e.stopPropagation();
+          openBoard(entry.id);
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault(); e.stopPropagation();
+          const sib = e.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling;
+          if (sib && sib.classList.contains('board-row')) sib.focus();
+        }
       });
       // rename via the ✎ button (avoids click-to-switch vs dblclick conflict)
       nameEl.addEventListener('keydown', (e) => {
@@ -3916,7 +4025,15 @@
       e.stopPropagation();
       const willOpen = boardMenu.classList.contains('hidden');
       boardMenu.classList.toggle('hidden');
+      boardMenuBtn.setAttribute('aria-expanded', String(willOpen));
       if (willOpen) { renderBoardMenu(); tryDriveSilentReconnect(); }
+    });
+    // ArrowDown from the trigger moves into the open list (combobox convention)
+    boardMenuBtn.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' || boardMenu.classList.contains('hidden')) return;
+      e.preventDefault();
+      const first = boardMenu.querySelector('.board-row');
+      if (first) first.focus();
     });
     document.addEventListener('click', (e) => {
       if (!boardMenu.classList.contains('hidden') && !e.target.closest('#board-menu-wrap')) closeBoardMenu();

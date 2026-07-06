@@ -1072,3 +1072,52 @@ test('reduced motion: the locate flash is a static ring that still clears', asyn
   await expect(page.locator('.node.flash')).toHaveCount(1); // static highlight applied
   await expect(page.locator('.node.flash')).toHaveCount(0, { timeout: 3000 }); // cleared by timer
 });
+
+test('keyboard: C aims a connection at the nearest node and Enter creates it', async ({ page }) => {
+  await addCardAt(page, 300, 300);
+  await addCardAt(page, 760, 320);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');                    // select the first card
+  await page.keyboard.press('c');                      // start aiming
+  await expect(page.locator('.node.drop-target')).toHaveCount(1);   // target highlighted
+  await expect(page.locator('#connections .conn-temp')).toHaveCount(1); // preview arrow
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#connections g.conn')).toHaveCount(1);
+  await expect(page.locator('.node.drop-target')).toHaveCount(0);   // aim state cleaned up
+});
+
+test('keyboard: Escape cancels an aimed connection without creating one', async ({ page }) => {
+  await addCardAt(page, 300, 300);
+  await addCardAt(page, 760, 320);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('c');
+  await expect(page.locator('.node.drop-target')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node.drop-target')).toHaveCount(0);
+  await expect(page.locator('#connections g.conn')).toHaveCount(0);
+  await expect(page.locator('#connections .conn-temp')).toHaveCount(0);
+});
+
+test('keyboard: the board menu list is arrow-navigable and Enter switches boards', async ({ page }) => {
+  await page.click('#boardMenuBtn');
+  await page.click('#newBoardBtn');                    // now on "Board 2"
+  await expect(page.locator('#board-name')).toHaveText('Board 2');
+  await page.click('#boardMenuBtn');                   // reopen the menu
+  await page.keyboard.press('ArrowDown');              // into the list
+  expect(await page.evaluate(() => document.activeElement.classList.contains('board-row'))).toBe(true);
+  await page.keyboard.press('ArrowDown');              // second row = the original board
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#board-name')).not.toHaveText('Board 2');
+  await expect(page.locator('#board-menu')).toBeHidden();
+});
+
+test('modals trap Tab: focus cycles inside the embed dialog', async ({ page }) => {
+  await page.click('#addFrame');
+  await expect(page.locator('#frame-modal')).toBeVisible();
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement.closest('#frame-modal'))).toBe(true);
+  }
+  await page.keyboard.press('Escape');
+});
