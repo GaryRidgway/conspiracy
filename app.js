@@ -2500,8 +2500,19 @@
   const blUseUrl = document.getElementById('bl-use-url');
   let blButtonId = null;
 
+  // Modals steal keyboard focus on open; put it back where it was on close so
+  // a keyboard user isn't dumped at the top of the page (WCAG focus order).
+  let modalReturnFocus = null;
+  function rememberModalFocus() { modalReturnFocus = document.activeElement; }
+  function restoreModalFocus() {
+    const el = modalReturnFocus;
+    modalReturnFocus = null;
+    if (el && el.isConnected && el.focus && el !== document.body) el.focus();
+  }
+
   function openButtonLinkModal(id) {
     blButtonId = id;
+    rememberModalFocus();
     blModal.classList.remove('hidden');
     const a = board.cards[id] && board.cards[id].action;
     blInput.value = a && a.type === 'url' ? a.target : '';
@@ -2512,6 +2523,7 @@
   function closeButtonLinkModal() {
     blModal.classList.add('hidden');
     blButtonId = null;
+    restoreModalFocus();
   }
 
   // A plain search term filters board items; anything URL-shaped enables the
@@ -2582,6 +2594,7 @@
     const isEdit = mode.type === 'edit';
     frameModalTitle.textContent = isEdit ? 'Edit embed URL' : 'Embed a web page';
     frameAddBtn.textContent = isEdit ? 'Save' : 'Add embed';
+    rememberModalFocus();
     frameModal.classList.remove('hidden');
     frameUrl.value = isEdit ? (mode.src || '') : '';
     frameUrl.focus();
@@ -2589,6 +2602,7 @@
   }
   function closeFrameModal() {
     frameModal.classList.add('hidden');
+    restoreModalFocus();
   }
   function submitFrameModal() {
     const src = normalizeUrl(frameUrl.value);
@@ -2653,12 +2667,13 @@
   }
   function openClearModal() {
     if (boardIsEmpty()) return;            // nothing to clear
+    rememberModalFocus();
     clearModal.classList.remove('hidden');
     clearInput.value = '';
     clearConfirmBtn.disabled = true;
     clearInput.focus();
   }
-  function closeClearModal() { clearModal.classList.add('hidden'); }
+  function closeClearModal() { clearModal.classList.add('hidden'); restoreModalFocus(); }
   function confirmClear() {
     if (clearInput.value !== 'CLEAR') return;
     closeClearModal();
@@ -2761,6 +2776,20 @@
     }
     selectNode(order[i]);
     ensureNodeVisible(order[i]);
+    announce(`${nodeKind(order[i])} “${nodeTitle(order[i])}”, ${i + 1} of ${order.length}`);
+  }
+
+  // Visually-hidden polite live region: screen readers hear selection changes
+  // and merge notices; nothing on screen. Debounced so holding Tab reads only
+  // where you landed, not every stop along the way.
+  const announcer = document.createElement('div');
+  announcer.className = 'visually-hidden';
+  announcer.setAttribute('aria-live', 'polite');
+  document.body.appendChild(announcer);
+  let announceTimer = null;
+  function announce(msg) {
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => { announcer.textContent = msg; }, 150);
   }
 
   document.addEventListener('keydown', (e) => {
@@ -2775,6 +2804,11 @@
       closeClearModal();
       return;
     }
+    if (e.key === 'Escape' && blModal && !blModal.classList.contains('hidden')) {
+      e.preventDefault();
+      closeButtonLinkModal();
+      return;
+    }
     if (e.key === 'Escape' && boardMenu && !boardMenu.classList.contains('hidden')) {
       e.preventDefault();
       closeBoardMenu();
@@ -2783,6 +2817,20 @@
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+    // Focus on the bare page = "the canvas". Focus anywhere else (toolbar,
+    // palette, a modal…) means keys should keep their native meaning there —
+    // Tab must traverse the chrome, Enter must press the focused button.
+    const onCanvas = !ae || ae === document.body;
+
+    // F6 / Shift+F6 — hop keyboard focus between the app's regions
+    // (toolbar → palette → zoom bar → canvas), the standard pane-cycling key.
+    // Without it a keyboard user could never reach the chrome at all, since
+    // Tab on the canvas cycles board items instead of UI controls.
+    if (e.key === 'F6') {
+      e.preventDefault();
+      cycleFocusRegion(e.shiftKey ? -1 : 1);
+      return;
+    }
 
     // Undo / redo — only at the board level when NOT editing text (otherwise
     // let the browser handle native text undo inside the field).
@@ -2831,9 +2879,28 @@
       return;
     }
 
-    if (e.key === 'Tab' && !editing && frameModal.classList.contains('hidden')) {
+    // Tab cycles board items — but ONLY while focus is on the canvas. Once
+    // focus is in the chrome, Tab must stay the browser's and move between
+    // controls, or the whole UI is unreachable by keyboard.
+    if (e.key === 'Tab' && onCanvas && frameModal.classList.contains('hidden')) {
       e.preventDefault();
       tabToNode(e.shiftKey ? -1 : 1);
+      return;
+    }
+    // Arrow keys move the selection (Shift for fine steps) — the keyboard
+    // counterpart of dragging. Rapid presses coalesce into one undo step.
+    if (onCanvas && selectedNodes.size && ARROW_DELTA[e.key]) {
+      e.preventDefault();
+      const step = e.shiftKey ? 1 : 10;
+      const [ax, ay] = ARROW_DELTA[e.key];
+      nudgeSelection(ax * step, ay * step);
+      return;
+    }
+    // Enter opens the selected item: edit a card, press a button, zoom to a
+    // frame, activate an embed. (Escape backs out of each.)
+    if (e.key === 'Enter' && onCanvas && selectedNodes.size === 1) {
+      e.preventDefault();
+      openSelectedNode([...selectedNodes][0]);
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !editing && (selectedNodes.size || selectedConn)) {
@@ -2843,10 +2910,68 @@
     }
     if (e.key === 'Escape') {
       if (editing) ae.blur();
+      else if (!onCanvas && ae.blur) ae.blur();   // step out of the chrome, back to the canvas
       else if (interactiveId) setInteractive(interactiveId, false);
       else clearSelection();
     }
   });
+
+  const ARROW_DELTA = {
+    ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  };
+  // Keyboard move: same semantics as the pointer drag — every selected node
+  // moves, and a frame set to move its contents carries them along.
+  function nudgeSelection(dx, dy) {
+    const carried = new Set(selectedNodes);
+    for (const nid of selectedNodes) {
+      const n = getNode(nid);
+      if (n && n.data.kind === 'frame' && n.data.moveContents) {
+        for (const cid of frameContents(nid)) carried.add(cid);
+      }
+    }
+    for (const nid of carried) {
+      const n = getNode(nid);
+      if (!n) continue;
+      n.data.x += dx; n.data.y += dy;
+      const el = nodeEls.get(nid);
+      if (el) { el.style.left = n.data.x + 'px'; el.style.top = n.data.y + 'px'; }
+      redrawConnectionsFor(nid);
+    }
+    if (selectedNodes.size === 1) ensureNodeVisible([...selectedNodes][0]);
+    scheduleFrameEval();
+    commit({ coalesce: true });   // a burst of nudges undoes as one step
+  }
+
+  function openSelectedNode(id) {
+    const data = board.cards[id];
+    if (data && data.kind === 'button') { runButtonAction(id); return; }
+    if (data && data.kind === 'frame') { frameNode(id); return; }
+    if (data) {                                    // plain card → edit its body
+      const el = nodeEls.get(id);
+      const bodyEl = el && el.querySelector('.card-body');
+      if (!bodyEl) return;
+      bodyEl.focus();
+      const r = document.createRange();            // caret at the end, not a full select
+      r.selectNodeContents(bodyEl); r.collapse(false);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      return;
+    }
+    if (board.iframes[id]) setInteractive(id, true);   // embed → interact mode
+  }
+
+  // F6 pane cycling: canvas → toolbar → palette → zoom bar → canvas.
+  const FOCUS_REGIONS = ['#toolbar', '#tools', '#zoombar'];
+  function cycleFocusRegion(dir) {
+    const ae = document.activeElement;
+    const cur = FOCUS_REGIONS.findIndex((sel) => ae && ae.closest && ae.closest(sel));
+    let next = cur === -1 ? (dir > 0 ? 0 : FOCUS_REGIONS.length - 1) : cur + dir;
+    if (next < 0 || next >= FOCUS_REGIONS.length) {          // wrapped → back to the canvas
+      if (ae && ae.blur) ae.blur();
+      return;
+    }
+    const target = document.querySelector(FOCUS_REGIONS[next] + ' button:not([disabled]):not(.hidden)');
+    if (target) target.focus();
+  }
 
   // While Ctrl/⌘ is held, let the canvas capture the wheel even over an
   // interactive frame (CSS drops the frame's pointer-events), so zoom works
@@ -3184,7 +3309,11 @@
     el.classList.remove('flash');
     void el.offsetWidth;               // restart the animation if re-triggered
     el.classList.add('flash');
-    el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+    const off = () => el.classList.remove('flash');
+    el.addEventListener('animationend', off, { once: true });
+    // Under prefers-reduced-motion the flash is a static ring (no animation,
+    // so no animationend) — clear it on a timer instead.
+    setTimeout(off, 1500);
   }
 
   function renderJumpList(query) {
@@ -3410,6 +3539,7 @@
   const conflictNotice = document.createElement('div');
   conflictNotice.id = 'conflict-notice';
   conflictNotice.className = 'hidden';
+  conflictNotice.setAttribute('role', 'status');   // screen readers announce the merge notice
   conflictNotice.innerHTML =
     '<span class="notice-text"></span>' +
     '<button class="notice-show" type="button">Show</button>' +
@@ -3449,14 +3579,21 @@
         keepLocal.removeEventListener('click', onLocal);
         keepDrive.removeEventListener('click', onDrive);
         cancelBtn.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onEsc, true);
         resolve(choice);
       };
       const onLocal = () => done('local');
       const onDrive = () => done('drive');
       const onCancel = () => done('cancel');
+      const onEsc = (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault(); e.stopPropagation();
+        done('cancel');                    // same as "Decide later"
+      };
       keepLocal.addEventListener('click', onLocal);
       keepDrive.addEventListener('click', onDrive);
       cancelBtn.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onEsc, true);
     });
   }
 

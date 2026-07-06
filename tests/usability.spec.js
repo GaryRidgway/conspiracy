@@ -973,3 +973,102 @@ test('Shift+1 zooms to fit all content', async ({ page }) => {
   const box = await node.boundingBox();
   expect(within(box, vp.width, vp.height)).toBe(true);
 });
+
+// ── Keyboard & assistive-tech accessibility ──────────────────────────────
+// The canvas must be operable without a mouse: Tab cycles items, arrows move
+// them, Enter opens them, F6 reaches the chrome, and focus is always visible.
+
+test('keyboard: arrow keys nudge the selected node, Shift for fine steps', async ({ page }) => {
+  await addCardAt(page, 400, 300);
+  await page.mouse.click(60, 180);            // canvas focus, nothing selected
+  await page.keyboard.press('Tab');           // select the card
+  const sel = page.locator('.node.card.selected');
+  await expect(sel).toHaveCount(1);
+  const x0 = await sel.evaluate((el) => parseFloat(el.style.left));
+  const y0 = await sel.evaluate((el) => parseFloat(el.style.top));
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Shift+ArrowDown');
+  expect(await sel.evaluate((el) => parseFloat(el.style.left))).toBe(x0 + 20);  // 2 × 10px
+  expect(await sel.evaluate((el) => parseFloat(el.style.top))).toBe(y0 + 1);    // fine step
+});
+
+test('keyboard: a burst of nudges undoes as a single step', async ({ page }) => {
+  const node = await addCardAt(page, 400, 300);
+  const id = await node.getAttribute('data-id');
+  const card = page.locator(`.node[data-id="${id}"]`);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');
+  const x0 = await card.evaluate((el) => parseFloat(el.style.left));
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(700);             // close the coalesce window
+  await page.keyboard.press('ControlOrMeta+z');
+  expect(await card.evaluate((el) => parseFloat(el.style.left))).toBe(x0);
+});
+
+test('keyboard: Enter starts editing the selected card', async ({ page }) => {
+  await addCardAt(page, 400, 300);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.node.card .card-body')).toBeFocused();
+  await page.keyboard.type('typed by keyboard');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.node.card .card-body')).toContainText('typed by keyboard');
+});
+
+test('keyboard: F6 cycles focus through toolbar, palette, and zoom bar', async ({ page }) => {
+  await page.keyboard.press('F6');
+  expect(await page.evaluate(() => !!document.activeElement.closest('#toolbar'))).toBe(true);
+  await page.keyboard.press('F6');
+  expect(await page.evaluate(() => !!document.activeElement.closest('#tools'))).toBe(true);
+  await page.keyboard.press('F6');
+  expect(await page.evaluate(() => !!document.activeElement.closest('#zoombar'))).toBe(true);
+  // once focus is in the chrome, Tab traverses it natively instead of cycling nodes
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => !!document.activeElement.closest('#zoombar'))).toBe(true);
+});
+
+test('keyboard focus is visible on chrome buttons (WCAG 2.4.7)', async ({ page }) => {
+  await page.keyboard.press('F6');
+  const style = await page.evaluate(() => {
+    const s = getComputedStyle(document.activeElement);
+    return { outline: s.outlineStyle, width: s.outlineWidth };
+  });
+  expect(style.outline).not.toBe('none');
+  expect(parseFloat(style.width)).toBeGreaterThan(0);
+});
+
+test('modal focus management: Escape closes the embed modal, focus returns to its trigger', async ({ page }) => {
+  await page.click('#addFrame');
+  await expect(page.locator('#frame-modal')).toBeVisible();
+  await expect(page.locator('#frame-url')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#frame-modal')).toBeHidden();
+  await expect(page.locator('#addFrame')).toBeFocused();
+});
+
+test('keyboard: Escape closes the button link modal', async ({ page }) => {
+  await page.click('#addButton');             // new button opens its link modal
+  await expect(page.locator('#button-link-modal')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#button-link-modal')).toBeHidden();
+});
+
+test('screen readers: Tab selection is announced via a polite live region', async ({ page }) => {
+  await addCardAt(page, 400, 300);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.visually-hidden[aria-live="polite"]')).toContainText('1 of 1');
+});
+
+test('reduced motion: the locate flash is a static ring that still clears', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await addCardAt(page, 400, 300);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.locator('#jump')).toBeVisible();
+  await page.keyboard.press('Enter');                       // jump to the first (only) item
+  await expect(page.locator('.node.flash')).toHaveCount(1); // static highlight applied
+  await expect(page.locator('.node.flash')).toHaveCount(0, { timeout: 3000 }); // cleared by timer
+});
