@@ -3235,13 +3235,17 @@
   function positionTextToolbar(cardEl) {
     const r = cardEl.getBoundingClientRect();
     const tw = textToolbar.offsetWidth, th = textToolbar.offsetHeight;
+    const on = anchorOnScreen(r);
     let left = r.left;
     let top = r.top - th - 8;
-    if (anchorOnScreen(r)) {
+    if (on) {
       left = Math.max(8, Math.min(left, innerWidth - tw - 8));
       if (top < 8) top = r.bottom + 8;                        // flip below when clipped above
       top = Math.max(8, Math.min(top, innerHeight - th - 8)); // …and never off the bottom
     }
+    // ease the position only in the released (off-screen) state; on-screen it
+    // tracks every frame with no transition so there's no lag behind the card
+    textToolbar.classList.toggle('gliding', !on);
     textToolbar.style.left = left + 'px';
     textToolbar.style.top = top + 'px';
   }
@@ -3289,15 +3293,22 @@
   ttLink.addEventListener('click', () => openNodePicker());
 
   function positionNodePicker() {
-    const r = ttLink.getBoundingClientRect();
-    let left = r.left;
+    const on = !!textToolbarEl && anchorOnScreen(textToolbarEl.getBoundingClientRect());
+    // Anchor to the toolbar's TARGET position (its inline left/top) plus the
+    // link button's fixed offset within it — NOT the button's live rect. While
+    // the toolbar glides off screen that rect is mid-transition; reading it
+    // would make the picker chase a moving anchor. Sharing the target (and the
+    // same 0.3s ease) keeps the picker glued to the toolbar throughout.
+    const barLeft = parseFloat(textToolbar.style.left) || 0;
+    const barTop = parseFloat(textToolbar.style.top) || 0;
+    let left = barLeft + ttLink.offsetLeft;
+    const top = barTop + ttLink.offsetTop + ttLink.offsetHeight + 6;
     // same clamp-release rule as the toolbar: clamp only while the anchored
     // card is on screen, so the picker slides off together with the toolbar
-    if (textToolbarEl && anchorOnScreen(textToolbarEl.getBoundingClientRect())) {
-      left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
-    }
+    if (on) left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
+    nodePicker.classList.toggle('gliding', !on);   // ease off/on only when released
     nodePicker.style.left = left + 'px';
-    nodePicker.style.top = (r.bottom + 6) + 'px';
+    nodePicker.style.top = top + 'px';
   }
   function openNodePicker() {
     if (!activeBody) return;

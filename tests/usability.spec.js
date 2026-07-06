@@ -1217,3 +1217,28 @@ test('the link picker scrolls off with its card instead of hugging the edge', as
   });
   await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
 });
+
+// The off-screen glide (0.3s ease) is enabled via a .gliding class only while
+// the card is released off screen — never during on-screen tracking, where a
+// transition would lag the toolbar behind its card. Assert the toggle.
+test('the toolbar glides only when released off screen, tracks instantly on screen', async ({ page }) => {
+  await addCardAt(page, 400, 350);
+  await page.locator('.node.card .card-body').first().click();
+  const bar = page.locator('#text-toolbar');
+  await expect(bar).toBeVisible();
+  await expect(bar).not.toHaveClass(/gliding/);             // on screen → instant tracking
+  const pan = () => page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 300, deltaY: 0, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await pan();
+  await expect(bar).toHaveClass(/gliding/);                 // card gone → glide enabled
+  expect(await bar.evaluate((el) => getComputedStyle(el).transitionDuration)).toContain('0.3s');
+  await page.evaluate(() => {                               // pan back the other way
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: -300, deltaY: 0, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await expect(bar).not.toHaveClass(/gliding/);             // back on screen → instant again
+});

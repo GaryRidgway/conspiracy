@@ -1175,6 +1175,12 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   box-shadow: 0 6px 22px rgba(0,0,0,0.4);
 }
 #text-toolbar.hidden, #node-picker.hidden { display: none; }
+/* Glide the controls off/on only once their card has left the screen. While
+   the card is visible they track it every frame (no transition = no lag);
+   .gliding is toggled on by JS only in the released, off-screen state. */
+#text-toolbar.gliding, #node-picker.gliding {
+  transition: left 0.3s ease-in-out, top 0.3s ease-in-out;
+}
 .tt-btn {
   min-width: 26px; height: 26px;
   border: none;
