@@ -3232,22 +3232,36 @@
   // they hug the edge, detached from anything visible.
   const anchorOnScreen = (r) =>
     r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
+  // True once the anchored card has left the screen, so the off-screen glide
+  // runs exactly ONCE at the crossing. Re-pointing the target every frame of a
+  // fast pan would restart the 0.3s ease each frame — the toolbar could never
+  // keep up and would hang near the edge. Instead we glide it off once and
+  // freeze (it's invisible) until the card comes back.
+  let toolbarReleased = false;
+  // Returns true if it (re)positioned, false if it left a frozen off-screen
+  // toolbar untouched — so the picker only re-tracks when the toolbar moved.
   function positionTextToolbar(cardEl) {
     const r = cardEl.getBoundingClientRect();
-    const tw = textToolbar.offsetWidth, th = textToolbar.offsetHeight;
-    const on = anchorOnScreen(r);
-    let left = r.left;
-    let top = r.top - th - 8;
-    if (on) {
-      left = Math.max(8, Math.min(left, innerWidth - tw - 8));
+    const th = textToolbar.offsetHeight;
+    if (anchorOnScreen(r)) {                                  // on screen → instant, clamped
+      const tw = textToolbar.offsetWidth;
+      let left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
+      let top = r.top - th - 8;
       if (top < 8) top = r.bottom + 8;                        // flip below when clipped above
       top = Math.max(8, Math.min(top, innerHeight - th - 8)); // …and never off the bottom
+      textToolbar.classList.remove('gliding');
+      textToolbar.style.left = left + 'px';
+      textToolbar.style.top = top + 'px';
+      toolbarReleased = false;
+      return true;
     }
-    // ease the position only in the released (off-screen) state; on-screen it
-    // tracks every frame with no transition so there's no lag behind the card
-    textToolbar.classList.toggle('gliding', !on);
-    textToolbar.style.left = left + 'px';
-    textToolbar.style.top = top + 'px';
+    if (toolbarReleased) return false;                        // already glided off → leave it
+    toolbarReleased = true;                                   // just crossed off → one glide off
+    textToolbar.classList.add('gliding');
+    void textToolbar.offsetWidth;                             // commit the edge start before moving
+    textToolbar.style.left = r.left + 'px';                   // unclamped → follows the card off
+    textToolbar.style.top = (r.top - th - 8) + 'px';
+    return true;
   }
   function showTextToolbar(cardEl) {
     textToolbarEl = cardEl;
@@ -3256,10 +3270,11 @@
   }
   function repositionTextToolbar() {
     if (textToolbarEl && !textToolbar.classList.contains('hidden')) {
-      positionTextToolbar(textToolbarEl);
-      // the node picker hangs off the toolbar's link button — after the
-      // toolbar re-anchors, move the picker with it (same pan/zoom bug)
-      if (!nodePicker.classList.contains('hidden')) positionNodePicker();
+      const moved = positionTextToolbar(textToolbarEl);
+      // the node picker hangs off the toolbar's link button — move it with the
+      // toolbar, but only when the toolbar actually moved (so a frozen
+      // off-screen toolbar doesn't drag the picker along frame after frame)
+      if (moved && !nodePicker.classList.contains('hidden')) positionNodePicker();
     }
   }
   function hideTextToolbarIfIdle() {
@@ -3305,8 +3320,13 @@
     const top = barTop + ttLink.offsetTop + ttLink.offsetHeight + 6;
     // same clamp-release rule as the toolbar: clamp only while the anchored
     // card is on screen, so the picker slides off together with the toolbar
-    if (on) left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
-    nodePicker.classList.toggle('gliding', !on);   // ease off/on only when released
+    if (on) {
+      left = Math.max(8, Math.min(left, innerWidth - nodePicker.offsetWidth - 8));
+      nodePicker.classList.remove('gliding');
+    } else if (!nodePicker.classList.contains('gliding')) {
+      nodePicker.classList.add('gliding');         // ease off once, matching the toolbar
+      void nodePicker.offsetWidth;                 // commit the edge start before moving
+    }
     nodePicker.style.left = left + 'px';
     nodePicker.style.top = top + 'px';
   }
