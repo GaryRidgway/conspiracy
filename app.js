@@ -470,9 +470,9 @@
         saveBoardContent(currentBoardId, board);
         touchLibrary(currentBoardId);
         setSaveState('saved');
-        // Drive is NOT pushed here — pushes are batched onto the 20s sync tick
-        // (syncTick) and flushed on tab-leave, so an active session doesn't hit
-        // Drive on every editing pause. Local save above is the durable one.
+        // Drive is NOT pushed here — pushes are batched onto the sync tick
+        // (syncTick, SYNC_POLL_MS) and flushed on tab-leave, so an active session
+        // doesn't hit Drive on every editing pause. Local save above is the durable one.
       } catch (e) {
         console.error('Save failed', e);
         setSaveState('error');
@@ -3930,7 +3930,7 @@
 
   // ── Background sync (batched, laggy by design) ─────────────────────────
   // Local saves are immediate (localStorage). Drive I/O is BATCHED onto this
-  // tick: every ~20s the open board reconciles with Drive — pushing pending
+  // tick: every SYNC_POLL_MS the open board reconciles with Drive — pushing pending
   // local edits, pulling remote changes, or merging if both moved. This keeps
   // an active editing session from hitting Drive on every pause; edits reach
   // Drive within the tick interval (or immediately on tab-leave, see
@@ -3945,7 +3945,7 @@
     if (document.hidden || !DRIVE.isConnected()) return;
     reconcileDriveBoard(currentBoardId);   // push pending local edits and/or pull remote
   }
-  // Flush immediately on tab hide/close so edits from the current 20s window
+  // Flush immediately on tab hide/close so edits from the current sync window
   // aren't stranded. The local save is synchronous (always lands); the Drive
   // push is reliable on a tab switch and best-effort on actual close (the fetch
   // may be cut off), but the next boot reconcile pushes anything missed.

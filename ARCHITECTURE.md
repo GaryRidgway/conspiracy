@@ -42,6 +42,11 @@ top-level collection would be **silently dropped** by the merge code in every
 already-deployed client during sync. Adding a new node type = a new `kind`
 on cards; `renderCard()` dispatches on it.
 
+The same applies to any new **top-level field**: `mergeBoards` rebuilds the
+document from a fixed field list (`schema`, `version`, `viewport`, the three
+collections), so new persistent data must live on records *inside* those
+collections, never beside them.
+
 ### Record shape rules (the merge depends on these)
 
 - Records are flat objects, except fields may nest **one level** of plain
@@ -66,6 +71,25 @@ on cards; `renderCard()` dispatches on it.
 - If you mutate `board.cards/iframes/connections` without calling `commit()`,
   the change won't save, sync, or undo. During drags, positions are mutated
   live and committed once on pointerup.
+- Two sanctioned bypasses replace content wholesale and maintain `version`,
+  `lastContent`, and the save themselves: `applyContentSnapshot` (undo/redo)
+  and `applyPulledBoard` (sync pull/merge). Don't add a third.
+- Renderers never write text into a **focused** editable — the
+  `document.activeElement !== el` guards in `renderCard`/`renderButton`/
+  `renderFrameNode`/`renderIframe`/`drawConnection`. A background sync pull
+  re-renders mid-typing; without the guard it wipes the caret and the
+  in-flight edit.
+- `renderConnection` self-heals: a connection whose endpoint no longer exists
+  is deleted at render time, without a commit — the deletion persists with
+  whatever commit comes next.
+
+### Board switching
+
+`loadAndShow(id)` does **not** save the outgoing board. Every call site must
+`saveCurrent()` first (`openBoard`, `createBoard`, `openFromDrive` all do), or
+the outgoing board's last ≤400ms of edits are lost: the pending `scheduleSave`
+timer fires after `currentBoardId`/`board` have already switched, so it saves
+the *new* board and the old edits evaporate.
 
 ### Viewport is per-device, never content
 
@@ -73,7 +97,9 @@ Pan/zoom lives under `whiteboard:viewport:<id>`, is stripped by
 `contentForStore()` from every localStorage write and every Drive write,
 never bumps `version`, and is preserved (not overwritten) when a remote board
 is pulled (`applyPulledBoard`). Breaking this makes every pan churn the sync
-and yanks one device's view to another's.
+and yanks one device's view to another's. One deliberate exception:
+`exportBoard()` serializes the live `board` *including* viewport — a JSON
+backup restores the exact view on import.
 
 ## Persistence (localStorage)
 
@@ -141,6 +167,15 @@ Invariants that took real bugs to learn — keep them:
    saw, which a later local push then overwrites.
 5. After every successful push/pull/merge: `saveBase()` + `setDriveSyncMeta()`
    with the exact content/version pair that Drive now holds.
+6. **Single-flight per board**: the `reconciling` Set makes overlapping
+   triggers (10s tick, boot, board-switch, tab-return, tab-leave flush)
+   coalesce instead of double-pushing. `refreshDriveStatus` checks it too, so
+   the per-commit status refresh can't stomp the transient "syncing…/merging…"
+   messages mid-reconcile.
+7. **Silent reconnect only inside a user gesture**: `tryDriveSilentReconnect`
+   runs when the board menu opens, never on bare page load — Google's token
+   flow opens a popup the browser blocks outside a gesture. Most reloads skip
+   it anyway via the sessionStorage token cache.
 
 ### Merge semantics (`mergeBoards`, pure, tested)
 
@@ -161,6 +196,11 @@ exercise it without OAuth — keep it pure.
   catches whatever was missed.
 - `saveBase` failing on quota is swallowed; a stale base degrades merges
   toward local-wins but loses nothing.
+- Node ids are unique per *session*, not globally: `newId()` is
+  `prefix + counter + performance.now()` with no random part. Two devices
+  creating a node at the same ms-since-page-load mint the same id, and the
+  merge then field-merges two unrelated nodes into one (latent; the fix is
+  adding a random component to `newId`).
 
 ## View layer
 
@@ -180,6 +220,14 @@ exercise it without OAuth — keep it pure.
   committed, no version bump, per device.
 - `frameNode(id)` / `selectNode` / `flashNode` are the shared navigation
   primitive — deep links, ⌘K jump, and button actions all go through them.
+- Cross-file constant couplings: `GRID_INSET` (app.js) must equal
+  `#grid { inset: -160px }` in styles.css (the grid phase math folds it in),
+  and `visibleRect()` hard-codes the bottom chrome height (52px).
+- The floating text toolbar and node picker are fixed-positioned chrome that
+  re-track their card every frame. Their off-screen behavior is deliberately
+  asymmetric — ease off once and freeze when the card flees; chase-and-lock
+  when it returns — see the comment block above `positionTextToolbar` before
+  touching it.
 
 ## Interaction model
 
@@ -200,21 +248,28 @@ exercise it without OAuth — keep it pure.
   **Never intercept a key without checking `onCanvas`/`editing` first.**
 - Escape is a priority chain: open modal → board menu → blur editing → blur
   chrome → exit iframe interact mode → clear selection.
+- Iframe "interact mode" (`interactiveId`) is runtime-only state and must
+  never trap the user: every canvas gesture (pan, wheel, zoom controls, ⌘K
+  jump) calls `exitInteract()`. Any new gesture must too.
 
 ## Security boundaries
 
 - `sanitizeHtml()` allowlists tags for card bodies (paste and load paths).
-  `<img>` survives **only** with a `data:image/` src — remote image URLs are
-  stripped (they'd be tracking pixels that fire on every render for every
-  viewer of a shared board).
+  Disallowed tags are unwrapped (children kept), except `SCRIPT`/`STYLE`
+  which are dropped with their contents. `<img>` survives **only** with a
+  `data:image/` src — remote image URLs are stripped (they'd be tracking
+  pixels that fire on every render for every viewer of a shared board).
 - Pasted images are canvas-downscaled (longest edge 1600px, WebP 0.85 with
   PNG fallback, halving until ≤ ~1.5MB) before becoming data URIs —
   localStorage quota is the whole database.
 - Embed and button URLs are untrusted (a shared/imported board is authored by
   someone else). **Every URL that reaches an `<iframe src>` or `window.open()`
-  must pass `safeNavUrl()` (http/https only)** — the iframe has no sandbox, so
-  a `javascript:` src would execute in this origin (stored XSS). The create
-  paths normalize via the modal; the load/render paths guard at the sink.
+  must pass `safeNavUrl()` (http/https only)**. The embed iframe's sandbox
+  (`allow-scripts allow-same-origin allow-forms`) does NOT cover this: with
+  both `allow-scripts` and `allow-same-origin`, a `javascript:` src executes
+  in *this page's* origin — stored XSS with every board in localStorage and
+  the Drive token in sessionStorage. The create paths normalize via the
+  modal; the load/render paths guard at the sink.
   Many real sites refuse framing (X-Frame-Options/CSP) and show blank; that's
   expected, not the guard.
 - `config.js` values are origin-restricted client identifiers, not secrets.
