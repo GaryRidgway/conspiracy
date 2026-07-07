@@ -76,7 +76,6 @@ test.afterEach(() => {
 
 // ════════════════════════════════════════════════════════
 test('boots with an empty board and a toolbar', async ({ page }) => {
-  await expect(page.locator('#toolbar .brand')).toContainText('Infinite Whiteboard');
   for (const id of ['#addCard', '#addFrame', '#fitContent', '#resetView', '#clearBoard']) {
     await expect(page.locator(id)).toBeVisible();
   }

@@ -605,15 +605,6 @@ body.space-pan #viewport.panning,
 .tool-btn .icon { width: 22px; height: 22px; }
 .tool-btn:hover .icon { color: var(--accent); }
 
-#toolbar .brand {
-  font-size: 0.82rem;
-  font-weight: 650;
-  color: var(--text);
-  padding: 0 0.4rem 0 0.3rem;
-  letter-spacing: -0.01em;
-}
-#toolbar .brand .dot { color: var(--accent); }
-
 /* ── Board picker dropdown ── */
 #board-menu-wrap { position: relative; display: inline-flex; }
 #boardMenuBtn { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 16ch; }
