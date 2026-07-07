@@ -111,6 +111,9 @@ body.space-pan #viewport.panning,
 .iframe-node.colored .iframe-header {
   background: color-mix(in srgb, var(--node-color) 15%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--node-color) 34%, transparent);
+  /* top corners match the node (10px − 1px border), same trick as .card-body's
+     bottom corners — otherwise the tint pokes square past the rounded shell */
+  border-radius: 9px 9px 0 0;
 }
 /* icon buttons pick up the same tinted border as the heading's bottom edge */
 .card.colored .icon-btn,
@@ -206,7 +209,9 @@ body.space-pan #viewport.panning,
   max-width: 320px;
   padding: 0.35rem 0.9rem 0.35rem 0.4rem;
   --btn-ring: transparent;           /* selection ring slot */
-  background: var(--surface2);
+  /* faint top sheen + card-level shadow: a control must sit at least as
+     high as an idle card, or it reads as less alive than the content */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface2) 90%, white), var(--surface2));
   border: 1px solid var(--border2);
   border-radius: 999px;
   font-size: 0.85rem;
@@ -214,11 +219,17 @@ body.space-pan #viewport.panning,
   color: var(--text);
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 0 0 1px var(--btn-ring), 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 0 0 1px var(--btn-ring), inset 0 1px 0 rgba(255,255,255,0.08), 0 6px 22px rgba(0,0,0,0.35);
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.06s;
 }
-.btn-node:hover { background: var(--border); border-color: var(--accent-soft); }
-.btn-node:active { transform: scale(0.96); }
+.btn-node:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface2) 80%, white), var(--surface2));
+  border-color: var(--accent-soft);
+}
+.btn-node:active {
+  transform: scale(0.96);
+  box-shadow: 0 0 0 1px var(--btn-ring), inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 8px rgba(0,0,0,0.3);
+}
 .btn-node .btn-disc {
   flex: none;
   display: inline-flex;
@@ -226,7 +237,7 @@ body.space-pan #viewport.panning,
   justify-content: center;
   width: 24px; height: 24px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .btn-node .icon { flex: none; width: 15px; height: 15px; color: var(--accent); }
 .btn-node .btn-node-label {
@@ -248,7 +259,7 @@ body.space-pan #viewport.panning,
 /* colored buttons: the color tints the disc and border, not the whole face */
 .btn-node.colored { border-color: color-mix(in srgb, var(--node-color) 45%, transparent); }
 .btn-node.colored:hover { border-color: var(--node-color-hi); }
-.btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 22%, transparent); }
+.btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 32%, transparent); }
 .btn-node.colored .icon { color: var(--node-color-hi); }
 .btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 
