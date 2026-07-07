@@ -1310,6 +1310,19 @@
     return id;
   }
 
+  // The frame marked (via right-click) as the board's default view — what the
+  // Reset button frames instead of snapping to the origin. Stored as a field
+  // ON the frame's record, never a top-level board field: top-level fields are
+  // dropped by deployed clients' mergeBoards (see ARCHITECTURE.md). Lowest id
+  // wins if a merge ever leaves two frames flagged, so every device agrees.
+  function homeFrameId() {
+    let best = null;
+    for (const [id, c] of Object.entries(board.cards)) {
+      if (c.kind === 'frame' && c.homeView && (!best || id < best)) best = id;
+    }
+    return best;
+  }
+
   // Ids of nodes sitting fully inside the frame's rectangle — what a
   // "moves its contents" frame carries along when dragged.
   function frameContents(frameId) {
@@ -2359,6 +2372,16 @@
             commit();
           },
         });
+        const isHome = !!gn0.data.homeView;
+        items.push({
+          label: (isHome ? '✓ ' : '') + 'Use as default view',
+          action: () => {
+            // at most one home frame: clear the flag everywhere before setting
+            for (const c of Object.values(board.cards)) if (c.kind === 'frame') delete c.homeView;
+            if (!isHome) gn0.data.homeView = true;
+            commit();
+          },
+        });
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.frame-name')) });
         items.push('sep');
       }
@@ -2740,6 +2763,9 @@
 
   document.getElementById('resetView').addEventListener('click', () => {
     exitInteract();
+    // a frame marked "Use as default view" is home; otherwise the origin is
+    const home = homeFrameId();
+    if (home) { frameNode(home); return; }
     board.viewport.x = 0; board.viewport.y = 0; board.viewport.zoom = 1;
     applyViewport();
     commit({ viewportOnly: true });

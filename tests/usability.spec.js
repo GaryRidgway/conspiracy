@@ -841,6 +841,39 @@ test('the move-items-with-frame toggle carries contents only while enabled', asy
   expect(Math.round(cardFinal.y)).toBe(Math.round(cardAfter.y));
 });
 
+// Right-click → "Use as default view": Reset then frames that frame instead
+// of snapping to the origin; toggling it off restores the origin behavior.
+test('a frame set as default view becomes the Reset target', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');                     // keep default name
+  const frame = page.locator('.frame-node');
+  const tab = frame.locator('.frame-tab');
+
+  await tab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Use as default view' }).click();
+
+  // wander far away, then Reset: the frame comes back, roughly filling the view
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    v.dispatchEvent(new WheelEvent('wheel', { deltaX: -2400, deltaY: -1800, bubbles: true, cancelable: true }));
+  });
+  await page.click('#resetView');
+  const box = await frame.boundingBox();
+  const vp = page.viewportSize();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1);
+  expect(box.width).toBeGreaterThan(400);                  // framed, not merely visible
+
+  // toggle it off (the item now shows a checkmark); Reset returns to the origin
+  await page.click('#fitContent');                         // bring the tab back under the cursor's reach
+  await tab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: '✓ Use as default view' }).click();
+  await page.click('#resetView');
+  const t = await page.evaluate(() => document.getElementById('world').style.transform);
+  expect(t).toContain('translate(0px, 0px)');
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
