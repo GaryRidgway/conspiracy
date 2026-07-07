@@ -2474,12 +2474,12 @@
   //  (interactive zoom-in is a 90% feature)
   // ════════════════════════════════════════════════════════
   // The on-screen area not covered by the fixed UI chrome (toolbar on top,
-  // status/hint along the bottom). Framing centers within this, not the whole
+  // status/zoom along the bottom). Framing centers within this, not the whole
   // window, so nodes don't land behind the toolbar.
   function visibleRect() {
     const tb = document.getElementById('toolbar').getBoundingClientRect();
     const top = tb.bottom + 12;
-    const bottomChrome = 52;          // status + hint strip
+    const bottomChrome = 52;          // status strip / zoom widget
     return { x: 0, y: top, w: innerWidth, h: Math.max(50, innerHeight - top - bottomChrome) };
   }
 
@@ -2932,6 +2932,11 @@
       closeBoardMenu();
       return;
     }
+    if (e.key === 'Escape' && helpOpen()) {
+      e.preventDefault();
+      setHelpOpen(false);
+      return;
+    }
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
@@ -3001,6 +3006,13 @@
       return;
     }
 
+    // ? toggles the shortcuts panel (Shift+/ on most layouts) — anywhere but
+    // inside a text field, where it must stay a typable character.
+    if (!editing && e.key === '?') {
+      e.preventDefault();
+      setHelpOpen(!helpOpen());
+      return;
+    }
     // Shift+1 — zoom to fit all content (mirrors the Fit button). "1" reports
     // as "!" with Shift on most layouts, so accept either.
     if (!editing && e.shiftKey && (e.key === '1' || e.key === '!')) {
@@ -3096,8 +3108,8 @@
     if (board.iframes[id]) setInteractive(id, true);   // embed → interact mode
   }
 
-  // F6 pane cycling: canvas → toolbar → palette → zoom bar → canvas.
-  const FOCUS_REGIONS = ['#toolbar', '#tools', '#zoombar'];
+  // F6 pane cycling: canvas → toolbar → palette → zoom bar → help → canvas.
+  const FOCUS_REGIONS = ['#toolbar', '#tools', '#zoombar', '#help-wrap'];
   function cycleFocusRegion(dir) {
     const ae = document.activeElement;
     const cur = FOCUS_REGIONS.findIndex((sel) => ae && ae.closest && ae.closest(sel));
@@ -3622,6 +3634,26 @@
       if (jumpEl.classList.contains('hidden')) openJump(); else closeJump();
     }
   });
+
+  // ════════════════════════════════════════════════════════
+  //  HELP — the ? button (top right) and its shortcuts panel.
+  //  Replaces the old always-on hint strip: complete reference on
+  //  demand instead of a partial one permanently on screen.
+  // ════════════════════════════════════════════════════════
+  const helpBtn = document.getElementById('helpBtn');
+  const helpPanel = document.getElementById('help-panel');
+  function helpOpen() { return !!helpPanel && !helpPanel.classList.contains('hidden'); }
+  function setHelpOpen(open) {
+    if (!helpPanel) return;
+    helpPanel.classList.toggle('hidden', !open);
+    if (helpBtn) helpBtn.setAttribute('aria-expanded', String(open));
+  }
+  if (helpBtn) {
+    helpBtn.addEventListener('click', (e) => { e.stopPropagation(); setHelpOpen(!helpOpen()); });
+    document.addEventListener('click', (e) => {
+      if (helpOpen() && !e.target.closest('#help-wrap')) setHelpOpen(false);
+    });
+  }
 
   // ════════════════════════════════════════════════════════
   //  BOARD LIBRARY — picker dropdown, switch / new / rename / remove

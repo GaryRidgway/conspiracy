@@ -16,6 +16,7 @@
     <span class="icon icon-add"></span>
     <p>This board is empty.</p>
     <p class="empty-sub">Add a <strong>Card</strong>, <strong>Frame</strong>, or <strong>Embed</strong> from the palette on the left to start.</p>
+    <p class="empty-sub">Press <strong>?</strong> anytime for shortcuts.</p>
   </div>
 
   <div id="toolbar" role="toolbar" aria-label="Board tools">
@@ -73,8 +74,45 @@
     <span class="save" id="saveState">saved</span>
   </div>
 
-  <div id="hint">
-    <kbd>drag</kbd> to box-select · <kbd>scroll</kbd> or <kbd>space</kbd>-drag to pan · <kbd>⌘/Ctrl+scroll</kbd> to zoom · drag a <kbd>port</kbd> or press <kbd>C</kbd> to connect · <kbd>Tab</kbd> cycles items · <kbd>↑↓←→</kbd> nudge · <kbd>Enter</kbd> opens · <kbd>Del</kbd> removes · <kbd>F6</kbd> toolbar
+  <!-- Help: ? button (top right) opening the shortcuts panel -->
+  <div id="help-wrap">
+    <button id="helpBtn" title="Help &amp; shortcuts (?)" aria-haspopup="true" aria-expanded="false"><span class="icon icon-help"></span></button>
+    <div id="help-panel" class="hidden" role="dialog" aria-label="Help and keyboard shortcuts">
+      <div class="help-group">
+        <h3>Canvas</h3>
+        <div class="help-row"><span>Pan</span><span class="help-keys"><kbd>scroll</kbd> / <kbd>Space</kbd>+drag</span></div>
+        <div class="help-row"><span>Zoom at cursor</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>scroll</kbd></span></div>
+        <div class="help-row"><span>Box-select</span><span class="help-keys">drag empty space</span></div>
+        <div class="help-row"><span>Fit everything</span><span class="help-keys"><kbd>Shift</kbd>+<kbd>1</kbd></span></div>
+        <div class="help-row"><span>Find &amp; jump</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>K</kbd></span></div>
+        <div class="help-row"><span>Add items</span><span class="help-keys">palette / right-click</span></div>
+      </div>
+      <div class="help-group">
+        <h3>Items</h3>
+        <div class="help-row"><span>Cycle items</span><span class="help-keys"><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></span></div>
+        <div class="help-row"><span>Nudge (fine)</span><span class="help-keys"><kbd>↑↓←→</kbd> (<kbd>Shift</kbd>)</span></div>
+        <div class="help-row"><span>Open / edit / press</span><span class="help-keys"><kbd>Enter</kbd></span></div>
+        <div class="help-row"><span>Connect</span><span class="help-keys"><kbd>C</kbd> or drag a port</span></div>
+        <div class="help-row"><span>Duplicate</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>D</kbd></span></div>
+        <div class="help-row"><span>Copy / cut / paste</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd></span></div>
+        <div class="help-row"><span>Colors, links &amp; more</span><span class="help-keys">right-click</span></div>
+        <div class="help-row"><span>Remove</span><span class="help-keys"><kbd>Del</kbd></span></div>
+      </div>
+      <div class="help-group">
+        <h3>Editing</h3>
+        <div class="help-row"><span>Rename a title</span><span class="help-keys">double-click it</span></div>
+        <div class="help-row"><span>Label an arrow</span><span class="help-keys">double-click it</span></div>
+        <div class="help-row"><span>Use an embedded page</span><span class="help-keys">double-click it</span></div>
+        <div class="help-row"><span>Undo / redo</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> / <kbd>⇧</kbd>+<kbd>Z</kbd></span></div>
+        <div class="help-row"><span>Done / back out</span><span class="help-keys"><kbd>Esc</kbd></span></div>
+      </div>
+      <div class="help-group">
+        <h3>App</h3>
+        <div class="help-row"><span>Hop between panels</span><span class="help-keys"><kbd>F6</kbd></span></div>
+        <div class="help-row"><span>Switch boards</span><span class="help-keys">toolbar menu / <kbd>#board=</kbd> link</span></div>
+        <div class="help-row"><span>This panel</span><span class="help-keys"><kbd>?</kbd></span></div>
+      </div>
+    </div>
   </div>
 
   <div id="zoombar" role="toolbar" aria-label="Zoom">

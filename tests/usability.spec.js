@@ -154,9 +154,30 @@ test('zoom stays within a sane range and Reset returns home', async ({ page }) =
 //      do"). The always-visible tool palette is the single obvious entry. ──
 test('creating a node is discoverable (tool palette button)', async ({ page }) => {
   await expect(page.locator('#tools #addCard')).toBeVisible();
-  await expect(page.locator('#hint')).toBeVisible();       // persistent guidance
+  await expect(page.locator('#helpBtn')).toBeVisible();    // guidance one click away
   await page.click('#addCard');
   await expect(page.locator('.node.card')).toHaveCount(1);
+});
+
+// The old always-on hint strip became a ? panel: ? toggles it, Escape and
+// clicking elsewhere close it, and it never opens while typing in a field.
+test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', async ({ page }) => {
+  await page.keyboard.press('?');
+  await expect(page.locator('#help-panel')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#help-panel')).toBeHidden();
+
+  await page.click('#helpBtn');
+  await expect(page.locator('#help-panel')).toBeVisible();
+  await page.mouse.click(400, 500);                        // empty canvas
+  await expect(page.locator('#help-panel')).toBeHidden();
+
+  // typing ? inside a card body stays a character, not a shortcut
+  const card = await addCardAt(page, 500, 300);
+  await card.locator('.card-body').click();
+  await page.keyboard.press('?');
+  await expect(page.locator('#help-panel')).toBeHidden();
+  await expect(card.locator('.card-body')).toHaveText('?');
 });
 
 // ── 5. Accidental deletion + weak undo (Microsoft Whiteboard: "can't undo a
