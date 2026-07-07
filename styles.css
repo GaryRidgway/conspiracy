@@ -256,8 +256,9 @@ body.space-pan #viewport.panning,
   margin: 0 -0.2rem;
 }
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
-/* colored buttons: the color tints the disc and border, not the whole face */
-.btn-node.colored { border-color: color-mix(in srgb, var(--node-color) 45%, transparent); }
+/* colored buttons: full-strength color border (same as cards/iframes/frames)
+   with the color tinting the disc, not the whole face */
+.btn-node.colored { border-color: var(--node-color); }
 .btn-node.colored:hover { border-color: var(--node-color-hi); }
 .btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 32%, transparent); }
 .btn-node.colored .icon { color: var(--node-color-hi); }
