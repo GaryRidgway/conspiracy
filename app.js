@@ -1128,7 +1128,7 @@
       el = document.createElement('div');
       el.className = 'node btn-node';
       el.dataset.id = id;
-      el.innerHTML = `<span class="icon"></span><span class="btn-node-label" spellcheck="false"></span>`;
+      el.innerHTML = `<span class="btn-disc"><span class="icon"></span></span><span class="btn-node-label" spellcheck="false"></span>`;
       world.appendChild(el);
       nodeEls.set(id, el);
       wireButton(id, el);

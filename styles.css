@@ -196,37 +196,39 @@ body.space-pan #viewport.panning,
 .frame-node.colored.selected,
 .frame-node.colored.selected .frame-tab { border-color: var(--node-color-hi); }
 
-/* ── Button node — looks pushable: a raised face on a hard bottom edge that
-   physically depresses on click (drag still moves it). ── */
+/* ── Button node — a chip: fully-round token with the icon in a tinted
+   disc. Press is a subtle scale-down (drag still moves it). ── */
 .btn-node {
   position: absolute;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   max-width: 320px;
-  padding: 0.5rem 1.05rem 0.55rem;
-  /* raised face: lit top edge fading into the base color */
-  --btn-face-hi: color-mix(in srgb, var(--surface2) 86%, white);
-  --btn-face-lo: var(--surface2);
-  --btn-edge: #0B0C10;               /* the hard 3D edge underneath */
+  padding: 0.35rem 0.9rem 0.35rem 0.4rem;
   --btn-ring: transparent;           /* selection ring slot */
-  background: linear-gradient(180deg, var(--btn-face-hi), var(--btn-face-lo));
+  background: var(--surface2);
   border: 1px solid var(--border2);
-  border-radius: 9px;
+  border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 650;
   color: var(--text);
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 0 0 1px var(--btn-ring), 0 3px 0 var(--btn-edge), 0 7px 16px rgba(0,0,0,0.4);
-  transition: border-color 0.12s, box-shadow 0.1s, transform 0.06s, background 0.12s;
+  box-shadow: 0 0 0 1px var(--btn-ring), 0 2px 8px rgba(0,0,0,0.3);
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.06s;
 }
-.btn-node:hover { --btn-face-hi: color-mix(in srgb, var(--surface2) 78%, white); }
-.btn-node:active {
-  transform: translateY(2px);        /* the press: sink onto the edge */
-  box-shadow: 0 0 0 1px var(--btn-ring), 0 1px 0 var(--btn-edge), 0 3px 8px rgba(0,0,0,0.35);
+.btn-node:hover { background: var(--border); border-color: var(--accent-soft); }
+.btn-node:active { transform: scale(0.96); }
+.btn-node .btn-disc {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
-.btn-node .icon { flex: none; width: 15px; height: 15px; color: var(--text-2); }
+.btn-node .icon { flex: none; width: 15px; height: 15px; color: var(--accent); }
 .btn-node .btn-node-label {
   min-width: 0;
   white-space: nowrap;
@@ -243,13 +245,10 @@ body.space-pan #viewport.panning,
   margin: 0 -0.2rem;
 }
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
-/* colored buttons wear their color as the face, with a darker edge of it */
-.btn-node.colored {
-  border-color: color-mix(in srgb, var(--node-color) 70%, black);
-  --btn-face-hi: color-mix(in srgb, var(--node-color) 42%, var(--surface2));
-  --btn-face-lo: color-mix(in srgb, var(--node-color) 22%, var(--surface));
-  --btn-edge: color-mix(in srgb, var(--node-color) 38%, black);
-}
+/* colored buttons: the color tints the disc and border, not the whole face */
+.btn-node.colored { border-color: color-mix(in srgb, var(--node-color) 45%, transparent); }
+.btn-node.colored:hover { border-color: var(--node-color-hi); }
+.btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 22%, transparent); }
 .btn-node.colored .icon { color: var(--node-color-hi); }
 .btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 
