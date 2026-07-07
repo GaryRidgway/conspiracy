@@ -30,6 +30,9 @@ One board is one JSON document:
 ```
 
 Id prefixes: cards/buttons/frames `c_`, iframes `f_`, connections `cn_`.
+Node ids must be unique **across devices**, not just within a session — the
+merge treats same-id as the same record and would fuse two unrelated nodes —
+so `newId()` ends in a random tail. Don't "simplify" it away.
 
 ### Node kinds: buttons and frames are cards
 
@@ -196,11 +199,6 @@ exercise it without OAuth — keep it pure.
   catches whatever was missed.
 - `saveBase` failing on quota is swallowed; a stale base degrades merges
   toward local-wins but loses nothing.
-- Node ids are unique per *session*, not globally: `newId()` is
-  `prefix + counter + performance.now()` with no random part. Two devices
-  creating a node at the same ms-since-page-load mint the same id, and the
-  merge then field-merges two unrelated nodes into one (latent; the fix is
-  adding a random component to `newId`).
 
 ## View layer
 

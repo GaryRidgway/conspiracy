@@ -702,9 +702,15 @@
 
   let idCounter = 0;
   function newId(prefix) {
+    // The random tail is load-bearing: the three-way merge treats same-id as
+    // the same record, so ids must be unique ACROSS devices, not just within
+    // this session — counter + performance.now alone collide when two devices
+    // create a node at the same ms-since-page-load, and the merge would fuse
+    // the two unrelated nodes into one.
     let id;
     do {
-      id = prefix + (idCounter++).toString(36) + '_' + (performance.now() | 0).toString(36);
+      id = prefix + (idCounter++).toString(36) + '_' + (performance.now() | 0).toString(36) +
+           Math.random().toString(36).slice(2, 6);
     } while (board.cards[id] || board.iframes[id] || board.connections[id]);
     return id;
   }
