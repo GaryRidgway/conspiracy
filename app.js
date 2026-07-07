@@ -2957,6 +2957,19 @@
       }
     }
 
+    // A visible edit toolbar/picker whose focus has already left it (the user
+    // clicked away mid-edit): Escape dismisses it. When focus is still inside
+    // the editing UI, the picker's and body's own Escape handlers take over.
+    if (e.key === 'Escape' && !textToolbar.classList.contains('hidden')) {
+      const inEditUi = ae && ((ae.closest && (ae.closest('#text-toolbar') || ae.closest('#node-picker'))) ||
+        (ae.classList && ae.classList.contains('card-body')));
+      if (!inEditUi) {
+        e.preventDefault();
+        hideTextToolbar();
+        return;
+      }
+    }
+
     // F6 / Shift+F6 — hop keyboard focus between the app's regions
     // (toolbar → palette → zoom bar → canvas), the standard pane-cycling key.
     // Without it a keyboard user could never reach the chrome at all, since
@@ -3367,14 +3380,17 @@
       if (moved && !nodePicker.classList.contains('hidden')) positionNodePicker();
     }
   }
-  function hideTextToolbarIfIdle() {
-    const ae = document.activeElement;
-    if (ae && (ae.closest('#text-toolbar') || ae.closest('#node-picker'))) return;
-    if (ae && ae.classList && ae.classList.contains('card-body')) return;
+  function hideTextToolbar() {
     textToolbar.classList.add('hidden');
     textToolbarEl = null;
     closeNodePicker();
     activeBody = null;
+  }
+  function hideTextToolbarIfIdle() {
+    const ae = document.activeElement;
+    if (ae && (ae.closest('#text-toolbar') || ae.closest('#node-picker'))) return;
+    if (ae && ae.classList && ae.classList.contains('card-body')) return;
+    hideTextToolbar();
   }
 
   document.execCommand('styleWithCSS', false, false);  // prefer <b>/<i> over inline styles
@@ -3472,6 +3488,11 @@
       npList.appendChild(empty);
     }
   }
+  // The picker's filter input holds focus while it's open, so ITS blur is the
+  // "user clicked away" signal — without this, clicking the canvas from the
+  // picker stranded the toolbar and picker on screen (the only other blur
+  // hook is on the card body, which blurred long before).
+  npFilter.addEventListener('blur', () => { setTimeout(hideTextToolbarIfIdle, 150); });
   npFilter.addEventListener('input', () => renderPickerList(npFilter.value));
   npFilter.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeNodePicker(); if (activeBody) activeBody.el.focus(); }

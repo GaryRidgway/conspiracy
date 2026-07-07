@@ -1324,3 +1324,32 @@ test('the toolbar and picker glide back on screen when their card returns', asyn
   await expect.poll(() => picker.evaluate((el) => parseFloat(el.style.left)), { timeout: 3000 })
     .toBeGreaterThanOrEqual(0);
 });
+
+// Clicking away with the link picker open must dismiss the whole editing UI —
+// the picker's filter input holds focus, so only ITS blur can signal it. And
+// Escape must rescue a stranded toolbar/picker from the canvas.
+test('clicking away (or Escape) closes the edit toolbar and link picker', async ({ page }) => {
+  await addCardAt(page, 420, 320);
+  const bar = page.locator('#text-toolbar');
+  const picker = page.locator('#node-picker');
+
+  await page.locator('.node.card .card-body').first().click();
+  await page.click('#tt-link');
+  await expect(picker).toBeVisible();
+  await page.mouse.click(950, 620);                          // empty canvas
+  await expect(picker).toBeHidden();
+  await expect(bar).toBeHidden();
+
+  // Escape path: re-open, strand it, and check Escape closes it SYNCHRONOUSLY
+  // (before the 150ms blur timer could) — proving the Escape chain handles it
+  await page.locator('.node.card .card-body').first().click();
+  await page.click('#tt-link');
+  await expect(picker).toBeVisible();
+  const closedByEscape = await page.evaluate(() => {
+    document.activeElement.blur();                           // strand without a click
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    return document.getElementById('node-picker').classList.contains('hidden') &&
+           document.getElementById('text-toolbar').classList.contains('hidden');
+  });
+  expect(closedByEscape).toBe(true);
+});
