@@ -1344,6 +1344,8 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .icon-format_list_bulleted { --icon: url("icons/format_list_bulleted.svg"); }
 .icon-format_list_numbered { --icon: url("icons/format_list_numbered.svg"); }
 .icon-link                 { --icon: url("icons/link.svg"); }
+.icon-card                 { --icon: url("icons/card.svg"); }
+.icon-button               { --icon: url("icons/button.svg"); }
 .icon-tag                  { --icon: url("icons/tag.svg"); }
 .icon-edit                 { --icon: url("icons/edit.svg"); }
 .icon-center_focus_strong  { --icon: url("icons/center_focus_strong.svg"); }
