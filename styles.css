@@ -209,9 +209,9 @@ body.space-pan #viewport.panning,
   max-width: 320px;
   padding: 0.35rem 0.9rem 0.35rem 0.4rem;
   --btn-ring: transparent;           /* selection ring slot */
-  /* faint top sheen + card-level shadow: a control must sit at least as
+  /* flat face, but card-level shadow: a control must sit at least as
      high as an idle card, or it reads as less alive than the content */
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface2) 90%, white), var(--surface2));
+  background: var(--surface2);
   border: 1px solid var(--border2);
   border-radius: 999px;
   font-size: 0.85rem;
@@ -219,16 +219,13 @@ body.space-pan #viewport.panning,
   color: var(--text);
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 0 0 1px var(--btn-ring), inset 0 1px 0 rgba(255,255,255,0.08), 0 6px 22px rgba(0,0,0,0.35);
+  box-shadow: 0 0 0 1px var(--btn-ring), 0 6px 22px rgba(0,0,0,0.35);
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.06s;
 }
-.btn-node:hover {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface2) 80%, white), var(--surface2));
-  border-color: var(--accent-soft);
-}
+.btn-node:hover { background: var(--border); border-color: var(--accent-soft); }
 .btn-node:active {
   transform: scale(0.96);
-  box-shadow: 0 0 0 1px var(--btn-ring), inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 0 0 1px var(--btn-ring), 0 2px 8px rgba(0,0,0,0.3);
 }
 .btn-node .btn-disc {
   flex: none;
