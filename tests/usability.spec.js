@@ -895,6 +895,30 @@ test('a frame set as default view becomes the Reset target', async ({ page }) =>
   expect(t).toContain('translate(0px, 0px)');
 });
 
+// Right-click → "Move to top" raises overlapped items, and the stacking
+// persists (z is stored on the record, not just DOM order).
+test('move to top raises an overlapped card and survives a reload', async ({ page }) => {
+  const a = await addCardAt(page, 480, 320);
+  const idA = await a.getAttribute('data-id');
+  const b = await addCardAt(page, 540, 360);               // overlaps a; newer = on top
+  const idB = await b.getAttribute('data-id');
+  const topAt = (x, y) => page.evaluate(([px, py]) => {
+    const el = document.elementFromPoint(px, py);
+    const n = el && el.closest('.node');
+    return n ? n.dataset.id : null;
+  }, [x, y]);
+  expect(await topAt(520, 350)).toBe(idB);                 // sanity: b covers the overlap
+
+  await page.locator(`.node[data-id="${idA}"] .card-header`).click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Move to top' }).click();
+  expect(await topAt(520, 350)).toBe(idA);
+
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  expect(await topAt(520, 350)).toBe(idA);                 // z came back from storage
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();

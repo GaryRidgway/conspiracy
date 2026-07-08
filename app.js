@@ -938,6 +938,13 @@
       el.classList.remove('colored');
     }
   }
+  // Stacking: nodes without a z stack by DOM (insertion) order; "Move to top"
+  // stamps an explicit data.z above everything else. Values stay inside
+  // #world's stacking context, so they can grow without ever covering the
+  // fixed chrome. Frames are excluded — they sit at z -1 by design.
+  function applyNodeZ(el, data) {
+    el.style.zIndex = data.z != null ? String(data.z) : '';
+  }
   // Set (or clear, color=null) the color of the given nodes in one undo step.
   function setNodesColor(ids, color) {
     let changed = false;
@@ -1051,6 +1058,7 @@
     el.style.left = data.x + 'px';
     el.style.top = data.y + 'px';
     applyNodeColor(el, data.color);
+    applyNodeZ(el, data);
 
     const titleEl = el.querySelector('.card-title');
     const bodyEl = el.querySelector('.card-body');
@@ -1137,6 +1145,7 @@
     el.style.left = data.x + 'px';
     el.style.top = data.y + 'px';
     applyNodeColor(el, data.color);
+    applyNodeZ(el, data);
 
     const labelEl = el.querySelector('.btn-node-label');
     if (document.activeElement !== labelEl) labelEl.textContent = data.title || 'Button';
@@ -1400,6 +1409,7 @@
     el.style.width = data.w + 'px';
     el.style.height = data.h + 'px';
     applyNodeColor(el, data.color);
+    applyNodeZ(el, data);
 
     // src is set lazily by evaluateFrameLoading(), not here
     const labelEl = el.querySelector('.iframe-label');
@@ -2002,6 +2012,33 @@
 
   function selectAllNodes() { setSelection([...nodeEls.keys()]); }
 
+  // "Move to top": stamp the selection with z values above every other node,
+  // preserving the selection's own relative stacking. One undo step.
+  function maxNodeZ() {
+    let max = 0;
+    for (const n of Object.values(board.cards)) if (n.kind !== 'frame' && n.z > max) max = n.z;
+    for (const n of Object.values(board.iframes)) if (n.z > max) max = n.z;
+    return max;
+  }
+  function bringToFront(ids) {
+    const domIndex = (id) => {
+      const el = nodeEls.get(id);
+      return el ? [...world.children].indexOf(el) : -1;
+    };
+    const movers = ids
+      .map((id) => ({ id, n: getNode(id) }))
+      .filter((m) => m.n && m.n.data.kind !== 'frame')   // frames stay behind by design
+      .sort((a, b) => ((a.n.data.z || 0) - (b.n.data.z || 0)) || (domIndex(a.id) - domIndex(b.id)));
+    if (!movers.length) return;
+    let z = maxNodeZ();
+    for (const m of movers) {
+      m.n.data.z = ++z;
+      const el = nodeEls.get(m.id);
+      if (el) applyNodeZ(el, m.n.data);
+    }
+    commit();
+  }
+
   // Internal clipboard (in-session, works across boards). Copy snapshots the
   // selection + its internal connections; paste clones them with a cascading
   // offset so repeated pastes don't stack exactly.
@@ -2396,6 +2433,11 @@
       items.push({ label: 'Copy', hint: '⌘C', action: copySelection });
       items.push({ label: 'Cut', hint: '⌘X', action: () => { copySelection(); for (const nid of [...selectedNodes]) deleteNode(nid); } });
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
+      // frames can't come forward (always behind by design), so only offer the
+      // item when the selection holds something stackable
+      if ([...selectedNodes].some((nid) => { const n = getNode(nid); return n && n.data.kind !== 'frame'; })) {
+        items.push({ label: many ? 'Move selection to top' : 'Move to top', action: () => bringToFront([...selectedNodes]) });
+      }
       items.push('sep');
       const gn = getNode(id);
       const curColor = (gn && gn.data.color) || null;   // reflects the right-clicked node
