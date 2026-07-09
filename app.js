@@ -1240,12 +1240,17 @@
       el = document.createElement('div');
       el.className = 'node frame-node';
       el.dataset.id = id;
+      // Edge/corner handles come before the tab so the tab paints over the
+      // north strip where they meet. SE keeps its own class (the visible
+      // bracket other corners mirror via .edge-*).
       el.innerHTML = `
+        ${['n', 's', 'e', 'w', 'nw', 'ne', 'sw'].map((d) =>
+          `<div class="frame-edge edge-${d}" data-dir="${d}"></div>`).join('')}
         <div class="frame-tab">
           <span class="frame-name" title="Double-click to rename" spellcheck="false"></span>
           <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
         </div>
-        <div class="frame-resize" title="Resize"></div>`;
+        <div class="frame-resize" data-dir="se" title="Resize"></div>`;
       world.appendChild(el);
       nodeEls.set(id, el);
       wireFrameNode(id, el);
@@ -1280,33 +1285,49 @@
       copyNodeLink(id, e.currentTarget);
     });
 
-    el.querySelector('.frame-resize').addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      selectNode(id);
-      const data = board.cards[id];
-      const start = toWorld(e.clientX, e.clientY);
-      const ow = data.w, oh = data.h;
-      let moved = false;
-      const onMove = (ev) => {
-        const now = toWorld(ev.clientX, ev.clientY);
-        data.w = Math.max(200, Math.round(ow + (now.x - start.x)));
-        data.h = Math.max(140, Math.round(oh + (now.y - start.y)));
-        el.style.width = data.w + 'px';
-        el.style.height = data.h + 'px';
-        moved = true;
-      };
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        window.removeEventListener('pointercancel', onUp);
-        if (moved) commit();
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      window.addEventListener('pointercancel', onUp);
-    });
+    // Any edge or corner resizes; west/north sides move x/y with the size so
+    // the opposite edge stays pinned (contents keep their world positions).
+    for (const handle of el.querySelectorAll('.frame-edge, .frame-resize')) {
+      handle.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        selectNode(id);
+        const dir = handle.dataset.dir;
+        const data = board.cards[id];
+        const start = toWorld(e.clientX, e.clientY);
+        const o = { x: data.x, y: data.y, w: data.w, h: data.h };
+        let moved = false;
+        const onMove = (ev) => {
+          const now = toWorld(ev.clientX, ev.clientY);
+          const dx = now.x - start.x, dy = now.y - start.y;
+          if (dir.includes('e')) data.w = Math.max(200, Math.round(o.w + dx));
+          if (dir.includes('s')) data.h = Math.max(140, Math.round(o.h + dy));
+          if (dir.includes('w')) {
+            data.w = Math.max(200, Math.round(o.w - dx));
+            data.x = o.x + o.w - data.w;
+          }
+          if (dir.includes('n')) {
+            data.h = Math.max(140, Math.round(o.h - dy));
+            data.y = o.y + o.h - data.h;
+          }
+          el.style.left = data.x + 'px';
+          el.style.top = data.y + 'px';
+          el.style.width = data.w + 'px';
+          el.style.height = data.h + 'px';
+          moved = true;
+        };
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+          if (moved) commit();
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      });
+    }
   }
 
   function createFrameNode(worldX, worldY) {
@@ -2939,6 +2960,32 @@
     announce(`${nodeKind(order[i])} “${nodeTitle(order[i])}”, ${i + 1} of ${order.length}`);
   }
 
+  // Alt+Arrow: jump selection to the nearest node in that direction. Scored by
+  // progress along the arrow plus doubled off-axis drift, so a well-aligned
+  // node beats a slightly-closer diagonal one (the usual spatial-nav weighting).
+  function spatialNav(ax, ay) {
+    const cur = selectedNodes.size === 1 ? [...selectedNodes][0] : null;
+    const cg = cur && nodeGeom(cur);
+    if (!cg) { tabToNode(1); return; }   // no anchor: land like Tab does
+    const cx = cg.x + cg.w / 2, cy = cg.y + cg.h / 2;
+    let best = null, bestScore = Infinity;
+    for (const id of nodeEls.keys()) {
+      if (id === cur) continue;
+      const g = nodeGeom(id);
+      if (!g) continue;
+      const dx = (g.x + g.w / 2) - cx, dy = (g.y + g.h / 2) - cy;
+      const fwd = dx * ax + dy * ay;
+      if (fwd <= 0) continue;             // behind or exactly beside
+      const off = Math.abs(dx * ay) + Math.abs(dy * ax);
+      const score = fwd + off * 2;
+      if (score < bestScore) { bestScore = score; best = id; }
+    }
+    if (!best) return;                    // edge of the board: stay put
+    selectNode(best);
+    ensureNodeVisible(best);
+    announce(`${nodeKind(best)} “${nodeTitle(best)}”`);
+  }
+
   // Visually-hidden polite live region: screen readers hear selection changes
   // and merge notices; nothing on screen. Debounced so holding Tab reads only
   // where you landed, not every stop along the way.
@@ -3082,6 +3129,15 @@
     if (e.key === 'Tab' && onCanvas && frameModal.classList.contains('hidden')) {
       e.preventDefault();
       tabToNode(e.shiftKey ? -1 : 1);
+      return;
+    }
+    // Alt+Arrow hops to the nearest node in that direction — spatial nav that
+    // leaves bare arrows free to nudge (the whiteboard convention). Checked
+    // first or the nudge branch below would eat the combo.
+    if (onCanvas && e.altKey && !e.metaKey && !e.ctrlKey && ARROW_DELTA[e.key]) {
+      e.preventDefault();
+      const [ax, ay] = ARROW_DELTA[e.key];
+      spatialNav(ax, ay);
       return;
     }
     // Arrow keys move the selection (Shift for fine steps) — the keyboard

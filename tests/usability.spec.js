@@ -895,6 +895,30 @@ test('a frame set as default view becomes the Reset target', async ({ page }) =>
   expect(t).toContain('translate(0px, 0px)');
 });
 
+// Frames resize from any edge or corner; a west/north drag keeps the opposite
+// edge pinned, so contents never shift in world space.
+test('a frame resizes from its west edge and NW corner with the far edge pinned', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');                     // keep default name
+  const frame = page.locator('.frame-node');
+  const b0 = await frame.boundingBox();
+
+  // west edge: drag left 100 → wider by 100, right edge unmoved
+  await drag(page, { x: b0.x, y: b0.y + b0.height / 2 },
+                   { x: b0.x - 100, y: b0.y + b0.height / 2 });
+  const b1 = await frame.boundingBox();
+  expect(Math.round(b1.width - b0.width)).toBe(100);
+  expect(Math.round((b1.x + b1.width) - (b0.x + b0.width))).toBe(0);
+
+  // NW corner: drag up-left → both dimensions grow, SE corner unmoved
+  await drag(page, { x: b1.x - 2, y: b1.y - 2 }, { x: b1.x - 62, y: b1.y - 42 });
+  const b2 = await frame.boundingBox();
+  expect(Math.round(b2.width - b1.width)).toBe(60);
+  expect(Math.round(b2.height - b1.height)).toBe(40);
+  expect(Math.round((b2.x + b2.width) - (b1.x + b1.width))).toBe(0);
+  expect(Math.round((b2.y + b2.height) - (b1.y + b1.height))).toBe(0);
+});
+
 // Right-click → "Move to top" raises overlapped items, and the stacking
 // persists (z is stored on the record, not just DOM order).
 test('move to top raises an overlapped card and survives a reload', async ({ page }) => {
@@ -1110,6 +1134,25 @@ test('keyboard: arrow keys nudge the selected node, Shift for fine steps', async
   await page.keyboard.press('Shift+ArrowDown');
   expect(await sel.evaluate((el) => parseFloat(el.style.left))).toBe(x0 + 20);  // 2 × 10px
   expect(await sel.evaluate((el) => parseFloat(el.style.top))).toBe(y0 + 1);    // fine step
+});
+
+// Alt+Arrow hops selection to the nearest node in that direction — spatial
+// navigation that never moves anything (bare arrows keep their nudge meaning).
+test('keyboard: Alt+Arrow jumps selection spatially without nudging', async ({ page }) => {
+  const a = await addCardAt(page, 350, 300);
+  const idA = await a.getAttribute('data-id');
+  const b = await addCardAt(page, 700, 320);
+  const idB = await b.getAttribute('data-id');
+  await page.mouse.click(60, 180);            // canvas focus, nothing selected
+  await page.keyboard.press('Tab');           // reading order: a (topmost) first
+  await expect(page.locator(`.node[data-id="${idA}"]`)).toHaveClass(/selected/);
+  const x0 = await a.evaluate((el) => parseFloat(el.style.left));
+
+  await page.keyboard.press('Alt+ArrowRight');
+  await expect(page.locator(`.node[data-id="${idB}"]`)).toHaveClass(/selected/);
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expect(page.locator(`.node[data-id="${idA}"]`)).toHaveClass(/selected/);
+  expect(await a.evaluate((el) => parseFloat(el.style.left))).toBe(x0);  // hop ≠ nudge
 });
 
 test('keyboard: a burst of nudges undoes as a single step', async ({ page }) => {
