@@ -226,8 +226,10 @@ body.space-pan #viewport.panning,
 .frame-node:hover .edge-nw, .frame-node.selected .edge-nw,
 .frame-node:hover .edge-ne, .frame-node.selected .edge-ne,
 .frame-node:hover .edge-sw, .frame-node.selected .edge-sw { opacity: 1; }
-.frame-node.selected { border-color: var(--accent); }
-.frame-node.selected .frame-tab { border-color: var(--accent); }
+/* selection ring matches cards/buttons (border + 1px ring), so a selected
+   frame doesn't look thinner than its own co-selected docked buttons */
+.frame-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.frame-node.selected .frame-tab { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .frame-node.colored {
   border-color: var(--node-color);
   background: color-mix(in srgb, var(--node-color) 5%, transparent);
@@ -238,7 +240,10 @@ body.space-pan #viewport.panning,
 }
 .frame-node.colored .frame-name { color: var(--text); }
 .frame-node.colored.selected,
-.frame-node.colored.selected .frame-tab { border-color: var(--node-color-hi); }
+.frame-node.colored.selected .frame-tab {
+  border-color: var(--node-color-hi);
+  box-shadow: 0 0 0 1px var(--node-color-hi);
+}
 
 /* ── Button node — a chip: fully-round token with the icon in a tinted
    disc. Press is a subtle scale-down (drag still moves it). ── */
