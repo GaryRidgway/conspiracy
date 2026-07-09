@@ -726,7 +726,19 @@
   const selectedNodes = new Set();   // node ids
   let selectedConn = null;           // connection id, or null
 
-  function markNode(id, on) { const el = nodeEls.get(id); if (el) el.classList.toggle('selected', on); }
+  function markNode(id, on) {
+    const el = nodeEls.get(id);
+    if (el) el.classList.toggle('selected', on);
+    // a selected root lights up its docked buttons too — they move as one,
+    // so they should read as one (visual only: NOT in selectedNodes, or a
+    // delete would cascade instead of orphaning)
+    for (const [bid, c] of Object.entries(board.cards)) {
+      if (c.kind === 'button' && c.attachedTo && dockRoot(bid) === id) {
+        const bel = nodeEls.get(bid);
+        if (bel) bel.classList.toggle('co-selected', on);
+      }
+    }
+  }
   function markConn(id, on) {
     const entry = connEls.get(id);
     if (!entry) return;
@@ -1288,7 +1300,7 @@
   }
 
   const DOCK_CLASSES = ['attached-bottom', 'attached-title', 'attached-chain',
-    'attached-first', 'attached-last'];
+    'attached-first', 'attached-last', 'co-selected'];
   function setDockClasses(bel, kind, first, last) {
     bel.classList.toggle('attached-bottom', kind === 'bottom');
     bel.classList.toggle('attached-title', kind === 'title');
@@ -1326,6 +1338,9 @@
       const tel = nodeEls.get(rid);
       const kind = t.data.kind === 'frame' ? 'title'
         : t.data.kind === 'button' ? 'chain' : 'bottom';
+      // keep the visual group-highlight fresh if a dock changed mid-selection
+      const rootSel = selectedNodes.has(rid);
+      for (const bid of bids) nodeEls.get(bid).classList.toggle('co-selected', rootSel);
       if (kind === 'bottom') {
         // full-width tray: equal tab segments sharing 1px borders
         tel.classList.add('has-dock');

@@ -1025,6 +1025,13 @@ test('a button docks to the right of a frame title and moves with the frame', as
                     Math.abs(b.height - t.height));
   })).toBeLessThan(1);
 
+  // selecting the frame highlights its docked buttons along with it
+  await tab.click();
+  await expect(frame).toHaveClass(/selected/);
+  await expect(btn).toHaveClass(/co-selected/);
+  await page.keyboard.press('Escape');
+  await expect(btn).not.toHaveClass(/co-selected/);
+
   // dragging the frame by its tab carries the docked button
   await drag(page, { x: tb.x + 20, y: tb.y + tb.height / 2 },
                    { x: tb.x + 20 + 100, y: tb.y + tb.height / 2 + 50 });

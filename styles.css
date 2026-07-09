@@ -295,6 +295,9 @@ body.space-pan #viewport.panning,
   margin: 0 -0.2rem;
 }
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
+/* selecting a card/frame/chain root highlights its docked buttons with it
+   (visual companion to .selected — the buttons aren't in the selection) */
+.btn-node.co-selected { border-color: var(--accent); --btn-ring: var(--accent); }
 /* Docked buttons: only the touching corners flatten (no color inheritance —
    the assembly reads as one piece by geometry alone).
    Card bottoms: a full-width tray of equal tabs; outer bottom corners match
@@ -304,8 +307,7 @@ body.space-pan #viewport.panning,
    every chip flattens its left (touching) side, only the last rounds off. */
 .btn-node.attached-bottom {
   max-width: none;                     /* tray tabs span, chips don't */
-  justify-content: center;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 0.75rem 0.35rem 0.5rem;   /* left-aligned, like list rows */
   border-radius: 0;
 }
 .btn-node.attached-bottom.attached-first { border-bottom-left-radius: 10px; }
@@ -333,6 +335,7 @@ body.space-pan #viewport.panning,
 .btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 32%, transparent); }
 .btn-node.colored .icon { color: var(--node-color-hi); }
 .btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
+.btn-node.colored.co-selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 
 /* ── Shared node header (cards + iframes) ── */
 .card-header {
