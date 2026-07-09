@@ -218,7 +218,7 @@ test('rich text: clicking the link icon on an existing link re-targets it', asyn
   await expect(page.locator('#node-picker')).toBeVisible();
   await expect(page.locator('#np-filter')).toHaveAttribute('placeholder', /Change link target/);
   await page.fill('#np-filter', 'Second');
-  await page.click('.np-item');
+  await page.click('.np-item:not(.np-remove)');   // the Remove row sits on top while editing
 
   await expect(link).toHaveAttribute('data-node', id2);
   await expect(link).toHaveText('Second');   // auto label updated to the new target

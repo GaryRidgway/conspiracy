@@ -1472,6 +1472,42 @@ test('modals trap Tab: focus cycles inside the embed dialog', async ({ page }) =
 // The link picker hangs off the edit toolbar's link button; like the toolbar
 // (see the 2d test above) it must re-anchor as the board pans, not stick to
 // its original screen position.
+// Re-opening the picker on an existing inline link offers "Remove link",
+// which unwraps the chip back to plain text — previously there was no way
+// out of having a link at all.
+test('the link picker can remove an existing inline link', async ({ page }) => {
+  const a = await addCardAt(page, 350, 300);
+  const idA = await a.getAttribute('data-id');
+  const b = await addCardAt(page, 700, 300);
+  const idB = await b.getAttribute('data-id');
+  const bodyA = page.locator(`.node[data-id="${idA}"] .card-body`);
+  await bodyA.click();
+  await page.click('#tt-link');
+  await page.locator(`#node-picker .np-item[data-id="${idB}"]`).click();
+  const chip = bodyA.locator('a.node-link');
+  await expect(chip).toHaveCount(1);
+  const label = await chip.textContent();
+
+  // put the selection on the chip, then reopen the picker: it's now editing
+  await page.evaluate(() => {
+    const el = document.querySelector('a.node-link');
+    const r = document.createRange();
+    r.selectNode(el);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  });
+  await page.click('#tt-link');
+  const remove = page.locator('#node-picker .np-remove');
+  await expect(remove).toBeVisible();
+  await remove.click();
+  await expect(bodyA.locator('a.node-link')).toHaveCount(0);
+  await expect(bodyA).toContainText(label);                  // the text survives
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator(`.node[data-id="${idA}"] .card-body a.node-link`)).toHaveCount(0);
+});
+
 test('the link picker stays anchored to the toolbar when the board is panned', async ({ page }) => {
   await addCardAt(page, 500, 350);
   await page.locator('.node.card .card-body').first().click();

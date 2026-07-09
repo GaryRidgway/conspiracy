@@ -3841,6 +3841,17 @@
     const f = (hash ? decodeURIComponent(hash[1]) : raw).toLowerCase();
 
     npList.innerHTML = '';
+    // re-targeting an existing chip: offer the way OUT of having a link at
+    // all — unwrap it to plain text (there's no other affordance for this)
+    if (editingLink) {
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'np-item np-remove';
+      rm.innerHTML = '<span class="np-type">unlink</span><span class="np-label">Remove link</span>';
+      rm.addEventListener('mousedown', (e) => e.preventDefault());
+      rm.addEventListener('click', removeEditingLink);
+      npList.appendChild(rm);
+    }
     const ids = [...nodeEls.keys()].filter((id) => !activeBody || id !== activeBody.id);
     let any = false;
     for (const id of ids) {
@@ -3878,10 +3889,21 @@
     if (e.key === 'Escape') { e.preventDefault(); closeNodePicker(); if (activeBody) activeBody.el.focus(); }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const first = npList.querySelector('.np-item');
+      // never the Remove row: Enter means "take the top search hit"
+      const first = npList.querySelector('.np-item:not(.np-remove)');
       if (first) insertNodeLink(first.dataset.id);
     }
   });
+
+  // Unwrap the chip being edited back to its plain text.
+  function removeEditingLink() {
+    if (activeBody && editingLink && activeBody.el.contains(editingLink)) {
+      editingLink.replaceWith(document.createTextNode(editingLink.textContent));
+      saveCardBody(activeBody.id, activeBody.el);
+    }
+    closeNodePicker();
+    if (activeBody) activeBody.el.focus();
+  }
 
   function insertNodeLink(targetId) {
     if (!activeBody) return;

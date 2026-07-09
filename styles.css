@@ -1383,6 +1383,7 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 }
 .np-empty { color: var(--text-3); font-size: 0.8rem; padding: 0.4rem 0.5rem; }
 .np-item.sel { background: var(--surface2); }
+.np-item.np-remove .np-label { color: var(--danger); }
 
 /* item list inside the button-link modal */
 #bl-list {
