@@ -299,6 +299,16 @@ body.space-pan #viewport.panning,
   padding: 0 0.2rem;
   margin: 0 -0.2rem;
 }
+/* Docked chips adopt their dock's surface treatment so the assembly reads as
+   one control: title-row chips match the flat tab (its surface, no drop
+   shadow — the ring slot stays for selection); tray tabs match the card's
+   dimmer border. Hover keeps the standard chip feedback. */
+.btn-node.attached-title { background: var(--surface); box-shadow: 0 0 0 1px var(--btn-ring); }
+.btn-node.attached-bottom { background: var(--surface); border-color: var(--border); }
+.btn-node.attached-title:hover, .btn-node.attached-bottom:hover {
+  background: var(--border);
+  border-color: var(--accent-soft);
+}
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
 /* selecting a card/frame/chain root highlights its docked buttons with it
    (visual companion to .selected — the buttons aren't in the selection) */
@@ -339,6 +349,12 @@ body.space-pan #viewport.panning,
 .btn-node.colored:hover { border-color: var(--node-color-hi); }
 .btn-node.colored .btn-disc { background: color-mix(in srgb, var(--node-color) 32%, transparent); }
 .btn-node.colored .icon { color: var(--node-color-hi); }
+/* colored title-row chips mirror the colored tab's softer treatment */
+.btn-node.colored.attached-title {
+  border-color: color-mix(in srgb, var(--node-color) 55%, transparent);
+  background: color-mix(in srgb, var(--node-color) 15%, var(--surface));
+}
+.btn-node.colored.attached-title:hover { border-color: var(--node-color-hi); }
 .btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 .btn-node.colored.co-selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
 

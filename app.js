@@ -1376,8 +1376,11 @@
           const d = board.cards[bid];
           const bel = nodeEls.get(bid);
           bel.style.width = '';
-          d.x = Math.round(x);
-          d.y = Math.round(y);
+          // quarter-pixel, not whole-pixel: the tab's edges sit at fractional
+          // positions (1.5px frame border, rem paddings), and a rounded chip
+          // renders its border on a different half-pixel than the tab's
+          d.x = Math.round(x * 4) / 4;
+          d.y = Math.round(y * 4) / 4;
           bel.style.left = d.x + 'px';
           bel.style.top = d.y + 'px';
           setDockClasses(bel, kind, i === 0, i === bids.length - 1);
