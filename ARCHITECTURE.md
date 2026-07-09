@@ -52,18 +52,29 @@ collections, never beside them.
 
 ### Docked buttons: derived x/y, still stored
 
-A button with `attachedTo` (+ `attachOrder`) docks to a card's bottom edge or
-a frame title's right side, and its `x`/`y` becomes **derived** — recomputed
-by `layoutAttachments()` from the target's live geometry. The derived value is
-still written back into the record, on purpose: clients that don't know the
-layout rule (older deploys, exports, the merge) keep placing the button
-correctly from plain `x`/`y`. The recompute runs inside `commit()` (so no
-content mutation can leave a stale stored position), plus per-frame during
-drags and after full renders. It must run even when nothing is attached —
-the same pass is what clears docked styling after the last detach/orphan.
-`layoutAttachments()` itself never commits; the caller's commit carries its
-writes in the same undo step. Deleting a dock orphans its buttons in place
-(`delete attachedTo`) rather than cascading the delete.
+A button with `attachedTo` (+ `attachOrder`) docks to a **root**: a card
+(full-width bottom tray, max 3 tabs), a frame (row right of the title tab),
+or a free button (horizontal menu chain). Its `x`/`y` (and tray width)
+becomes **derived** — recomputed by `layoutAttachments()` from the root's
+live geometry. The derived value is still written back into the record, on
+purpose: clients that don't know the layout rule (older deploys, exports,
+the merge) keep placing the button correctly from plain `x`/`y`. The
+recompute runs inside `commit()` (so no content mutation can leave a stale
+stored position), plus per-frame during drags and after full renders. It
+must run even when nothing is attached — the same pass is what clears docked
+styling after the last detach/orphan. `layoutAttachments()` itself never
+commits; the caller's commit carries its writes in the same undo step.
+
+Chains stay **flat**: `attachButton` re-points a drop on a docked button at
+that button's root (and re-roots the dropped button's own children), so
+`attachedTo` normally points straight at a root and cycles can't be built
+locally. A concurrent-edit merge can still nest or loop them, so `dockRoot()`
+walks with a visited set and treats a cycle as detached — never assume one
+hop. Deleting a dock orphans its buttons in place (`delete attachedTo`)
+rather than cascading the delete. Title-row geometry must come from
+`getBoundingClientRect` + `toWorld`, not `offsetTop/offsetLeft` — those are
+integers measured from the padding edge, and the frame's fractional border
+visibly misaligns the row.
 
 ### Record shape rules (the merge depends on these)
 

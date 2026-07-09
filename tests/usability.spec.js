@@ -947,15 +947,19 @@ test('move to top raises an overlapped card and survives a reload', async ({ pag
 //    title) and it becomes part of the assembly — follows drags, survives
 //    reloads, frees itself via right-click → Detach. ──
 async function addFreeButton(page) {
+  const before = await page.locator('.btn-node').count();
   await page.click('#addButton');
   await expect(page.locator('#button-link-modal')).toBeVisible();
   await page.keyboard.press('Escape');       // a link isn't needed to dock
-  return page.locator('.btn-node');
+  await expect(page.locator('.btn-node')).toHaveCount(before + 1);
+  const id = await page.locator('.btn-node').last().getAttribute('data-id');
+  return page.locator(`.btn-node[data-id="${id}"]`);
 }
 // Model position, not boundingBox: right after a drop the chip can still be
 // mid :active scale, which shifts its client rect by a couple of pixels.
 const nodePos = (loc) => loc.evaluate((el) => ({
-  x: parseFloat(el.style.left), y: parseFloat(el.style.top), h: el.offsetHeight,
+  x: parseFloat(el.style.left), y: parseFloat(el.style.top),
+  w: el.offsetWidth, h: el.offsetHeight,
 }));
 
 test('a button docks to a card bottom, rides its drags, and detaches via right-click', async ({ page }) => {
@@ -968,7 +972,8 @@ test('a button docks to a card bottom, rides its drags, and detaches via right-c
   await expect(btn).toHaveClass(/attached-bottom/);
   let bp = await nodePos(btn);
   const cp = await nodePos(card);
-  expect(bp.x - cp.x).toBe(12);                                   // docked at the inset
+  expect(bp.x - cp.x).toBe(0);                                    // full-width tab tray
+  expect(Math.abs(bp.w - cp.w)).toBeLessThanOrEqual(1);
   expect(bp.y - (cp.y + cp.h)).toBe(-1);                          // flush, sharing the border
 
   // dragging the card carries the docked button
@@ -1009,13 +1014,16 @@ test('a button docks to the right of a frame title and moves with the frame', as
   await expect(btn).toHaveClass(/attached-title/);
   await expect(frame).toHaveClass(/has-tab-buttons/);
   const bp = await nodePos(btn);
-  const tabEdge = await frame.evaluate((el) => {
-    const tab = el.querySelector('.frame-tab');
-    return { x: parseFloat(el.style.left) + tab.offsetLeft + tab.offsetWidth,
-             y: parseFloat(el.style.top) + tab.offsetTop };
-  });
-  expect(bp.x).toBe(tabEdge.x - 1);                               // flush right of the tab
-  expect(bp.y).toBe(tabEdge.y);                                   // same row
+
+  // screen-rect alignment: flush right of the tab, same top, same height
+  // (poll: the chip's :active scale transition needs a beat to settle)
+  await expect.poll(() => page.evaluate(() => {
+    const b = document.querySelector('.btn-node').getBoundingClientRect();
+    const t = document.querySelector('.frame-tab').getBoundingClientRect();
+    return Math.max(Math.abs(b.left - (t.right - 1)),
+                    Math.abs(b.top - t.top),
+                    Math.abs(b.height - t.height));
+  })).toBeLessThan(1);
 
   // dragging the frame by its tab carries the docked button
   await drag(page, { x: tb.x + 20, y: tb.y + tb.height / 2 },
@@ -1023,6 +1031,74 @@ test('a button docks to the right of a frame title and moves with the frame', as
   const bp2 = await nodePos(btn);
   expect(bp2.x - bp.x).toBe(100);
   expect(bp2.y - bp.y).toBe(50);
+});
+
+// Up to three buttons form a full-width tab tray under a card; a fourth
+// won't dock. Chains: a button dropped on a free button's right edge forms
+// a menu row that moves with its root; dropping on a DOCKED button appends
+// to that button's row instead of nesting.
+test('card trays cap at three tabs and buttons chain into menu rows', async ({ page }) => {
+  const card = await addCardAt(page, 480, 240);
+  const cb = await card.boundingBox();
+  const dockToCard = async (btn) => {
+    const b = await btn.boundingBox();
+    await drag(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 },
+                     { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  };
+  const b1 = await addFreeButton(page);
+  await dockToCard(b1);
+  const b2 = await addFreeButton(page);
+  await dockToCard(b2);
+  const b3 = await addFreeButton(page);
+  await dockToCard(b3);
+  await expect(b3).toHaveClass(/attached-bottom/);
+  const cp = await nodePos(card);
+  const [p1, p2, p3] = [await nodePos(b1), await nodePos(b2), await nodePos(b3)];
+  expect(Math.abs(p1.w - p2.w)).toBeLessThanOrEqual(1);           // equal tab segments
+  // seams share ~1px borders (±1 from fractional-width rounding)
+  expect(Math.abs(p2.x - (p1.x + p1.w - 1))).toBeLessThanOrEqual(1);
+  expect(Math.abs(p3.x - (p2.x + p2.w - 1))).toBeLessThanOrEqual(1);
+  expect(Math.abs((p3.x + p3.w) - (cp.x + cp.w))).toBeLessThanOrEqual(2);  // spans the card
+  await expect(b1).toHaveClass(/attached-first/);
+  await expect(b3).toHaveClass(/attached-last/);
+
+  // the tray is full: a fourth button refuses to dock
+  const b4 = await addFreeButton(page);
+  await dockToCard(b4);
+  await expect(b4).not.toHaveClass(/attached-bottom/);
+
+  // chain b4 onto a free root button, then append a fifth via the docked one
+  const root = await addFreeButton(page);
+  let rb = await root.boundingBox();
+  await drag(page, { x: rb.x + rb.width / 2, y: rb.y + rb.height / 2 },
+                   { x: 260, y: 600 });
+  rb = await root.boundingBox();
+  const b4b = await b4.boundingBox();
+  await drag(page, { x: b4b.x + b4b.width / 2, y: b4b.y + b4b.height / 2 },
+                   { x: rb.x + rb.width + 12 + b4b.width / 2, y: rb.y + rb.height / 2 });
+  await expect(b4).toHaveClass(/attached-chain/);
+  await expect(root).toHaveClass(/has-chain/);
+  const rp = await nodePos(root);
+  const p4 = await nodePos(b4);
+  expect(p4.x).toBe(rp.x + rp.w - 1);                             // flush right of the root
+  expect(p4.y).toBe(rp.y);
+
+  const b5 = await addFreeButton(page);
+  const b5b = await b5.boundingBox();
+  await drag(page, { x: b5b.x + b5b.width / 2, y: b5b.y + b5b.height / 2 },
+                   { x: rb.x + rb.width + b4b.width + 12 + b5b.width / 2, y: rb.y + rb.height / 2 });
+  await expect(b5).toHaveClass(/attached-chain/);                 // joined the same row
+  await expect(b5).toHaveClass(/attached-last/);
+  await expect(b4).not.toHaveClass(/attached-last/);
+
+  // dragging the root moves the whole menu row
+  const before4 = await nodePos(b4);
+  rb = await root.boundingBox();
+  await drag(page, { x: rb.x + rb.width / 2, y: rb.y + rb.height / 2 },
+                   { x: rb.x + rb.width / 2 + 90, y: rb.y + rb.height / 2 - 40 });
+  const after4 = await nodePos(b4);
+  expect(after4.x - before4.x).toBe(90);
+  expect(after4.y - before4.y).toBe(-40);
 });
 
 test('deleting a card orphans its docked button in place', async ({ page }) => {

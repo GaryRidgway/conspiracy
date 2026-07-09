@@ -1191,11 +1191,12 @@
       if (e.button !== 0 || e.target.classList.contains('port')) return;
       down = { x: e.clientX, y: e.clientY, shift: e.shiftKey };
       if (labelEl.isContentEditable) return;
-      // docked: the button is part of its card/frame — drag the whole assembly
-      // (Detach lives in the right-click menu)
+      // docked: the button is part of its assembly — drag the whole thing by
+      // its root (Detach lives in the right-click menu)
       const d = board.cards[id];
-      const dockEl = d.attachedTo && getNode(d.attachedTo) && nodeEls.get(d.attachedTo);
-      if (dockEl) startNodeDrag(d.attachedTo, dockEl, e);
+      const rootId = d.attachedTo ? dockRoot(id) : null;
+      const rootEl = rootId && rootId !== id && nodeEls.get(rootId);
+      if (rootEl) startNodeDrag(rootId, rootEl, e);
       else startNodeDrag(id, el, e);
     });
     el.addEventListener('pointerup', (e) => {
@@ -1256,89 +1257,168 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  DOCKED BUTTONS — a button dropped on a card's bottom edge (or just right
-  //  of a frame's title tab) snaps on and moves with it; right-click → Detach
-  //  frees it. attachedTo/attachOrder live on the BUTTON's record so they
-  //  merge per-field and survive deployed clients (a top-level map would be
+  //  DOCKED BUTTONS — a button dropped on a card's bottom edge becomes a
+  //  full-width tab in a tray (up to 3); dropped just right of a frame's
+  //  title tab (or of another button) it joins a horizontal row. Docked
+  //  buttons move with their root; right-click → Detach frees one.
+  //  attachedTo/attachOrder live on the BUTTON's record so they merge
+  //  per-field and survive deployed clients (a top-level map would be
   //  dropped — see ARCHITECTURE.md). The button's stored x/y stays
   //  authoritative for everyone else: layout rewrites it inside every content
   //  commit, so old clients and exports place docked buttons correctly
   //  without knowing the layout rule.
   // ════════════════════════════════════════════════════════
-  const DOCK_INSET = 12;   // past the card's rounded corner
-  const DOCK_GAP = 6;      // between docked siblings under a card
+  const DOCK_TRAY_MAX = 3;   // tabs across a card bottom
 
-  // Recompute every docked button's derived x/y and corner classes. Never
-  // commits: geometry-changing callers commit right after, so the derived
-  // position rides the same undo step and save as the change that caused it.
+  // Root of a dock: cards and frames are roots; a button is a root while it
+  // isn't docked itself. attachButton flattens chains so attachedTo normally
+  // points straight at a root, but a concurrent-edit merge can nest them —
+  // walk defensively, and treat a cycle as detached.
+  function dockRoot(id) {
+    const seen = new Set();
+    let cur = id;
+    for (;;) {
+      if (seen.has(cur)) return null;
+      seen.add(cur);
+      const n = getNode(cur);
+      if (!n) return null;
+      if (n.data.kind !== 'button' || !n.data.attachedTo) return cur;
+      cur = n.data.attachedTo;
+    }
+  }
+
+  const DOCK_CLASSES = ['attached-bottom', 'attached-title', 'attached-chain',
+    'attached-first', 'attached-last'];
+  function setDockClasses(bel, kind, first, last) {
+    bel.classList.toggle('attached-bottom', kind === 'bottom');
+    bel.classList.toggle('attached-title', kind === 'title');
+    bel.classList.toggle('attached-chain', kind === 'chain');
+    bel.classList.toggle('attached-first', first);
+    bel.classList.toggle('attached-last', last);
+  }
+
+  // Recompute every docked button's derived x/y, width, and corner classes.
+  // Never commits: geometry-changing callers commit right after, so the
+  // derived position rides the same undo step and save as the change itself.
   function layoutAttachments() {
-    const byTarget = new Map();
+    const byRoot = new Map();
     for (const [bid, c] of Object.entries(board.cards)) {
       if (c.kind !== 'button') continue;
       const bel = nodeEls.get(bid);
       if (!bel) continue;
-      if (c.attachedTo && getNode(c.attachedTo) && nodeEls.get(c.attachedTo)) {
-        if (!byTarget.has(c.attachedTo)) byTarget.set(c.attachedTo, []);
-        byTarget.get(c.attachedTo).push(bid);
+      const root = c.attachedTo ? dockRoot(bid) : null;
+      if (root && root !== bid && nodeEls.get(root)) {
+        if (!byRoot.has(root)) byRoot.set(root, []);
+        byRoot.get(root).push(bid);
       } else {
-        bel.classList.remove('attached-bottom', 'attached-title', 'attached-mid');
+        bel.classList.remove(...DOCK_CLASSES);
+        bel.style.width = '';
       }
     }
-    for (const fel of world.querySelectorAll('.frame-node.has-tab-buttons')) {
-      if (!byTarget.has(fel.dataset.id)) fel.classList.remove('has-tab-buttons');
+    for (const el of world.querySelectorAll('.frame-node.has-tab-buttons, .card.has-dock, .btn-node.has-chain')) {
+      if (!byRoot.has(el.dataset.id)) el.classList.remove('has-tab-buttons', 'has-dock', 'has-chain');
     }
-    for (const [tid, bids] of byTarget) {
+    for (const [rid, bids] of byRoot) {
       bids.sort((a, b) =>
         ((board.cards[a].attachOrder || 0) - (board.cards[b].attachOrder || 0)) ||
         (a < b ? -1 : 1));
-      const t = getNode(tid);
-      const tel = nodeEls.get(tid);
-      const titleRow = t.data.kind === 'frame';
-      let x, y;
-      if (titleRow) {
-        const tab = tel.querySelector('.frame-tab');
-        x = t.data.x + tab.offsetLeft + tab.offsetWidth - 1;  // share the 1px border
-        y = t.data.y + tab.offsetTop;
-        tel.classList.add('has-tab-buttons');
+      const t = getNode(rid);
+      const tel = nodeEls.get(rid);
+      const kind = t.data.kind === 'frame' ? 'title'
+        : t.data.kind === 'button' ? 'chain' : 'bottom';
+      if (kind === 'bottom') {
+        // full-width tray: equal tab segments sharing 1px borders
+        tel.classList.add('has-dock');
+        const width = (tel.offsetWidth + (bids.length - 1)) / bids.length;
+        bids.forEach((bid, i) => {
+          const d = board.cards[bid];
+          const bel = nodeEls.get(bid);
+          bel.style.width = width + 'px';
+          d.x = Math.round(t.data.x + i * (width - 1));
+          d.y = Math.round(t.data.y + tel.offsetHeight - 1);
+          bel.style.left = d.x + 'px';
+          bel.style.top = d.y + 'px';
+          setDockClasses(bel, kind, i === 0, i === bids.length - 1);
+          redrawConnectionsFor(bid);
+        });
       } else {
-        x = t.data.x + DOCK_INSET;
-        y = t.data.y + tel.offsetHeight - 1;
+        // horizontal row flush right of the frame tab / root button. Rect
+        // math, not offsetTop/offsetLeft: those are integers measured from
+        // the padding edge, so the frame's 1.5px border misaligns the row.
+        let x, y;
+        if (kind === 'title') {
+          tel.classList.add('has-tab-buttons');
+          const r = tel.querySelector('.frame-tab').getBoundingClientRect();
+          const p = toWorld(r.right, r.top);
+          x = p.x - 1;   // share the 1px border
+          y = p.y;
+        } else {
+          tel.classList.add('has-chain');
+          x = t.data.x + tel.offsetWidth - 1;
+          y = t.data.y;
+        }
+        bids.forEach((bid, i) => {
+          const d = board.cards[bid];
+          const bel = nodeEls.get(bid);
+          bel.style.width = '';
+          d.x = Math.round(x);
+          d.y = Math.round(y);
+          bel.style.left = d.x + 'px';
+          bel.style.top = d.y + 'px';
+          setDockClasses(bel, kind, i === 0, i === bids.length - 1);
+          redrawConnectionsFor(bid);
+          x += bel.offsetWidth - 1;
+        });
       }
-      bids.forEach((bid, i) => {
-        const d = board.cards[bid];
-        const bel = nodeEls.get(bid);
-        d.x = Math.round(x);
-        d.y = Math.round(y);
-        bel.style.left = d.x + 'px';
-        bel.style.top = d.y + 'px';
-        bel.classList.toggle('attached-bottom', !titleRow);
-        bel.classList.toggle('attached-title', titleRow);
-        bel.classList.toggle('attached-mid', titleRow && i < bids.length - 1);
-        redrawConnectionsFor(bid);
-        x += bel.offsetWidth + (titleRow ? -1 : DOCK_GAP);
-      });
     }
   }
 
-  // Dock zone under the dragged button, if any: a band along a card's bottom
-  // edge, or the strip just right of a frame's title tab.
+  // Dock zone under the dragged button, if any: a card's bottom band (tray,
+  // capped), the end of a frame's title row, or another button's right edge.
+  // Cards/frames are checked first so their zones win where a docked chip
+  // overlaps them.
   function findSnapTarget(buttonId) {
     const g = nodeGeom(buttonId);
     if (!g) return null;
+    const countDocked = (tid) => {
+      let n = 0;
+      for (const c of Object.values(board.cards)) {
+        if (c.kind === 'button' && c.attachedTo === tid) n++;
+      }
+      return n;
+    };
     for (const [tid, c] of Object.entries(board.cards)) {
       if (tid === buttonId || c.kind === 'button') continue;
       const tg = nodeGeom(tid);
       if (!tg) continue;
       if (c.kind === 'frame') {
-        const tab = nodeEls.get(tid).querySelector('.frame-tab');
-        const tabRight = c.x + tab.offsetLeft + tab.offsetWidth;
-        const tabTop = c.y + tab.offsetTop;
-        if (Math.abs(g.x - tabRight) < 40 &&
-            g.y + g.h > tabTop - 10 && g.y < tabTop + tab.offsetHeight + 10) return tid;
-      } else if (Math.abs(g.y - (tg.y + tg.h)) < 24 &&
+        // the row's growing end: the last docked button, or the tab itself
+        const r = nodeEls.get(tid).querySelector('.frame-tab').getBoundingClientRect();
+        const p = toWorld(r.right, r.top);
+        let end = { x: p.x, y: p.y, h: r.height / board.viewport.zoom };
+        for (const [bid, bc] of Object.entries(board.cards)) {
+          if (bc.kind !== 'button' || bc.attachedTo !== tid || bid === buttonId) continue;
+          const bg = nodeGeom(bid);
+          if (bg && bg.x + bg.w > end.x) end = { x: bg.x + bg.w, y: bg.y, h: bg.h };
+        }
+        if (Math.abs(g.x - end.x) < 40 &&
+            g.y + g.h > end.y - 10 && g.y < end.y + end.h + 10) return tid;
+      } else if (countDocked(tid) < DOCK_TRAY_MAX &&
+                 Math.abs(g.y - (tg.y + tg.h)) < 24 &&
                  g.x + g.w > tg.x && g.x < tg.x + tg.w) {
         return tid;
       }
+    }
+    for (const [tid, c] of Object.entries(board.cards)) {
+      if (tid === buttonId || c.kind !== 'button') continue;
+      const root = dockRoot(tid);
+      if (!root || root === buttonId) continue;   // never dock onto your own chain
+      const rn = getNode(root);
+      if (rn && rn.data.kind !== 'frame' && rn.data.kind !== 'button' &&
+          countDocked(root) >= DOCK_TRAY_MAX) continue;
+      const tg = nodeGeom(tid);
+      if (tg && Math.abs(g.x - (tg.x + tg.w)) < 30 &&
+          g.y + g.h > tg.y && g.y < tg.y + tg.h) return tid;
     }
     return null;
   }
@@ -1346,14 +1426,27 @@
   function attachButton(buttonId, targetId) {
     const d = board.cards[buttonId];
     if (!d || d.kind !== 'button') return;
-    let maxOrder = 0;
+    // dropping on a docked button appends to its row: chains stay flat
+    // (attachedTo always points at a root) so merges can't weave a cycle
+    const t = getNode(targetId);
+    if (t && t.data.kind === 'button' && t.data.attachedTo) targetId = dockRoot(targetId);
+    if (!targetId || targetId === buttonId || !getNode(targetId)) return;
+    let order = 0;
     for (const c of Object.values(board.cards)) {
       if (c.kind === 'button' && c.attachedTo === targetId) {
-        maxOrder = Math.max(maxOrder, c.attachOrder || 0);
+        order = Math.max(order, c.attachOrder || 0);
       }
     }
     d.attachedTo = targetId;
-    d.attachOrder = maxOrder + 1;
+    d.attachOrder = ++order;
+    // if the dropped button headed its own chain, its row joins the new root
+    const kids = Object.entries(board.cards)
+      .filter(([kid, c]) => kid !== buttonId && c.kind === 'button' && c.attachedTo === buttonId)
+      .sort((a, b) => ((a[1].attachOrder || 0) - (b[1].attachOrder || 0)) || (a[0] < b[0] ? -1 : 1));
+    for (const [, c] of kids) {
+      c.attachedTo = targetId;
+      c.attachOrder = ++order;
+    }
     layoutAttachments();
   }
 
@@ -3354,10 +3447,13 @@
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
         for (const cid of frameContents(nid)) carried.add(cid);
       }
-      // a docked button moves as its card/frame, same as dragging it
-      if (n && n.data.kind === 'button' && n.data.attachedTo && nodeEls.get(n.data.attachedTo)) {
-        carried.delete(nid);
-        carried.add(n.data.attachedTo);
+      // a docked button moves as its assembly's root, same as dragging it
+      if (n && n.data.kind === 'button' && n.data.attachedTo) {
+        const root = dockRoot(nid);
+        if (root && root !== nid && nodeEls.get(root)) {
+          carried.delete(nid);
+          carried.add(root);
+        }
       }
     }
     for (const nid of carried) {

@@ -296,16 +296,36 @@ body.space-pan #viewport.panning,
 }
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
 /* Docked buttons: only the touching corners flatten (no color inheritance —
-   the assembly reads as one piece by geometry alone). Under a card the top
-   goes flat; on a frame's title row the left goes flat, and middle chips in
-   a run flatten both sides so the row reads as one segmented control. */
-.btn-node.attached-bottom { border-radius: 0 0 18px 18px; }
-.btn-node.attached-title { border-radius: 0 999px 999px 0; }
-.btn-node.attached-title.attached-mid { border-radius: 0; }
+   the assembly reads as one piece by geometry alone).
+   Card bottoms: a full-width tray of equal tabs; outer bottom corners match
+   the card's 10px radius, inner edges share 1px borders. The card flattens
+   its own bottom corners while it has a tray.
+   Frame title rows and button chains: a segmented run growing rightward —
+   every chip flattens its left (touching) side, only the last rounds off. */
+.btn-node.attached-bottom {
+  max-width: none;                     /* tray tabs span, chips don't */
+  justify-content: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0;
+}
+.btn-node.attached-bottom.attached-first { border-bottom-left-radius: 10px; }
+.btn-node.attached-bottom.attached-last { border-bottom-right-radius: 10px; }
+.card.has-dock { border-radius: 10px 10px 0 0; }
+.card.has-dock .card-body { border-radius: 0; }
+.btn-node.attached-title, .btn-node.attached-chain { border-radius: 0; }
+.btn-node.attached-title.attached-last, .btn-node.attached-chain.attached-last {
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+}
+.btn-node.has-chain {                  /* a chain root flattens toward its row */
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .frame-node.has-tab-buttons .frame-tab { border-radius: 7px 0 0 7px; }
 /* live preview while a dragged button hovers a dockable zone */
 .card.snap-target { border-color: var(--accent); }
 .frame-node.snap-target .frame-tab { border-color: var(--accent); }
+.btn-node.snap-target { border-color: var(--accent); }
 /* colored buttons: full-strength color border (same as cards/iframes/frames)
    with the color tinting the disc, not the whole face */
 .btn-node.colored { border-color: var(--node-color); }
