@@ -295,6 +295,17 @@ body.space-pan #viewport.panning,
   margin: 0 -0.2rem;
 }
 .btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
+/* Docked buttons: only the touching corners flatten (no color inheritance —
+   the assembly reads as one piece by geometry alone). Under a card the top
+   goes flat; on a frame's title row the left goes flat, and middle chips in
+   a run flatten both sides so the row reads as one segmented control. */
+.btn-node.attached-bottom { border-radius: 0 0 18px 18px; }
+.btn-node.attached-title { border-radius: 0 999px 999px 0; }
+.btn-node.attached-title.attached-mid { border-radius: 0; }
+.frame-node.has-tab-buttons .frame-tab { border-radius: 7px 0 0 7px; }
+/* live preview while a dragged button hovers a dockable zone */
+.card.snap-target { border-color: var(--accent); }
+.frame-node.snap-target .frame-tab { border-color: var(--accent); }
 /* colored buttons: full-strength color border (same as cards/iframes/frames)
    with the color tinting the disc, not the whole face */
 .btn-node.colored { border-color: var(--node-color); }

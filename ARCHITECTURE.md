@@ -50,6 +50,21 @@ document from a fixed field list (`schema`, `version`, `viewport`, the three
 collections), so new persistent data must live on records *inside* those
 collections, never beside them.
 
+### Docked buttons: derived x/y, still stored
+
+A button with `attachedTo` (+ `attachOrder`) docks to a card's bottom edge or
+a frame title's right side, and its `x`/`y` becomes **derived** — recomputed
+by `layoutAttachments()` from the target's live geometry. The derived value is
+still written back into the record, on purpose: clients that don't know the
+layout rule (older deploys, exports, the merge) keep placing the button
+correctly from plain `x`/`y`. The recompute runs inside `commit()` (so no
+content mutation can leave a stale stored position), plus per-frame during
+drags and after full renders. It must run even when nothing is attached —
+the same pass is what clears docked styling after the last detach/orphan.
+`layoutAttachments()` itself never commits; the caller's commit carries its
+writes in the same undo step. Deleting a dock orphans its buttons in place
+(`delete attachedTo`) rather than cascading the delete.
+
 ### Record shape rules (the merge depends on these)
 
 - Records are flat objects, except fields may nest **one level** of plain

@@ -487,6 +487,11 @@
     // they don't touch content, aren't undoable, and must NOT bump the version
     // or trigger a Drive push — just persist the viewport to its own local key.
     if (opts && opts.viewportOnly) { scheduleViewportSave(); return; }
+    // Docked buttons re-derive their x/y at the chokepoint, so whatever
+    // mutated content (a drag, typing that grew a card, a color change)
+    // can't leave a stale stored position behind. Unguarded on purpose: the
+    // pass is also what CLEARS docked styling when the last dock goes away.
+    layoutAttachments();
     board.version++;
     recordUndo(opts && opts.coalesce);
     scheduleSave();
@@ -806,6 +811,19 @@
     let moved = false;
     movers.forEach((m) => m.el.classList.add('dragging'));
 
+    // a single dragged free button can dock: track the zone under it live
+    const snapButton = movers.length === 1 && movers[0].d.kind === 'button' &&
+      !movers[0].d.attachedTo ? movers[0].nid : null;
+    let snapTarget = null;
+    const setSnapTarget = (tid) => {
+      if (snapTarget === tid) return;
+      const prev = snapTarget && nodeEls.get(snapTarget);
+      if (prev) prev.classList.remove('snap-target');
+      snapTarget = tid;
+      const next = snapTarget && nodeEls.get(snapTarget);
+      if (next) next.classList.add('snap-target');
+    };
+
     const onMove = (ev) => {
       const now = toWorld(ev.clientX, ev.clientY);
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
@@ -816,6 +834,8 @@
         redrawConnectionsFor(m.nid);
       }
       if (dx || dy) moved = true;
+      layoutAttachments();                         // docked buttons ride along live
+      if (snapButton) setSnapTarget(findSnapTarget(snapButton));
       scheduleFrameEval();
     };
     const onUp = () => {
@@ -823,6 +843,8 @@
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      if (snapButton && snapTarget) { attachButton(snapButton, snapTarget); moved = true; }
+      setSnapTarget(null);
       if (moved) commit();
     };
     window.addEventListener('pointermove', onMove);
@@ -1168,7 +1190,13 @@
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.classList.contains('port')) return;
       down = { x: e.clientX, y: e.clientY, shift: e.shiftKey };
-      if (!labelEl.isContentEditable) startNodeDrag(id, el, e);
+      if (labelEl.isContentEditable) return;
+      // docked: the button is part of its card/frame — drag the whole assembly
+      // (Detach lives in the right-click menu)
+      const d = board.cards[id];
+      const dockEl = d.attachedTo && getNode(d.attachedTo) && nodeEls.get(d.attachedTo);
+      if (dockEl) startNodeDrag(d.attachedTo, dockEl, e);
+      else startNodeDrag(id, el, e);
     });
     el.addEventListener('pointerup', (e) => {
       if (!down) return;
@@ -1225,6 +1253,131 @@
     selectNode(id);
     openButtonLinkModal(id);   // a button without a link does nothing — set it now
     return id;
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  DOCKED BUTTONS — a button dropped on a card's bottom edge (or just right
+  //  of a frame's title tab) snaps on and moves with it; right-click → Detach
+  //  frees it. attachedTo/attachOrder live on the BUTTON's record so they
+  //  merge per-field and survive deployed clients (a top-level map would be
+  //  dropped — see ARCHITECTURE.md). The button's stored x/y stays
+  //  authoritative for everyone else: layout rewrites it inside every content
+  //  commit, so old clients and exports place docked buttons correctly
+  //  without knowing the layout rule.
+  // ════════════════════════════════════════════════════════
+  const DOCK_INSET = 12;   // past the card's rounded corner
+  const DOCK_GAP = 6;      // between docked siblings under a card
+
+  // Recompute every docked button's derived x/y and corner classes. Never
+  // commits: geometry-changing callers commit right after, so the derived
+  // position rides the same undo step and save as the change that caused it.
+  function layoutAttachments() {
+    const byTarget = new Map();
+    for (const [bid, c] of Object.entries(board.cards)) {
+      if (c.kind !== 'button') continue;
+      const bel = nodeEls.get(bid);
+      if (!bel) continue;
+      if (c.attachedTo && getNode(c.attachedTo) && nodeEls.get(c.attachedTo)) {
+        if (!byTarget.has(c.attachedTo)) byTarget.set(c.attachedTo, []);
+        byTarget.get(c.attachedTo).push(bid);
+      } else {
+        bel.classList.remove('attached-bottom', 'attached-title', 'attached-mid');
+      }
+    }
+    for (const fel of world.querySelectorAll('.frame-node.has-tab-buttons')) {
+      if (!byTarget.has(fel.dataset.id)) fel.classList.remove('has-tab-buttons');
+    }
+    for (const [tid, bids] of byTarget) {
+      bids.sort((a, b) =>
+        ((board.cards[a].attachOrder || 0) - (board.cards[b].attachOrder || 0)) ||
+        (a < b ? -1 : 1));
+      const t = getNode(tid);
+      const tel = nodeEls.get(tid);
+      const titleRow = t.data.kind === 'frame';
+      let x, y;
+      if (titleRow) {
+        const tab = tel.querySelector('.frame-tab');
+        x = t.data.x + tab.offsetLeft + tab.offsetWidth - 1;  // share the 1px border
+        y = t.data.y + tab.offsetTop;
+        tel.classList.add('has-tab-buttons');
+      } else {
+        x = t.data.x + DOCK_INSET;
+        y = t.data.y + tel.offsetHeight - 1;
+      }
+      bids.forEach((bid, i) => {
+        const d = board.cards[bid];
+        const bel = nodeEls.get(bid);
+        d.x = Math.round(x);
+        d.y = Math.round(y);
+        bel.style.left = d.x + 'px';
+        bel.style.top = d.y + 'px';
+        bel.classList.toggle('attached-bottom', !titleRow);
+        bel.classList.toggle('attached-title', titleRow);
+        bel.classList.toggle('attached-mid', titleRow && i < bids.length - 1);
+        redrawConnectionsFor(bid);
+        x += bel.offsetWidth + (titleRow ? -1 : DOCK_GAP);
+      });
+    }
+  }
+
+  // Dock zone under the dragged button, if any: a band along a card's bottom
+  // edge, or the strip just right of a frame's title tab.
+  function findSnapTarget(buttonId) {
+    const g = nodeGeom(buttonId);
+    if (!g) return null;
+    for (const [tid, c] of Object.entries(board.cards)) {
+      if (tid === buttonId || c.kind === 'button') continue;
+      const tg = nodeGeom(tid);
+      if (!tg) continue;
+      if (c.kind === 'frame') {
+        const tab = nodeEls.get(tid).querySelector('.frame-tab');
+        const tabRight = c.x + tab.offsetLeft + tab.offsetWidth;
+        const tabTop = c.y + tab.offsetTop;
+        if (Math.abs(g.x - tabRight) < 40 &&
+            g.y + g.h > tabTop - 10 && g.y < tabTop + tab.offsetHeight + 10) return tid;
+      } else if (Math.abs(g.y - (tg.y + tg.h)) < 24 &&
+                 g.x + g.w > tg.x && g.x < tg.x + tg.w) {
+        return tid;
+      }
+    }
+    return null;
+  }
+
+  function attachButton(buttonId, targetId) {
+    const d = board.cards[buttonId];
+    if (!d || d.kind !== 'button') return;
+    let maxOrder = 0;
+    for (const c of Object.values(board.cards)) {
+      if (c.kind === 'button' && c.attachedTo === targetId) {
+        maxOrder = Math.max(maxOrder, c.attachOrder || 0);
+      }
+    }
+    d.attachedTo = targetId;
+    d.attachOrder = maxOrder + 1;
+    layoutAttachments();
+  }
+
+  function detachButton(buttonId) {
+    const d = board.cards[buttonId];
+    if (!d || !d.attachedTo) return;
+    delete d.attachedTo;
+    delete d.attachOrder;
+    d.x += 16; d.y += 16;      // step out of the dock so the release is visible
+    renderButton(buttonId);
+    layoutAttachments();
+    redrawConnectionsFor(buttonId);
+    commit();
+  }
+
+  // Docked buttons only stay docked if their dock came along in the same
+  // duplicate/paste; otherwise the copy would snap back to the original.
+  function remapAttachments(idMap) {
+    for (const nid of Object.values(idMap)) {
+      const d = board.cards[nid];
+      if (!d || !d.attachedTo) continue;
+      if (idMap[d.attachedTo]) d.attachedTo = idMap[d.attachedTo];
+      else { delete d.attachedTo; delete d.attachOrder; }
+    }
   }
 
   // ════════════════════════════════════════════════════════
@@ -1976,6 +2129,14 @@
   //  DELETE (any node) — also removes attached connections
   // ════════════════════════════════════════════════════════
   function deleteNode(id) {
+    // deleting a dock orphans its buttons in place (buttons that were ALSO
+    // selected get their own deleteNode call in the same sweep)
+    for (const c of Object.values(board.cards)) {
+      if (c.kind === 'button' && c.attachedTo === id) {
+        delete c.attachedTo;
+        delete c.attachOrder;
+      }
+    }
     delete board.cards[id];
     delete board.iframes[id];
     const el = nodeEls.get(id);
@@ -2026,6 +2187,7 @@
       idMap[oldId] = addNodeFromData(n.type, data);
     }
     remapConnections(Object.values(board.connections), idMap);
+    remapAttachments(idMap);
     setSelection(Object.values(idMap));
     scheduleFrameEval();
     commit();
@@ -2101,6 +2263,7 @@
       idMap[item.oldId] = addNodeFromData(item.type, data);
     }
     remapConnections(clipboard.conns, idMap);
+    remapAttachments(idMap);
     setSelection(Object.values(idMap));
     scheduleFrameEval();
     commit();
@@ -2194,6 +2357,7 @@
     for (const id of Object.keys(board.iframes)) renderIframe(id);
     // connections after nodes exist so geometry is available
     for (const id of Object.keys(board.connections)) renderConnection(id);
+    layoutAttachments();                         // classes + any layout drift
     applyViewport();
     refreshColorFilter();
   }
@@ -2219,6 +2383,7 @@
     for (const id of Object.keys(board.cards)) renderCard(id);
     for (const id of Object.keys(board.iframes)) renderIframe(id);
     for (const id of Object.keys(board.connections)) renderConnection(id);
+    layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
     applyViewport();
@@ -2448,6 +2613,7 @@
         items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.btn-node-label')) });
         if (configured) items.push({ label: 'Remove link', action: () => setButtonAction(id, null) });
+        if (gn0.data.attachedTo) items.push({ label: 'Detach', action: () => detachButton(id) });
         items.push('sep');
       }
       items.push({ label: many ? 'Duplicate selection' : 'Duplicate', hint: '⌘D', action: duplicateSelection });
@@ -3187,6 +3353,11 @@
       const n = getNode(nid);
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
         for (const cid of frameContents(nid)) carried.add(cid);
+      }
+      // a docked button moves as its card/frame, same as dragging it
+      if (n && n.data.kind === 'button' && n.data.attachedTo && nodeEls.get(n.data.attachedTo)) {
+        carried.delete(nid);
+        carried.add(n.data.attachedTo);
       }
     }
     for (const nid of carried) {

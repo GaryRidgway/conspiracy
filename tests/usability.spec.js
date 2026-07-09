@@ -943,6 +943,108 @@ test('move to top raises an overlapped card and survives a reload', async ({ pag
   expect(await topAt(520, 350)).toBe(idA);                 // z came back from storage
 });
 
+// ── Docked buttons: drop a button on a card's bottom edge (or beside a frame
+//    title) and it becomes part of the assembly — follows drags, survives
+//    reloads, frees itself via right-click → Detach. ──
+async function addFreeButton(page) {
+  await page.click('#addButton');
+  await expect(page.locator('#button-link-modal')).toBeVisible();
+  await page.keyboard.press('Escape');       // a link isn't needed to dock
+  return page.locator('.btn-node');
+}
+// Model position, not boundingBox: right after a drop the chip can still be
+// mid :active scale, which shifts its client rect by a couple of pixels.
+const nodePos = (loc) => loc.evaluate((el) => ({
+  x: parseFloat(el.style.left), y: parseFloat(el.style.top), h: el.offsetHeight,
+}));
+
+test('a button docks to a card bottom, rides its drags, and detaches via right-click', async ({ page }) => {
+  const card = await addCardAt(page, 500, 280);
+  const btn = await addFreeButton(page);
+  const cb = await card.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+  let bp = await nodePos(btn);
+  const cp = await nodePos(card);
+  expect(bp.x - cp.x).toBe(12);                                   // docked at the inset
+  expect(bp.y - (cp.y + cp.h)).toBe(-1);                          // flush, sharing the border
+
+  // dragging the card carries the docked button
+  const hb = await card.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + 24, y: hb.y + hb.height / 2 },
+                   { x: hb.x + 144, y: hb.y + hb.height / 2 + 60 });
+  const bp2 = await nodePos(btn);
+  expect(bp2.x - bp.x).toBe(120);
+  expect(bp2.y - bp.y).toBe(60);
+
+  // the dock persists (attachedTo lives on the button's record)
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.btn-node')).toHaveClass(/attached-bottom/);
+
+  // Detach frees it: corners restore and card drags no longer carry it
+  await page.locator('.btn-node').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Detach' }).click();
+  await expect(page.locator('.btn-node')).not.toHaveClass(/attached-bottom/);
+  const free = await nodePos(page.locator('.btn-node'));
+  const hb2 = await page.locator('.card-header').boundingBox();
+  await drag(page, { x: hb2.x + 24, y: hb2.y + hb2.height / 2 },
+                   { x: hb2.x + 24, y: hb2.y + hb2.height / 2 + 80 });
+  const free2 = await nodePos(page.locator('.btn-node'));
+  expect(free2.y - free.y).toBe(0);                               // stayed put
+});
+
+test('a button docks to the right of a frame title and moves with the frame', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');                            // keep default name
+  const frame = page.locator('.frame-node');
+  const tab = frame.locator('.frame-tab');
+  const btn = await addFreeButton(page);
+  const tb = await tab.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: tb.x + tb.width + 20 + b0.width / 2, y: tb.y + tb.height / 2 });
+  await expect(btn).toHaveClass(/attached-title/);
+  await expect(frame).toHaveClass(/has-tab-buttons/);
+  const bp = await nodePos(btn);
+  const tabEdge = await frame.evaluate((el) => {
+    const tab = el.querySelector('.frame-tab');
+    return { x: parseFloat(el.style.left) + tab.offsetLeft + tab.offsetWidth,
+             y: parseFloat(el.style.top) + tab.offsetTop };
+  });
+  expect(bp.x).toBe(tabEdge.x - 1);                               // flush right of the tab
+  expect(bp.y).toBe(tabEdge.y);                                   // same row
+
+  // dragging the frame by its tab carries the docked button
+  await drag(page, { x: tb.x + 20, y: tb.y + tb.height / 2 },
+                   { x: tb.x + 20 + 100, y: tb.y + tb.height / 2 + 50 });
+  const bp2 = await nodePos(btn);
+  expect(bp2.x - bp.x).toBe(100);
+  expect(bp2.y - bp.y).toBe(50);
+});
+
+test('deleting a card orphans its docked button in place', async ({ page }) => {
+  const card = await addCardAt(page, 500, 280);
+  const btn = await addFreeButton(page);
+  const cb = await card.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+  const docked = await nodePos(btn);
+
+  await card.locator('.card-header').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Delete card' }).click();
+  await expect(page.locator('.node.card')).toHaveCount(0);
+  await expect(btn).toHaveCount(1);                               // orphaned, not deleted
+  await expect(btn).not.toHaveClass(/attached-bottom/);
+  const after = await nodePos(btn);
+  expect(after.x).toBe(docked.x);                                 // stays where it was
+  expect(after.y).toBe(docked.y);
+});
+
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
 test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
