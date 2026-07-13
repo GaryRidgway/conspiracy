@@ -240,6 +240,17 @@ exercise it without OAuth — keep it pure.
   promotes `#world` to a GPU layer during pans and demotes it before zoom
   (a scaled composited layer bitmap-blurs text); iframes render at a 1440px
   logical width scaled down.
+- Node DOM is **hydrated lazily** (`pendingNodes`/`queueHydration`): boot and
+  board-switch render only nodes near the viewport (half-viewport margin,
+  generous size estimates for auto-sized cards); the rest materialize in
+  idle chunks of 24, nearest first, and pan/zoom promotes anything that
+  comes near. Connections tolerate a pending endpoint (`pathBetween` returns
+  null) and draw when it hydrates. **RULE: code needing every node's
+  DOM/geometry calls `hydrateAll()` first** (Tab order, spatial nav, fit,
+  select-all, search lists, `frameContents`); single-target paths call
+  `ensureNode(id)` (deep links/jumps), which pulls the whole dock cohort so
+  a chip never appears without its card. Hydration never mutates records —
+  a missed flush site shows as an unreachable node, not data loss.
 - Iframes load in **tiers** (`frameViewState`/`evaluateFrameLoading`):
   `visible` (intersects the real viewport, ≥120px on screen) gets `src`
   immediately; `near` (within one viewport of an edge) goes into an idle

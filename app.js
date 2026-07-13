@@ -1631,6 +1631,7 @@
   // Ids of nodes sitting fully inside the frame's rectangle — what a
   // "moves its contents" frame carries along when dragged.
   function frameContents(frameId) {
+    hydrateAll();          // carries DATA along on drag — must see every node
     const fg = nodeGeom(frameId);
     if (!fg) return [];
     const out = [];
@@ -1819,7 +1820,11 @@
   function scheduleFrameEval() {
     if (frameEvalQueued) return;
     frameEvalQueued = true;
-    requestAnimationFrame(() => { frameEvalQueued = false; evaluateFrameLoading(); });
+    requestAnimationFrame(() => {
+      frameEvalQueued = false;
+      promotePendingInView();   // nodes first: an iframe can't load before its DOM exists
+      evaluateFrameLoading();
+    });
   }
 
   // Per-iframe content-zoom bounds, expressed as logical render widths.
@@ -2370,7 +2375,7 @@
     commit();
   }
 
-  function selectAllNodes() { setSelection([...nodeEls.keys()]); }
+  function selectAllNodes() { hydrateAll(); setSelection([...nodeEls.keys()]); }
 
   // "Move to top": stamp the selection with z values above every other node,
   // preserving the selection's own relative stacking. One undo step.
@@ -2529,14 +2534,134 @@
   // ════════════════════════════════════════════════════════
   //  RENDER ALL
   // ════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
+  //  DEFERRED NODE HYDRATION — first paint renders only what
+  //  the user can(ish) see; the rest of the board materializes
+  //  in idle chunks, nearest first. Connections tolerate a
+  //  pending endpoint (pathBetween → null → no path yet), so
+  //  arrows to late nodes simply pop in when their end does.
+  //  RULE: code that needs EVERY node's DOM/geometry calls
+  //  hydrateAll() first; code that needs one node calls
+  //  ensureNode(id). Missing a site shows up as a node the
+  //  user can't Tab to / search / fit — not as data loss
+  //  (hydration never mutates records).
+  // ════════════════════════════════════════════════════════
+  const pendingNodes = new Set();   // ids with data but no DOM yet
+  let hydrateOrder = [];            // pending ids, nearest-to-viewport first
+  let hydrateScheduled = false;
+  const HYDRATE_CHUNK = 24;         // nodes per idle slice
+
+  // Cards auto-size, so records without w/h get a generous guess — erring
+  // big renders a node a beat early, never late.
+  function estGeom(d) { return { x: d.x, y: d.y, w: d.w || 360, h: d.h || 640 }; }
+
+  function nodeNearView(d, marginFrac) {
+    const z = board.viewport.zoom;
+    const g = estGeom(d);
+    const left = g.x * z + board.viewport.x, top = g.y * z + board.viewport.y;
+    const mx = innerWidth * marginFrac, my = innerHeight * marginFrac;
+    return left < innerWidth + mx && left + g.w * z > -mx &&
+           top < innerHeight + my && top + g.h * z > -my;
+  }
+
+  function renderNodeNow(id) {
+    pendingNodes.delete(id);
+    if (board.cards[id]) renderCard(id);
+    else if (board.iframes[id]) renderIframe(id);
+    redrawConnectionsFor(id);       // arrows waiting on this endpoint draw now
+  }
+
+  // A docked group lays out as one unit — hydrating a chip without its card
+  // (or vice versa) would flash it undocked at its stored position.
+  function dockCohort(id) {
+    const c = board.cards[id];
+    const root = (c && c.kind === 'button' && c.attachedTo && dockRoot(id)) || id;
+    const ids = [id, root];
+    for (const [bid, b] of Object.entries(board.cards)) {
+      if (b.kind === 'button' && b.attachedTo && dockRoot(bid) === root) ids.push(bid);
+    }
+    return ids;
+  }
+
+  function ensureNode(id) {
+    if (!pendingNodes.has(id)) return;
+    for (const nid of dockCohort(id)) if (pendingNodes.has(nid)) renderNodeNow(nid);
+    layoutAttachments();
+  }
+
+  function hydrateAll() {
+    if (!pendingNodes.size) return;
+    for (const id of [...pendingNodes]) renderNodeNow(id);
+    hydrateOrder = [];
+    afterHydration();
+  }
+
+  function afterHydration() {
+    layoutAttachments();
+    refreshColorFilter();
+    scheduleFrameEval();            // fresh iframe nodes join the loading tiers
+  }
+
+  function drainHydration() {
+    if (hydrateScheduled || !pendingNodes.size) return;
+    hydrateScheduled = true;
+    requestIdle(() => {
+      hydrateScheduled = false;
+      let n = 0;
+      while (hydrateOrder.length && n < HYDRATE_CHUNK) {
+        const id = hydrateOrder.shift();
+        if (!pendingNodes.has(id)) continue;    // ensured/deleted meanwhile
+        renderNodeNow(id);
+        n++;
+      }
+      afterHydration();
+      if (!hydrateOrder.length && pendingNodes.size) queueHydration();  // stragglers
+      else drainHydration();
+    });
+  }
+
+  function queueHydration() {
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    const z = board.viewport.zoom;
+    hydrateOrder = [...pendingNodes].map((id) => {
+      const g = estGeom(getNode(id).data);
+      const fx = (g.x + g.w / 2) * z + board.viewport.x;
+      const fy = (g.y + g.h / 2) * z + board.viewport.y;
+      return { id, dist: Math.hypot(fx - cx, fy - cy) };
+    }).sort((a, b) => a.dist - b.dist).map((o) => o.id);
+    drainHydration();
+  }
+
+  // pan/zoom can expose pending nodes before their idle turn — promote them
+  // on the same rAF the frame-loading evaluation rides
+  function promotePendingInView() {
+    if (!pendingNodes.size) return;
+    let touched = false;
+    for (const id of [...pendingNodes]) {
+      const n = getNode(id);
+      if (!n) { pendingNodes.delete(id); continue; }
+      if (nodeNearView(n.data, 0.25)) { renderNodeNow(id); touched = true; }
+    }
+    if (touched) { layoutAttachments(); refreshColorFilter(); }
+  }
+
   function renderAll() {
-    for (const id of Object.keys(board.cards)) renderCard(id);
-    for (const id of Object.keys(board.iframes)) renderIframe(id);
-    // connections after nodes exist so geometry is available
+    pendingNodes.clear();
+    for (const id of Object.keys(board.cards)) {
+      if (nodeNearView(board.cards[id], 0.5)) renderCard(id);
+      else pendingNodes.add(id);
+    }
+    for (const id of Object.keys(board.iframes)) {
+      if (nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
+      else pendingNodes.add(id);
+    }
+    // connections after nodes exist so geometry is available; entries are
+    // cheap and pathBetween skips pending endpoints until they hydrate
     for (const id of Object.keys(board.connections)) renderConnection(id);
     layoutAttachments();                         // classes + any layout drift
     applyViewport();
     refreshColorFilter();
+    queueHydration();
   }
 
   // Sync the DOM to the current board WITHOUT tearing everything down:
@@ -2557,8 +2682,16 @@
         connEls.delete(id);
       }
     }
-    for (const id of Object.keys(board.cards)) renderCard(id);
-    for (const id of Object.keys(board.iframes)) renderIframe(id);
+    // existing nodes update in place (undo/redo touches few); only NEW
+    // off-screen nodes defer — e.g. switching to a big board hydrates lazily
+    for (const id of Object.keys(board.cards)) {
+      if (nodeEls.has(id) || nodeNearView(board.cards[id], 0.5)) renderCard(id);
+      else pendingNodes.add(id);
+    }
+    for (const id of Object.keys(board.iframes)) {
+      if (nodeEls.has(id) || nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
+      else pendingNodes.add(id);
+    }
     for (const id of Object.keys(board.connections)) renderConnection(id);
     layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
@@ -2566,6 +2699,7 @@
     applyViewport();
     updateEmptyState();
     refreshColorFilter();
+    queueHydration();
   }
 
   // ════════════════════════════════════════════════════════
@@ -3045,6 +3179,7 @@
   // centered. With the 1440px logical-width iframes, this reads as a crisp
   // full-window view of the embed.
   function frameNode(id) {
+    ensureNode(id);        // deep links / jumps can target a pending node
     const g = nodeGeom(id);
     if (!g) return;
     const r = visibleRect();
@@ -3111,6 +3246,7 @@
 
   function fitToContent() {
     exitInteract();
+    hydrateAll();          // framing "everything" needs every node's geometry
     const ids = [...nodeEls.keys()];
     if (!ids.length) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -3206,6 +3342,7 @@
     return /^https?:\/\/\S+$/i.test(s) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s);
   }
   function renderBlList(query) {
+    hydrateAll();          // search text lives in the DOM
     const q = (query || '').trim().toLowerCase();
     blUseUrl.disabled = !blLooksLikeUrl(q);
     blList.innerHTML = '';
@@ -3417,6 +3554,7 @@
 
   // Nodes in reading order (top-to-bottom, then left-to-right) for Tab nav.
   function orderedNodeIds() {
+    hydrateAll();          // Tab order must cover the whole board
     return [...nodeEls.keys()]
       .map((id) => ({ id, g: nodeGeom(id) }))
       .filter((o) => o.g)
@@ -3459,6 +3597,7 @@
   // progress along the arrow plus doubled off-axis drift, so a well-aligned
   // node beats a slightly-closer diagonal one (the usual spatial-nav weighting).
   function spatialNav(ax, ay) {
+    hydrateAll();          // the nearest neighbor may not be rendered yet
     const cur = selectedNodes.size === 1 ? [...selectedNodes][0] : null;
     const cg = cur && nodeGeom(cur);
     if (!cg) { tabToNode(1); return; }   // no anchor: land like Tab does
@@ -4056,6 +4195,7 @@
   function closeNodePicker() { nodePicker.classList.add('hidden'); editingLink = null; }
 
   function renderPickerList(filter) {
+    hydrateAll();          // search text lives in the DOM
     // accept a pasted "#node=ID" / full deep link, else plain text/id
     const raw = (filter || '').trim();
     const hash = raw.match(/#node=([^\s&]+)/);
@@ -4218,6 +4358,7 @@
   }
 
   function renderJumpList(query) {
+    hydrateAll();          // search text lives in the DOM
     const q = (query || '').trim().toLowerCase();
     jumpList.innerHTML = '';
     let any = false;

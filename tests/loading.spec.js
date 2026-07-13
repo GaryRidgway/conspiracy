@@ -90,6 +90,82 @@ test('near-ring frame prefetches in idle time while still off screen', async ({ 
   await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL, { timeout: 8000 });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+//  NODE HYDRATION — cards/buttons/frames defer too: first paint renders
+//  what's near the viewport, the rest materializes in idle chunks. Code
+//  that needs the whole board (Tab, fit, search) flushes synchronously.
+// ════════════════════════════════════════════════════════════════════════
+
+// create a card via the palette and return its data-id
+async function addCard(page) {
+  await page.click('#addCard');
+  await page.keyboard.press('Escape');
+  const node = page.locator('.node.card').last();
+  return node.getAttribute('data-id');
+}
+
+// inject a card far outside the viewport straight into the stored board,
+// with a connection from `fromId`, then reload so boot sees it. Must run as
+// an init script: the app re-saves its in-memory board on pagehide, which
+// would clobber a plain pre-reload localStorage write.
+async function injectFarCard(page, fromId) {
+  await page.addInitScript((fromId) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    if (!cur) return;
+    const key = 'whiteboard:board:' + cur;
+    const b = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!b || b.cards.far_test) return;
+    b.cards.far_test = { x: 6000, y: 6000, title: 'FarAway', body: 'far-needle' };
+    b.connections.cn_far = { from: fromId, to: 'far_test' };
+    b.version++;
+    localStorage.setItem(key, JSON.stringify(b));
+  }, fromId);
+  await page.reload();
+}
+
+test('far-off-screen card hydrates in idle time; its arrow draws once both ends exist', async ({ page }) => {
+  const nearId = await addCard(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await injectFarCard(page, nearId);
+
+  // the near card is in the first synchronous paint…
+  await expect(page.locator(`.node.card[data-id="${nearId}"]`)).toHaveCount(1);
+  // …the far one materializes from the idle queue without any interaction
+  await expect(page.locator('.node.card[data-id="far_test"]')).toHaveCount(1, { timeout: 5000 });
+  // and the connection that was waiting on it now has a real path
+  await expect.poll(() => page.evaluate(() => {
+    const line = document.querySelector('#connections .conn .line');
+    return (line && line.getAttribute('d')) || '';
+  })).toMatch(/^M/);
+});
+
+test('pending nodes stay reachable: Tab and fit-to-content flush hydration', async ({ page }) => {
+  // stub out idle callbacks so background hydration NEVER runs — deferral
+  // becomes observable, and only the explicit flush paths can materialize
+  await page.addInitScript(() => { window.requestIdleCallback = () => 0; });
+  const nearId = await addCard(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await injectFarCard(page, nearId);
+
+  const far = page.locator('.node.card[data-id="far_test"]');
+  await expect(page.locator(`.node.card[data-id="${nearId}"]`)).toHaveCount(1);
+  await page.waitForTimeout(400);
+  await expect(far).toHaveCount(0);              // deferred, and idle is stubbed out
+
+  // Tab cycles in reading order across the WHOLE board — near first, then far
+  await page.keyboard.press('Tab');
+  await expect(page.locator(`.node.card[data-id="${nearId}"]`)).toHaveClass(/selected/);
+  await page.keyboard.press('Tab');
+  await expect(far).toHaveCount(1);              // flushed into existence
+  await expect(far).toHaveClass(/selected/);
+
+  // fit-to-content frames everything, pending included
+  await page.click('#fitContent');
+  const vp = page.viewportSize();
+  const bb = await far.boundingBox();
+  expect(bb.x + bb.width > 0 && bb.x < vp.width && bb.y + bb.height > 0 && bb.y < vp.height).toBe(true);
+});
+
 test('frames shrunk to a dot do not load even on screen; zooming in loads them', async ({ page }) => {
   await addFrame(page, EMBED_URL);
   // zoom far out around the frame so it drops under the min on-screen width
