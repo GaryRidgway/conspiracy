@@ -145,7 +145,10 @@ backup restores the exact view on import.
 sessionStorage: `whiteboard:drive:tok` caches the OAuth access token so
 reloads within its ~1h life reconnect without a popup.
 
-Deep links: `#board=<id>` opens a board, `#node=<id>` frames a node.
+Deep links: `#board=<id>` opens a board, `#node=<id>` frames a node. A
+Copy-ID link pasted *back into the app* (card links, button links) is
+recognized by `deepLinkNodeId()` and navigates in place — it must never
+open the app in a second tab.
 
 ## Drive sync
 
@@ -278,8 +281,8 @@ exercise it without OAuth — keep it pure.
 ## Interaction model
 
 - Selection: `selectedNodes` Set + at most one `selectedConn`. Box-select
-  deliberately **skips frame nodes** (any large box would grab the region and
-  drag everything with it).
+  takes a frame node only when the box **fully encloses** it — mere overlap
+  would grab the region (and drag everything with it) on almost any marquee.
 - Frames sit at z-index −1 with `pointer-events:none` interiors
   (`auto` on the tab/resize children) so clicks pass through to cards on top.
   "Move items with frame" carries nodes **fully inside** the frame rect,

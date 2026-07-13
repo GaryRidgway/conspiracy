@@ -1249,6 +1249,10 @@
     // no link yet (or the target item was deleted): configure instead
     if (!a || !a.target || (a.type === 'node' && !getNode(a.target))) { openButtonLinkModal(id); return; }
     if (a.type === 'url') {
+      // a URL that is really a Copy-ID deep link to an item on this board
+      // navigates in place — opening the whole app in a second tab helps no one
+      const nid = deepLinkNodeId(a.target);
+      if (nid && getNode(nid)) { frameNode(nid); selectNode(nid); flashNode(nid); return; }
       const url = safeNavUrl(a.target);   // untrusted board data — never window.open a javascript: URL
       if (url) window.open(url, '_blank', 'noopener');
     } else {
@@ -2774,12 +2778,17 @@
       const a = toWorld(x, y), b = toWorld(x + w, y + h);   // box in world coords
       const sel = new Set(baseSel);
       for (const id of nodeEls.keys()) {
-        // frames span whole regions — any large box-select would always grab
-        // them (and drag their contents), so they only select via their tab
-        const n = getNode(id);
-        if (n && n.data.kind === 'frame') continue;
         const g = nodeGeom(id);
-        if (g && rectsOverlap(g.x, g.y, g.w, g.h, a.x, a.y, b.x - a.x, b.y - a.y)) sel.add(id);
+        if (!g) continue;
+        // frames span whole regions — mere overlap would grab them (and drag
+        // their contents) on almost any marquee, so a frame joins only when
+        // the box swallows it whole
+        const n = getNode(id);
+        if (n && n.data.kind === 'frame') {
+          if (g.x >= a.x && g.y >= a.y && g.x + g.w <= b.x && g.y + g.h <= b.y) sel.add(id);
+        } else if (rectsOverlap(g.x, g.y, g.w, g.h, a.x, a.y, b.x - a.x, b.y - a.y)) {
+          sel.add(id);
+        }
       }
       setSelection([...sel]);
     };
@@ -3200,6 +3209,13 @@
   function nodeLink(id) {
     return location.origin + location.pathname + '#node=' + encodeURIComponent(id);
   }
+  // A Copy-ID link names a board item, not a web page. Everywhere a URL is
+  // accepted (card links, button links), "#node=<id>" — bare or inside the
+  // full deep link — should navigate on THIS board, not open a new tab.
+  function deepLinkNodeId(str) {
+    const m = String(str || '').match(/#node=([^\s&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
   function copyNodeLink(id, btn) {
     const flash = () => {
       const icon = btn && btn.querySelector('.icon');
@@ -3343,8 +3359,11 @@
   }
   function renderBlList(query) {
     hydrateAll();          // search text lives in the DOM
-    const q = (query || '').trim().toLowerCase();
-    blUseUrl.disabled = !blLooksLikeUrl(q);
+    const raw = (query || '').trim();
+    // a pasted Copy-ID deep link names a board item: search by the id in it
+    const hashId = deepLinkNodeId(raw);
+    const q = (hashId && getNode(hashId) ? hashId : raw).toLowerCase();
+    blUseUrl.disabled = !blLooksLikeUrl(raw);
     blList.innerHTML = '';
     let any = false;
     for (const id of nodeEls.keys()) {
@@ -3383,8 +3402,11 @@
     if (e.key === 'Escape') { e.preventDefault(); closeButtonLinkModal(); }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (blLooksLikeUrl(blInput.value)) { submitBlUrl(); return; }
+      // a deep link that resolves on this board beats the "Link to URL" path
+      const nid = deepLinkNodeId(blInput.value);
       const first = blList.querySelector('.np-item');
+      if (nid && getNode(nid) && first) { first.click(); return; }
+      if (blLooksLikeUrl(blInput.value)) { submitBlUrl(); return; }
       if (first) first.click();
     }
   });
@@ -3942,12 +3964,11 @@
   // Follow a link inside a card body: node links frame their target;
   // external (http) links open in a new tab.
   function followLink(a) {
-    const nid = a.dataset.node;
-    if (nid) {
-      if (getNode(nid)) { frameNode(nid); selectNode(nid); }
-      return;
-    }
     const href = a.getAttribute('href');
+    // a pasted Copy-ID deep link is still a node link, just spelled as a URL
+    const nid = a.dataset.node || deepLinkNodeId(href);
+    if (nid && getNode(nid)) { frameNode(nid); selectNode(nid); return; }
+    if (a.dataset.node) return;   // node link whose target was deleted
     if (href && /^https?:/i.test(href)) window.open(href, '_blank', 'noopener');
   }
 

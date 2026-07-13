@@ -800,6 +800,68 @@ test('a button linked to a URL opens it in a new tab on click', async ({ page })
   expect(popup.url()).toContain('embed.html');
 });
 
+// The "Copy ID" button yields a full deep link (https://…/#node=<id>). Pasted
+// back into the app as a link, it names a board item — following it must fly
+// there in place, never open the whole app in a second tab.
+test('a pasted Copy-ID deep link in a card body navigates in place', async ({ page }) => {
+  const card = await addCardAt(page, 450, 350);
+  const id = await card.getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // seed the stored board with a far-away target and rewrite the first card's
+  // body to hold the deep link as a plain pasted <a href> (init script: the
+  // app re-saves on pagehide, which would clobber a direct pre-reload write)
+  await page.addInitScript((id) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    if (!cur) return;
+    const key = 'whiteboard:board:' + cur;
+    const b = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!b || !b.cards[id] || b.cards.deep_target) return;
+    b.cards.deep_target = { x: 6000, y: 6000, title: 'Deep target', body: '' };
+    b.cards[id].body = '<a href="' + location.origin + '/#node=deep_target">jump</a>';
+    b.version++;
+    localStorage.setItem(key, JSON.stringify(b));
+  }, id);
+  await page.reload();
+  await page.evaluate(() => { window.open = (u) => { window.__opened = u; return null; }; });
+
+  await page.locator(`.node.card[data-id="${id}"] .card-body a`).click();
+  const vp = page.viewportSize();
+  const target = page.locator('.node.card[data-id="deep_target"]');
+  await expect(target).toHaveClass(/selected/);
+  expect(within(await target.boundingBox(), vp.width, vp.height)).toBe(true);
+  expect(await page.evaluate(() => window.__opened)).toBeUndefined();   // no new tab
+});
+
+// Same link pasted into a button's link modal: it is URL-shaped, but it must
+// resolve to the board item — Enter links the node, and the button flies.
+test('pasting a Copy-ID deep link into the button modal links the board item', async ({ page }) => {
+  const card = await addCardAt(page, 450, 350);
+  const id = await card.getAttribute('data-id');
+  await page.evaluate(() => { window.open = (u) => { window.__opened = u; return null; }; });
+
+  // wander away so the fly-to is observable
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 500, deltaY: 500, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(async () => within(await card.boundingBox(), page.viewportSize().width, page.viewportSize().height)).toBe(false);
+
+  await page.click('#addButton');
+  const modal = page.locator('#button-link-modal');
+  await expect(modal).toBeVisible();
+  await page.fill('#bl-input', new URL('#node=' + id, page.url()).href);
+  await expect(modal.locator('.np-item')).toHaveCount(1);   // found by the id inside the link
+  await page.keyboard.press('Enter');                       // node wins over "Link to URL"
+  await expect(modal).toBeHidden();
+
+  await page.locator('.btn-node').click();
+  const vp = page.viewportSize();
+  expect(within(await card.boundingBox(), vp.width, vp.height)).toBe(true);
+  await expect(card).toHaveClass(/selected/);
+  expect(await page.evaluate(() => window.__opened)).toBeUndefined();   // no new tab
+});
+
 // Frames: a named region of the board, linkable like any node, sitting behind
 // content with a click-through interior.
 test('a frame is a named, linkable region whose interior stays click-through', async ({ page }) => {
@@ -860,6 +922,32 @@ test('the move-items-with-frame toggle carries contents only while enabled', asy
   const cardFinal = await card.boundingBox();
   expect(Math.round(cardFinal.x)).toBe(Math.round(cardAfter.x));
   expect(Math.round(cardFinal.y)).toBe(Math.round(cardAfter.y));
+});
+
+// Box-select vs frames: a marquee that swallows a frame whole selects it with
+// everything else, but one that merely crosses it leaves it alone — otherwise
+// any sweep across the board would constantly grab room-sized regions.
+test('box-select takes a frame only when the box fully encloses it', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');                     // keep default name
+  const frame = page.locator('.frame-node');
+  const card = await addCardAt(page, 640, 360);            // inside the frame
+  await page.mouse.click(60, 640);                         // deselect
+  await expect(page.locator('.node.selected')).toHaveCount(0);
+  const fb = await frame.boundingBox();
+
+  // cut through the frame: the card inside is taken, the frame is not
+  await drag(page, { x: fb.x - 30, y: fb.y - 30 },
+                   { x: fb.x + fb.width / 2 + 40, y: fb.y + fb.height + 30 });
+  await expect(card).toHaveClass(/selected/);
+  await expect(frame).not.toHaveClass(/selected/);
+
+  // swallow it whole: the frame joins the selection like any other node
+  await page.mouse.click(60, 640);
+  await drag(page, { x: fb.x - 30, y: fb.y - 30 },
+                   { x: fb.x + fb.width + 30, y: fb.y + fb.height + 30 });
+  await expect(frame).toHaveClass(/selected/);
+  await expect(card).toHaveClass(/selected/);
 });
 
 // Right-click → "Use as default view": Reset then frames that frame instead
