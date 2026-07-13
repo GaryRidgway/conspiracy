@@ -238,8 +238,19 @@ exercise it without OAuth — keep it pure.
   viewport-sized layer moved by sub-tile `transform` remainder (never
   `background-position` — full-screen repaint per frame); `body.panning`
   promotes `#world` to a GPU layer during pans and demotes it before zoom
-  (a scaled composited layer bitmap-blurs text); iframes lazy-load only when
-  on-screen and ≥120px wide, and render at a 1440px logical width scaled down.
+  (a scaled composited layer bitmap-blurs text); iframes render at a 1440px
+  logical width scaled down.
+- Iframes load in **tiers** (`frameViewState`/`evaluateFrameLoading`):
+  `visible` (intersects the real viewport, ≥120px on screen) gets `src`
+  immediately; `near` (within one viewport of an edge) goes into an idle
+  queue drained ONE at a time, nearest-to-center first — the next starts
+  only after the current one fires `load` (4s fallback for embeds that
+  never do), inside `requestIdleCallback` (plain timeout on Safari), and
+  never while the tab is hidden; `far` (or shrunk under 120px) stays a
+  "click to load" placeholder. Loading is one-way — frames never unload —
+  and the queue is rebuilt wholesale each evaluation, so a queued frame
+  that scrolls into view just loads via the visible path instead.
+  Covered by `tests/loading.spec.js`.
 - The color filter/legend is **pure view state**: in-memory only, never
   committed, no version bump, per device.
 - `frameNode(id)` / `selectNode` / `flashNode` are the shared navigation

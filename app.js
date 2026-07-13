@@ -16,11 +16,13 @@
   // a crisp thumbnail; zoomed in it sharpens to a normal desktop view instead
   // of a magnified narrow/mobile layout.
   const IFRAME_LOGICAL_WIDTH = 1440;
-  // Lazy-load iframes: only load the src once a frame is on-screen (within a
-  // margin) AND large enough on screen to be worth rendering. Heavy embeds
-  // (e.g. Google Docs) off-screen or shrunk to a dot stay as placeholders.
-  const FRAME_MIN_LOAD_PX = 120;   // skip loading if narrower than this on screen
-  const FRAME_LOAD_MARGIN = 0.5;   // load within 1.5× the viewport
+  // Lazy-load iframes in tiers: frames the user can SEE load immediately;
+  // frames within a prefetch ring around the viewport load one at a time in
+  // idle moments (nearest first); everything else stays a placeholder.
+  // Heavy embeds (e.g. Google Docs) far off-screen or shrunk to a dot never
+  // cost anything until approached or clicked.
+  const FRAME_MIN_LOAD_PX = 120;      // skip loading if narrower than this on screen
+  const FRAME_PREFETCH_MARGIN = 1;    // idle-prefetch ring: within one viewport of every edge
 
   function blankBoard() {
     return {
@@ -1742,23 +1744,75 @@
     el.classList.add('loaded');
   }
 
-  function frameShouldLoad(data) {
+  // 'visible' = intersects the real viewport, 'near' = within the prefetch
+  // ring, 'far' = neither (or too small on screen to be worth a page load).
+  function frameViewState(data) {
     const z = board.viewport.zoom;
     const w = data.w * z, h = data.h * z;
-    if (w < FRAME_MIN_LOAD_PX) return false;          // too small on screen
+    if (w < FRAME_MIN_LOAD_PX) return 'far';          // a dot — even on screen
     const left = data.x * z + board.viewport.x;
     const top = data.y * z + board.viewport.y;
-    const mx = innerWidth * FRAME_LOAD_MARGIN, my = innerHeight * FRAME_LOAD_MARGIN;
-    return left < innerWidth + mx && left + w > -mx &&  // intersects expanded viewport
-           top < innerHeight + my && top + h > -my;
+    if (left < innerWidth && left + w > 0 && top < innerHeight && top + h > 0) return 'visible';
+    const mx = innerWidth * FRAME_PREFETCH_MARGIN, my = innerHeight * FRAME_PREFETCH_MARGIN;
+    return (left < innerWidth + mx && left + w > -mx &&
+            top < innerHeight + my && top + h > -my) ? 'near' : 'far';
   }
 
+  // Idle prefetch: the near-ring queue drains ONE frame at a time — the next
+  // starts only when the current one fires `load` (or a timeout, for embeds
+  // that never do), and only in an idle slice, so a pan/zoom in progress and
+  // the embeds the user is actually looking at always win the main thread.
+  let idleQueue = [];        // rebuilt wholesale by evaluateFrameLoading
+  let idlePrefetching = false;
+  const requestIdle = window.requestIdleCallback
+    ? (fn) => requestIdleCallback(fn, { timeout: 2000 })
+    : (fn) => setTimeout(fn, 300);      // Safari has no requestIdleCallback
+
+  function drainIdlePrefetch() {
+    if (idlePrefetching || !idleQueue.length || document.hidden) return;
+    idlePrefetching = true;
+    requestIdle(() => {
+      // the world may have moved since this was scheduled — re-check
+      let id;
+      while ((id = idleQueue.shift())) {
+        const el = nodeEls.get(id);
+        if (el && !el.classList.contains('loaded') &&
+            board.iframes[id] && frameViewState(board.iframes[id]) !== 'far') break;
+      }
+      if (!id) { idlePrefetching = false; return; }
+      const frame = nodeEls.get(id).querySelector('.iframe-frame');
+      let timer = 0;
+      const done = () => {
+        clearTimeout(timer);
+        frame.removeEventListener('load', done);
+        idlePrefetching = false;
+        drainIdlePrefetch();
+      };
+      frame.addEventListener('load', done);
+      timer = setTimeout(done, 4000);
+      loadFrame(id);
+    });
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) drainIdlePrefetch(); });
+
   function evaluateFrameLoading() {
+    const near = [];
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    const z = board.viewport.zoom;
     for (const id of Object.keys(board.iframes)) {
       const el = nodeEls.get(id);
       if (!el || el.classList.contains('loaded')) continue;
-      if (frameShouldLoad(board.iframes[id])) loadFrame(id);
+      const d = board.iframes[id];
+      const state = frameViewState(d);
+      if (state === 'visible') loadFrame(id);         // what the user sees loads first
+      else if (state === 'near') {
+        const fx = (d.x + d.w / 2) * z + board.viewport.x;
+        const fy = (d.y + d.h / 2) * z + board.viewport.y;
+        near.push({ id, dist: Math.hypot(fx - cx, fy - cy) });
+      }
     }
+    idleQueue = near.sort((a, b) => a.dist - b.dist).map((n) => n.id);
+    drainIdlePrefetch();
   }
 
   let frameEvalQueued = false;
