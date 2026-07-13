@@ -276,6 +276,40 @@ exercise it without OAuth — keep it pure.
   never trap the user: every canvas gesture (pan, wheel, zoom controls, ⌘K
   jump) calls `exitInteract()`. Any new gesture must too.
 
+### Touch input (TOUCH GESTURES section in app.js)
+
+- Everything is Pointer Events, so a finger drives the same handlers as the
+  mouse — the touch layer only *re-maps roles*: one finger on empty canvas
+  pans (`startPan`, with `clearOnTap` restoring tap-to-deselect), two fingers
+  pinch-zoom/pan anywhere, long-press (500ms, 8px slop) synthesizes a
+  `contextmenu` event, and long-press on empty canvas arms the box-select
+  marquee (release-in-place opens the canvas menu instead).
+- **Every window-level drag must filter by `pointerId`** (capture it at
+  `pointerdown`, ignore other pointers in move/up). Without this a second
+  finger steers the first finger's gesture — the jitter class of bug.
+- The layer takes a finger back from an in-flight gesture by dispatching a
+  **synthetic `pointercancel`** with that pointerId: every drag already
+  tears down on pointercancel, so no per-gesture abort plumbing exists.
+  `abortingTouch` re-entrancy flag keeps the layer from untracking its own
+  synthetic cancels; consequently **new drags must register the same
+  move/up/cancel trio** and treat cancel as "end without side effects
+  beyond commit-if-moved".
+- Pinch math is anchored at gesture start (`z0`, `d0`, world point `w0`
+  under the initial midpoint): pan and zoom fall out of one equation per
+  move, so there is no per-event integration drift. Distance floor 30px
+  guards the ratio against adjacent fingers.
+- Fingers claimed by the view (`claimedTouches`: pinch members, fired
+  long-presses, 3rd+ fingers) must not click on lift — browsers still fire
+  `click` after `preventDefault`ed pointerdowns, so a capture-phase click
+  listener squelches clicks for 400ms after a claimed lift (else lifting a
+  pinch finger over a button node would trigger navigation).
+- Hover affordances (ports, resize handles) already reveal on `.selected`;
+  `@media (pointer: coarse)` only grows hit targets. Don't gate features on
+  hover alone.
+- Tests drive this with synthetic `PointerEvent`s (`pointerType:'touch'`,
+  explicit `pointerId`s) — see `tests/touch.spec.js`. Playwright cannot
+  produce real multi-finger touches.
+
 ## Security boundaries
 
 - `sanitizeHtml()` allowlists tags for card bodies (paste and load paths).

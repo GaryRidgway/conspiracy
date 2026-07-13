@@ -820,6 +820,7 @@
       return { nid, d, ox: d.x, oy: d.y, el: nodeEls.get(nid) };
     });
     const start = toWorld(e.clientX, e.clientY);
+    const pid = e.pointerId;      // a second finger must never steer this drag
     let moved = false;
     movers.forEach((m) => m.el.classList.add('dragging'));
 
@@ -837,6 +838,7 @@
     };
 
     const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
       const now = toWorld(ev.clientX, ev.clientY);
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
       for (const m of movers) {
@@ -850,7 +852,8 @@
       if (snapButton) setSnapTarget(findSnapTarget(snapButton));
       scheduleFrameEval();
     };
-    const onUp = () => {
+    const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
       movers.forEach((m) => m.el.classList.remove('dragging'));
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
@@ -881,6 +884,7 @@
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    const pid = e.pointerId;
 
     const temp = document.createElementNS(SVGNS, 'path');
     temp.setAttribute('class', 'conn-temp');
@@ -896,6 +900,7 @@
     };
 
     const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
       const w = toWorld(ev.clientX, ev.clientY);
       const g = nodeGeom(fromId);
       const a = borderPoint(g, w.x, w.y);
@@ -906,6 +911,7 @@
       setHover(target && target.dataset.id !== fromId ? target : null);
     };
     const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -1560,9 +1566,11 @@
         const dir = handle.dataset.dir;
         const data = board.cards[id];
         const start = toWorld(e.clientX, e.clientY);
+        const pid = e.pointerId;
         const o = { x: data.x, y: data.y, w: data.w, h: data.h };
         let moved = false;
         const onMove = (ev) => {
+          if (ev.pointerId !== pid) return;
           const now = toWorld(ev.clientX, ev.clientY);
           const dx = now.x - start.x, dy = now.y - start.y;
           if (dir.includes('e')) data.w = Math.max(200, Math.round(o.w + dx));
@@ -1581,7 +1589,8 @@
           el.style.height = data.h + 'px';
           moved = true;
         };
-        const onUp = () => {
+        const onUp = (ev) => {
+          if (ev.pointerId !== pid) return;
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
           window.removeEventListener('pointercancel', onUp);
@@ -1879,10 +1888,12 @@
       selectNode(id);
       const data = board.iframes[id];
       const start = toWorld(e.clientX, e.clientY);
+      const pid = e.pointerId;
       const ow = data.w, oh = data.h;
       let moved = false;
 
       const onMove = (ev) => {
+        if (ev.pointerId !== pid) return;
         const now = toWorld(ev.clientX, ev.clientY);
         data.w = Math.max(220, Math.round(ow + (now.x - start.x)));
         data.h = Math.max(160, Math.round(oh + (now.y - start.y)));
@@ -1893,7 +1904,8 @@
         scheduleFrameEval();
         moved = true;
       };
-      const onUp = () => {
+      const onUp = (ev) => {
+        if (ev.pointerId !== pid) return;
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
@@ -2513,25 +2525,33 @@
   selectionBox.className = 'hidden';
   document.body.appendChild(selectionBox);
 
-  function startPan(e) {
+  // opts.clearOnTap: touch pans where the mouse box-selects, so the touch
+  // caller re-creates "tap empty space to deselect" here. Only a genuine
+  // pointerup counts — a pointercancel is the view reclaiming the finger
+  // (pinch/long-press), and deselecting then would be a surprise.
+  function startPan(e, opts = {}) {
     exitInteract();
     viewport.classList.add('panning');
     const startX = e.clientX, startY = e.clientY;
+    const pid = e.pointerId;
     const ox = board.viewport.x, oy = board.viewport.y;
     let moved = false;
     const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
       board.viewport.x = ox + (ev.clientX - startX);
       board.viewport.y = oy + (ev.clientY - startY);
       applyViewport();
       markPanActive();
       moved = true;
     };
-    const onUp = () => {
+    const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
       viewport.classList.remove('panning');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
       if (moved) commit({ viewportOnly: true });
+      else if (opts.clearOnTap && ev.type === 'pointerup') clearSelection();
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -2541,11 +2561,14 @@
   function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
     return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
   }
-  function startBoxSelect(e) {
+  // opts.onTap: replaces the plain-click default (clear selection) — the touch
+  // long-press marquee uses it to open the canvas menu on press-without-drag.
+  function startBoxSelect(e, opts = {}) {
     exitInteract();
     if (!e.shiftKey) clearSelection();
     const baseSel = new Set(selectedNodes);
     const sx = e.clientX, sy = e.clientY;
+    const pid = e.pointerId;
     let moved = false;
     // collapse to a zero-size rect at the start point BEFORE showing, so the
     // previous selection's rectangle never flashes
@@ -2554,6 +2577,7 @@
     selectionBox.classList.remove('hidden');
     viewport.classList.add('selecting');
     const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
       const x = Math.min(sx, ev.clientX), y = Math.min(sy, ev.clientY);
       const w = Math.abs(ev.clientX - sx), h = Math.abs(ev.clientY - sy);
       selectionBox.style.left = x + 'px'; selectionBox.style.top = y + 'px';
@@ -2571,13 +2595,17 @@
       }
       setSelection([...sel]);
     };
-    const onUp = () => {
+    const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
       selectionBox.classList.add('hidden');
       viewport.classList.remove('selecting');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      if (!moved && !e.shiftKey) clearSelection();   // a plain click on empty space
+      if (!moved) {
+        if (opts.onTap) opts.onTap();
+        else if (!e.shiftKey) clearSelection();   // a plain click on empty space
+      }
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -2590,12 +2618,144 @@
   }, true);
 
   // Empty-canvas gestures: middle-drag pans, left-drag box-selects.
+  // A finger pans — the marquee lives behind long-press (see TOUCH GESTURES).
   viewport.addEventListener('pointerdown', (e) => {
     if (e.target !== viewport && e.target !== world && e.target !== svg) return;
     if (e.button === 1) { e.preventDefault(); startPan(e); return; }
+    if (e.pointerType === 'touch') { startPan(e, { clearOnTap: true }); return; }
     if (e.button !== 0 || spaceHeld) return;
     startBoxSelect(e);
   });
+
+  // ════════════════════════════════════════════════════════
+  //  TOUCH GESTURES — one finger pans the canvas or drags a
+  //  node (through the pointer handlers above); two fingers
+  //  pinch-zoom/pan anywhere; long-press stands in for
+  //  right-click, and on empty canvas it arms the marquee.
+  // ════════════════════════════════════════════════════════
+  const touchPts = new Map();       // pointerId → live {x, y} of each finger on the board
+  const claimedTouches = new Set(); // fingers whose lift must NOT click (pinch members, fired long-presses)
+  let pinch = null;                 // { a, b, d0, z0, w0 } while two fingers own the view
+  let abortingTouch = 0;            // synthetic pointercancel below must not untrack fingers
+  let squelchClickUntil = 0;
+  let longPress = null;             // { id, x, y, target, onCanvas, timer }
+  const LONG_PRESS_MS = 500, LONG_PRESS_SLOP = 8;
+
+  // Every drag in the app tears down on pointercancel, so a synthetic cancel
+  // is a universal "the view is taking this finger back" signal — no
+  // per-gesture abort plumbing. pointerId filtering makes it precise.
+  function abortTouchGesture(pid) {
+    abortingTouch++;
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: pid, pointerType: 'touch', bubbles: true }));
+    abortingTouch--;
+  }
+
+  function cancelLongPress() {
+    if (!longPress) return;
+    clearTimeout(longPress.timer);
+    longPress = null;
+  }
+  function scheduleLongPress(e) {
+    cancelLongPress();
+    longPress = {
+      id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target,
+      onCanvas: e.target === viewport || e.target === world || e.target === svg,
+      timer: setTimeout(fireLongPress, LONG_PRESS_MS),
+    };
+  }
+  function fireLongPress() {
+    const lp = longPress;
+    longPress = null;
+    if (!lp || pinch || !touchPts.has(lp.id)) return;
+    abortTouchGesture(lp.id);       // the pan/drag this press started must not resume
+    claimedTouches.add(lp.id);      // …and its lift must not count as a tap/click
+    const openMenu = () => lp.target.dispatchEvent(new MouseEvent('contextmenu',
+      { bubbles: true, cancelable: true, clientX: lp.x, clientY: lp.y }));
+    // Empty canvas: hold-then-drag draws the marquee (the zero-size box that
+    // appears under the finger is the cue), hold-then-release opens the menu.
+    if (lp.onCanvas) startBoxSelect({ clientX: lp.x, clientY: lp.y, pointerId: lp.id, shiftKey: false }, { onTap: openMenu });
+    else openMenu();
+  }
+
+  function startPinch() {
+    cancelLongPress();
+    exitInteract();
+    const [a, b] = [...touchPts.keys()];
+    const pa = touchPts.get(a), pb = touchPts.get(b);
+    const m0 = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
+    pinch = {
+      a, b,
+      d0: Math.max(30, Math.hypot(pa.x - pb.x, pa.y - pb.y)),   // floor: adjacent fingers would explode the ratio
+      z0: board.viewport.zoom,
+      w0: toWorld(m0.x, m0.y),
+    };
+    claimedTouches.add(a).add(b);
+  }
+  function pinchMove() {
+    const pa = touchPts.get(pinch.a), pb = touchPts.get(pinch.b);
+    const m = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
+    const d = Math.max(30, Math.hypot(pa.x - pb.x, pa.y - pb.y));
+    const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.z0 * (d / pinch.d0)));
+    // Anchor from the START of the pinch: the world point that was under the
+    // fingers' midpoint stays under the live midpoint, so pan and zoom fall
+    // out of one equation and never drift apart across events.
+    if (next === board.viewport.zoom) markPanActive();
+    else endPanLayer();             // never composite while scaling — keep text crisp
+    board.viewport.zoom = next;
+    board.viewport.x = m.x - pinch.w0.x * next;
+    board.viewport.y = m.y - pinch.w0.y * next;
+    applyViewport();
+    commit({ viewportOnly: true });
+  }
+  function endPinch(liftedId) {
+    const rem = liftedId === pinch.a ? pinch.b : pinch.a;
+    pinch = null;
+    const p = touchPts.get(rem);
+    // the surviving finger keeps panning from where it stands
+    if (p) startPan({ clientX: p.x, clientY: p.y, pointerId: rem, button: 0 });
+  }
+
+  viewport.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touchPts.size === 1) { scheduleLongPress(e); return; }
+    // fingers past the first belong to the view, never to nodes
+    cancelLongPress();
+    e.preventDefault();
+    e.stopPropagation();
+    if (touchPts.size === 2) {
+      const other = [...touchPts.keys()].find((id) => id !== e.pointerId);
+      abortTouchGesture(other);     // whatever finger 1 was doing, the view takes over
+      startPinch();
+    } else {
+      claimedTouches.add(e.pointerId);   // 3rd+ finger: swallowed
+    }
+  }, true);
+
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'touch') return;
+    const p = touchPts.get(e.pointerId);
+    if (!p) return;
+    p.x = e.clientX; p.y = e.clientY;
+    if (longPress && e.pointerId === longPress.id &&
+        Math.hypot(e.clientX - longPress.x, e.clientY - longPress.y) > LONG_PRESS_SLOP) cancelLongPress();
+    if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) pinchMove();
+  }, true);
+
+  const onTouchEnd = (e) => {
+    if (e.pointerType !== 'touch' || abortingTouch) return;
+    if (!touchPts.delete(e.pointerId)) return;
+    if (longPress && e.pointerId === longPress.id) cancelLongPress();
+    if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) endPinch(e.pointerId);
+    // the click that follows this lift belongs to the gesture, not to a node
+    if (claimedTouches.delete(e.pointerId)) squelchClickUntil = performance.now() + 400;
+  };
+  window.addEventListener('pointerup', onTouchEnd, true);
+  window.addEventListener('pointercancel', onTouchEnd, true);
+
+  window.addEventListener('click', (e) => {
+    if (performance.now() < squelchClickUntil) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
 
   // ════════════════════════════════════════════════════════
   //  RIGHT-CLICK CONTEXT MENU
@@ -2675,7 +2835,11 @@
   // judge "was the user editing?" from activeElement after the fact — record it
   // at pointerdown, before focus moves.
   let ctxPreActive = null;
-  viewport.addEventListener('pointerdown', (e) => { if (e.button === 2) ctxPreActive = document.activeElement; }, true);
+  viewport.addEventListener('pointerdown', (e) => {
+    // touch too: a long-press may become a contextmenu, and the same
+    // "was the user editing?" question applies to it
+    if (e.button === 2 || e.pointerType === 'touch') ctxPreActive = document.activeElement;
+  }, true);
 
   viewport.addEventListener('contextmenu', (e) => {
     // if the user was already editing text (or is inside an interactive frame),

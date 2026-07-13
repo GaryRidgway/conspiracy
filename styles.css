@@ -1527,6 +1527,22 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   border: 0;
 }
 
+/* ── Coarse pointers (touch): no hover, finger-sized targets ──
+   Everything that reveals on :hover already reveals on .selected, so the
+   touch flow is tap-to-select first; these rules only grow the targets. */
+@media (pointer: coarse) {
+  .port { width: 22px; height: 22px; border-width: 3px; }
+  /* edge strips widen outward and pull back from the (also bigger) corners */
+  .frame-node .edge-n { top: -12px; left: 26px; right: 26px; height: 24px; }
+  .frame-node .edge-s { bottom: -12px; left: 26px; right: 26px; height: 24px; }
+  .frame-node .edge-e { right: -12px; top: 26px; bottom: 26px; width: 24px; }
+  .frame-node .edge-w { left: -12px; top: 26px; bottom: 26px; width: 24px; }
+  .frame-node .frame-resize,
+  .frame-node .edge-nw, .frame-node .edge-ne, .frame-node .edge-sw { width: 28px; height: 28px; }
+  .resize-handle { width: 28px; height: 28px; }
+  .ctx-item { padding: 0.6rem 0.7rem; font-size: 0.9rem; }
+}
+
 /* Respect the OS "reduce motion" setting: collapse decorative transitions and
    swap the locate pulse for a static ring (flashNode clears it on a timer). */
 @media (prefers-reduced-motion: reduce) {
