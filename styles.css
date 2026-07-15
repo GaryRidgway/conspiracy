@@ -664,6 +664,56 @@ body.space-pan #viewport.panning,
   border-color: rgba(255, 138, 122, 0.5);
 }
 
+/* ── Pin dock — pinned buttons riding the viewport beside the palette.
+   Absolute inside #tools (like #color-filter) so it tracks the palette
+   without disturbing its centering. ── */
+#pin-dock {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: max-content;
+  max-width: 200px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.4rem;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+}
+#pin-dock.hidden { display: none; }
+/* Chips echo .btn-node (same flat pill, icon, label) at chrome scale. */
+.pin-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.35rem 0.7rem 0.35rem 0.55rem;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+.pin-chip:hover { background: var(--border); border-color: var(--accent-soft); }
+.pin-chip:active { transform: scale(0.96); }
+.pin-chip .icon { flex: none; width: 14px; height: 14px; color: var(--accent); }
+.pin-chip-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Filtered-out items fade back but stay in place (and stay clickable). */
 .node.filtered-out { opacity: 0.15; transition: opacity 0.15s; }
 #connections .conn.filtered-out { opacity: 0.08; }
@@ -1541,6 +1591,7 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   .frame-node .edge-nw, .frame-node .edge-ne, .frame-node .edge-sw { width: 28px; height: 28px; }
   .resize-handle { width: 28px; height: 28px; }
   .ctx-item { padding: 0.6rem 0.7rem; font-size: 0.9rem; }
+  .pin-chip { padding: 0.55rem 0.8rem 0.55rem 0.65rem; font-size: 0.9rem; }
 }
 
 /* Respect the OS "reduce motion" setting: collapse decorative transitions and

@@ -1266,7 +1266,8 @@
     const data = board.cards[id];
     if (!data || data.kind !== 'button') return;
     if (action) data.action = action; else delete data.action;
-    renderButton(id);
+    if (isPinned(id)) renderPinDock();   // pinned buttons live in the dock, not the canvas
+    else renderButton(id);
     commit();
   }
 
@@ -1502,6 +1503,125 @@
       else { delete d.attachedTo; delete d.attachOrder; }
     }
   }
+
+  // ════════════════════════════════════════════════════════
+  //  PIN DOCK — nodes pinned to the chrome beside the tool
+  //  palette, so they ride the viewport (quick-nav buttons).
+  //  A pinned node has NO canvas presence: it never enters
+  //  nodeEls/pendingNodes, which automatically exempts it
+  //  from marquee, Tab, fit, search, arrows and frame-carry.
+  //  Its record keeps x/y untouched, so dropping the `pinned`
+  //  field puts it back exactly where it was — that is also
+  //  the self-heal when a kind leaves PINNABLE_KINDS.
+  //  `pinned` is shared content (epoch ms = dock order), so
+  //  pins travel to every device through sync/merge.
+  // ════════════════════════════════════════════════════════
+  const PINNABLE_KINDS = new Set(['button']);   // widen deliberately, kind by kind
+  const pinDock = document.getElementById('pin-dock');
+
+  function isPinned(id) {
+    const c = board.cards[id];
+    return !!(c && c.pinned && PINNABLE_KINDS.has(c.kind));
+  }
+  function pinnedIds() {
+    return Object.keys(board.cards).filter(isPinned)
+      .sort((a, b) => board.cards[a].pinned - board.cards[b].pinned);
+  }
+  // Strip stale flags from kinds that have left the allowlist. isPinned()
+  // already ignores them (the node renders at its stored x/y like any other),
+  // so this is pure data hygiene — run when a board's content is (re)loaded.
+  function healPins() {
+    let changed = false;
+    for (const c of Object.values(board.cards)) {
+      if (c.pinned && !PINNABLE_KINDS.has(c.kind)) { delete c.pinned; changed = true; }
+    }
+    if (changed) commit();
+  }
+  function pinNode(id) {
+    const d = board.cards[id];
+    if (!d || !PINNABLE_KINDS.has(d.kind) || d.pinned) return;
+    if (d.attachedTo) { delete d.attachedTo; delete d.attachOrder; }  // pin beats dock
+    d.pinned = Date.now();                     // doubles as the dock sort order
+    selectedNodes.delete(id);
+    pendingNodes.delete(id);
+    const el = nodeEls.get(id);
+    if (el) { el.remove(); nodeEls.delete(id); }
+    redrawConnectionsFor(id);                  // arrows hide while an end is pinned
+    layoutAttachments();
+    commit();
+    renderPinDock();
+  }
+  function unpinNode(id) {
+    const d = board.cards[id];
+    if (!d || !d.pinned) return;
+    delete d.pinned;
+    // drop it mid-view so the release is visible (its old spot may be far off)
+    const r = visibleRect();
+    const z = board.viewport.zoom;
+    d.x = Math.round((r.x + r.w / 2 - board.viewport.x) / z - 60);
+    d.y = Math.round((r.y + r.h / 2 - board.viewport.y) / z - 16);
+    renderCard(id);
+    redrawConnectionsFor(id);
+    selectNode(id);
+    commit();
+    renderPinDock();
+  }
+  function renderPinDock() {
+    if (!pinDock) return;
+    const ids = pinnedIds();
+    pinDock.classList.toggle('hidden', !ids.length);
+    pinDock.innerHTML = '';
+    for (const id of ids) {
+      const d = board.cards[id];
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'pin-chip';
+      chip.dataset.id = id;
+      const a = d.action;
+      chip.innerHTML = '<span class="icon"></span><span class="pin-chip-label"></span>';
+      chip.querySelector('.icon').className = 'icon ' +
+        (!a || !a.target ? 'icon-add' : a.type === 'url' ? 'icon-link' : 'icon-center_focus_strong');
+      chip.querySelector('.pin-chip-label').textContent = d.title || 'Button';
+      chip.title = !a || !a.target ? 'Click to set this button’s link'
+        : a.type === 'url' ? a.target : 'Go to: ' + nodeTitle(a.target);
+      chip.addEventListener('click', () => runButtonAction(id));
+      chip.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const configured = d.action && d.action.target;
+        openContextMenu(e.clientX, e.clientY, [
+          { label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) },
+          { label: 'Unpin', action: () => unpinNode(id) },
+          'sep',
+          { label: 'Delete button', danger: true, action: () => { deleteNode(id); renderPinDock(); } },
+        ]);
+      });
+      pinDock.appendChild(chip);
+    }
+  }
+  // The canvas touch layer stops at the viewport's edge, so the dock wires its
+  // own long-press → contextmenu (with the same click squelch on fire).
+  let chipPress = null;
+  pinDock.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    const chip = e.target.closest('.pin-chip');
+    if (!chip) return;
+    const x = e.clientX, y = e.clientY;
+    chipPress = {
+      x, y,
+      t: setTimeout(() => {
+        chipPress = null;
+        squelchClickUntil = performance.now() + 400;
+        chip.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      }, 500),
+    };
+  });
+  const cancelChipPress = () => { if (chipPress) { clearTimeout(chipPress.t); chipPress = null; } };
+  pinDock.addEventListener('pointerup', cancelChipPress);
+  pinDock.addEventListener('pointercancel', cancelChipPress);
+  pinDock.addEventListener('pointermove', (e) => {
+    if (chipPress && Math.hypot(e.clientX - chipPress.x, e.clientY - chipPress.y) > 8) cancelChipPress();
+  });
 
   // ════════════════════════════════════════════════════════
   //  FRAME NODE — a named region of the board (Miro-style frame): sits behind
@@ -2204,7 +2324,10 @@
     const data = board.connections[id];
     if (!entry || !data) return;
     const p = pathBetween(data.from, data.to);
-    if (!p) return;
+    // an endpoint without DOM (pending hydration, or pinned to the chrome
+    // dock) has no geometry — hide the arrow until both ends exist again
+    entry.g.style.display = p ? '' : 'none';
+    if (!p) { entry.labelEl.classList.add('hidden'); return; }
     entry.line.setAttribute('d', p.d);
     entry.hit.setAttribute('d', p.d);
     // Gradient runs along the curve's endpoints and rotates through the color
@@ -2570,6 +2693,7 @@
 
   function renderNodeNow(id) {
     pendingNodes.delete(id);
+    if (isPinned(id)) return;         // dock chrome — never materializes on canvas
     if (board.cards[id]) renderCard(id);
     else if (board.iframes[id]) renderIframe(id);
     redrawConnectionsFor(id);       // arrows waiting on this endpoint draw now
@@ -2650,8 +2774,10 @@
   }
 
   function renderAll() {
+    healPins();                                  // stale pins from a shrunk allowlist
     pendingNodes.clear();
     for (const id of Object.keys(board.cards)) {
+      if (isPinned(id)) continue;                // lives in the pin dock, not the canvas
       if (nodeNearView(board.cards[id], 0.5)) renderCard(id);
       else pendingNodes.add(id);
     }
@@ -2665,6 +2791,7 @@
     layoutAttachments();                         // classes + any layout drift
     applyViewport();
     refreshColorFilter();
+    renderPinDock();
     queueHydration();
   }
 
@@ -2674,7 +2801,9 @@
   // Used by undo/redo and import. Viewport is left as-is.
   function reconcileToBoard() {
     for (const id of [...nodeEls.keys()]) {
-      if (!board.cards[id] && !board.iframes[id]) {
+      // gone from the data, or pinned (undo/remote can flip the flag): either
+      // way the node no longer belongs on the canvas
+      if ((!board.cards[id] && !board.iframes[id]) || isPinned(id)) {
         nodeEls.get(id).remove(); nodeEls.delete(id);
         if (interactiveId === id) interactiveId = null;
       }
@@ -2689,6 +2818,7 @@
     // existing nodes update in place (undo/redo touches few); only NEW
     // off-screen nodes defer — e.g. switching to a big board hydrates lazily
     for (const id of Object.keys(board.cards)) {
+      if (isPinned(id)) continue;
       if (nodeEls.has(id) || nodeNearView(board.cards[id], 0.5)) renderCard(id);
       else pendingNodes.add(id);
     }
@@ -2703,6 +2833,7 @@
     applyViewport();
     updateEmptyState();
     refreshColorFilter();
+    renderPinDock();
     queueHydration();
   }
 
@@ -3088,6 +3219,12 @@
         if (gn0.data.attachedTo) items.push({ label: 'Detach', action: () => detachButton(id) });
         items.push('sep');
       }
+      // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for
+      // more node types with no further menu work
+      if (gn0 && gn0.type === 'card' && PINNABLE_KINDS.has(gn0.data.kind) && !gn0.data.pinned) {
+        items.push({ label: 'Pin beside toolbar', action: () => pinNode(id) });
+        items.push('sep');
+      }
       items.push({ label: many ? 'Duplicate selection' : 'Duplicate', hint: '⌘D', action: duplicateSelection });
       items.push({ label: 'Copy', hint: '⌘C', action: copySelection });
       items.push({ label: 'Cut', hint: '⌘X', action: () => { copySelection(); for (const nid of [...selectedNodes]) deleteNode(nid); } });
@@ -3111,9 +3248,7 @@
       items.push('sep');
       items.push({ label: 'Delete connection', hint: 'Del', danger: true, action: () => deleteConnection(id) });
     } else {
-      items.push({ label: 'Add card here', action: () => createCard(world.x - 120, world.y - 24) });
-      items.push({ label: 'Add frame here', action: () => createFrameNode(world.x - 320, world.y - 200) });
-      items.push({ label: 'Add embed here', action: () => openFrameModal({ type: 'create', at: world }) });
+      for (const t of ADD_TOOLS) items.push({ label: t.menu, action: () => t.at(world) });
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
       items.push('sep');
       items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
@@ -3287,18 +3422,19 @@
   // ════════════════════════════════════════════════════════
   //  TOOLBAR + KEYBOARD
   // ════════════════════════════════════════════════════════
-  document.getElementById('addCard').addEventListener('click', () => {
-    const c = toWorld(innerWidth / 2, innerHeight / 2);
-    createCard(c.x - 120, c.y - 24);
-  });
-  document.getElementById('addButton').addEventListener('click', () => {
-    const c = toWorld(innerWidth / 2, innerHeight / 2);
-    createButton(c.x - 60, c.y - 18);
-  });
-  document.getElementById('addFrameNode').addEventListener('click', () => {
-    const c = toWorld(innerWidth / 2, innerHeight / 2);
-    createFrameNode(c.x - 320, c.y - 200);
-  });
+  // One registry for every "add a node" entry point: the palette buttons AND
+  // the canvas context menu ("Add X here") are both generated from it, so a
+  // new node type can't appear in one and silently miss the other.
+  const ADD_TOOLS = [
+    { btn: 'addCard', menu: 'Add card here', at: (w) => createCard(w.x - 120, w.y - 24) },
+    { btn: 'addFrameNode', menu: 'Add frame here', at: (w) => createFrameNode(w.x - 320, w.y - 200) },
+    { btn: 'addFrame', menu: 'Add embed here', at: (w) => openFrameModal({ type: 'create', at: w }), center: () => openFrameModal({ type: 'create' }) },
+    { btn: 'addButton', menu: 'Add button here', at: (w) => createButton(w.x - 60, w.y - 18) },
+  ];
+  for (const t of ADD_TOOLS) {
+    document.getElementById(t.btn).addEventListener('click', () =>
+      t.center ? t.center() : t.at(toWorld(innerWidth / 2, innerHeight / 2)));
+  }
 
   // ── Button-link modal: paste a URL, or pick a board item to fly to ──
   const blModal = document.getElementById('button-link-modal');
@@ -3458,7 +3594,6 @@
     }
   }
 
-  document.getElementById('addFrame').addEventListener('click', () => openFrameModal({ type: 'create' }));
   document.getElementById('frame-add').addEventListener('click', submitFrameModal);
   document.getElementById('frame-cancel').addEventListener('click', closeFrameModal);
   frameUrl.addEventListener('keydown', (e) => {

@@ -76,6 +76,32 @@ rather than cascading the delete. Title-row geometry must come from
 integers measured from the padding edge, and the frame's fractional border
 visibly misaligns the row.
 
+### Pinned nodes: chrome, not canvas
+
+A record with `pinned` (epoch ms — doubles as the dock's sort order) renders
+as a chip in `#pin-dock` beside the tool palette instead of on the canvas.
+The field is shared content (syncs/merges like any field), so pins follow
+the board to every device. Invariants:
+
+- **Only kinds in `PINNABLE_KINDS` pin** (currently just `button`). The pin
+  machinery is kind-agnostic on purpose; widen the set one kind at a time.
+- **`isPinned()` = flag AND allowlist.** A record whose kind leaves the
+  allowlist instantly renders back on canvas at its stored `x`/`y`;
+  `healPins()` (run on `renderAll`, i.e. board load) then strips the stale
+  flag from the data.
+- **Pinning never touches `x`/`y`** — that's what makes the heal (and older
+  deploys, which ignore the unknown field and just render the node) safe.
+- **A pinned node has NO canvas presence**: it never enters `nodeEls` or
+  `pendingNodes`. That single property is what exempts it from marquee, Tab,
+  spatial nav, fit, search lists, frame-carry, and copy — all of which key
+  off `nodeEls`. Don't special-case pinned ids in those systems; keep the
+  exemption at the render layer (`renderAll`/`reconcileToBoard`/
+  `renderNodeNow` skip, reconcile removes the el when the flag appears).
+- Arrows to a pinned endpoint hide (`drawConnection` collapses on a null
+  path) but the connection records survive for the unpin.
+- Pinning detaches (`attachedTo` is deleted first); `setButtonAction`
+  re-renders the dock, not the canvas, for pinned ids.
+
 ### Record shape rules (the merge depends on these)
 
 - Records are flat objects, except fields may nest **one level** of plain
