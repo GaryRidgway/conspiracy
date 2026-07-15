@@ -229,6 +229,25 @@ test('canvas tools ignore the panel: marquee and Fit act on canvas nodes only', 
   expect(cb.x + cb.width).toBeLessThan(vp.width);
 });
 
+test('"Add card here" from inside the panel creates the card in the region', async ({ page }) => {
+  await addFrame(page);
+  await dockViaMenu(page);
+
+  // right-click near the panel's top: that point maps ABOVE the frame rect
+  // (the fit view has vertical margin), so creation must clamp into the rect
+  const pv = await page.locator('#dock-viewport').boundingBox();
+  await page.mouse.click(pv.x + pv.width / 2, pv.y + 60, { button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Add card here' }).click();
+  await page.keyboard.type('Born in panel');
+  await page.keyboard.press('Escape');
+
+  const card = page.locator('.node.card');
+  await expect(card).toHaveCount(1);
+  expect(await parentWorld(card)).toBe('dock-world');
+  const bb = await card.boundingBox();
+  expect(bb.x).toBeGreaterThan(pv.x);              // visible inside the panel
+});
+
 test('jumping to a node in the panel pans the panel, not the canvas', async ({ page }) => {
   await addFrame(page);
   const member = await addCardAt(page, 640, 360);

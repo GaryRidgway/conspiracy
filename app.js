@@ -842,7 +842,8 @@
     // move every selected node together — and a frame set to move its
     // contents also carries whatever sits fully inside it right now
     const carried = new Set(selectedNodes);
-    for (const nid of selectedNodes) {
+    if (dock) carried.delete(dock.frameId);   // its rect anchors the panel — immovable while docked
+    for (const nid of [...carried]) {
       const n = getNode(nid);
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
         for (const cid of frameContents(nid)) carried.add(cid);
@@ -3236,6 +3237,7 @@
       const sel = new Set(baseSel);
       for (const id of nodeEls.keys()) {
         if (inDock(id) !== (ctx === 'dock')) continue;   // marquee stays in its window
+        if (dock && id === dock.frameId) continue;       // the docked outline is chrome-ish
         const g = nodeGeom(id);
         if (!g) continue;
         // frames span whole regions — mere overlap would grab them (and drag
@@ -3556,6 +3558,19 @@
         ((pa.isContentEditable || pa.tagName === 'INPUT' || pa.tagName === 'TEXTAREA') && pa.contains(e.target)))) return;
     e.preventDefault();
     const world = pointerWorld(e);   // "here" respects whichever window was clicked
+    // the panel can show world beyond the frame's edges (free pan/zoom), but
+    // only the region itself lives in the panel — clamp each tool's placement
+    // footprint inside the rect so nothing is created invisibly outside it
+    const inDockMenu = pointerCtx(e.clientX, e.clientY) === 'dock';
+    const clampToRegion = (w, box) => {
+      const fr = inDockMenu && dockFrameRect();
+      if (!fr || !box) return w;
+      const m = 8;
+      return {
+        x: Math.min(Math.max(w.x, fr.x + box.dx + m), Math.max(fr.x + box.dx + m, fr.x + fr.w - (box.w - box.dx) - m)),
+        y: Math.min(Math.max(w.y, fr.y + box.dy + m), Math.max(fr.y + box.dy + m, fr.y + fr.h - (box.h - box.dy) - m)),
+      };
+    };
     const nodeEl = e.target.closest && e.target.closest('.node');
     const connG = e.target.closest && e.target.closest('.conn');
     const items = [];
@@ -3626,7 +3641,7 @@
       items.push('sep');
       items.push({ label: 'Delete connection', hint: 'Del', danger: true, action: () => deleteConnection(id) });
     } else {
-      for (const t of ADD_TOOLS) items.push({ label: t.menu, action: () => t.at(world) });
+      for (const t of ADD_TOOLS) items.push({ label: t.menu, action: () => t.at(clampToRegion(world, t.box)) });
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world) });
       items.push('sep');
       items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
@@ -3851,11 +3866,15 @@
   // One registry for every "add a node" entry point: the palette buttons AND
   // the canvas context menu ("Add X here") are both generated from it, so a
   // new node type can't appear in one and silently miss the other.
+  // box = the node's placement footprint around the point (offset + size) —
+  // the docked panel's "Add X here" clamps the point so the whole footprint
+  // lands inside the frame rect (a node created outside it would fall out of
+  // the panel and onto the canvas, invisibly).
   const ADD_TOOLS = [
-    { btn: 'addCard', menu: 'Add card here', at: (w) => createCard(w.x - 120, w.y - 24) },
-    { btn: 'addFrameNode', menu: 'Add frame here', at: (w) => createFrameNode(w.x - 320, w.y - 200) },
-    { btn: 'addFrame', menu: 'Add embed here', at: (w) => openFrameModal({ type: 'create', at: w }), center: () => openFrameModal({ type: 'create' }) },
-    { btn: 'addButton', menu: 'Add button here', at: (w) => createButton(w.x - 60, w.y - 18) },
+    { btn: 'addCard', menu: 'Add card here', box: { dx: 120, dy: 24, w: 280, h: 170 }, at: (w) => createCard(w.x - 120, w.y - 24) },
+    { btn: 'addFrameNode', menu: 'Add frame here', box: { dx: 320, dy: 200, w: 640, h: 400 }, at: (w) => createFrameNode(w.x - 320, w.y - 200) },
+    { btn: 'addFrame', menu: 'Add embed here', box: { dx: 240, dy: 160, w: 480, h: 320 }, at: (w) => openFrameModal({ type: 'create', at: w }), center: () => openFrameModal({ type: 'create' }) },
+    { btn: 'addButton', menu: 'Add button here', box: { dx: 60, dy: 18, w: 160, h: 44 }, at: (w) => createButton(w.x - 60, w.y - 18) },
   ];
   for (const t of ADD_TOOLS) {
     document.getElementById(t.btn).addEventListener('click', () =>
@@ -4400,6 +4419,7 @@
   // moves, and a frame set to move its contents carries them along.
   function nudgeSelection(dx, dy) {
     const carried = new Set(selectedNodes);
+    if (dock) carried.delete(dock.frameId);   // immovable while docked (see startNodeDrag)
     for (const nid of selectedNodes) {
       const n = getNode(nid);
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
