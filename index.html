@@ -11,6 +11,24 @@
     <div id="world"></div>
   </div>
 
+  <!-- Docked-frame side panel: a second window into the SAME world, locked
+       to one frame's region (see ARCHITECTURE.md "Docked frame window").
+       The region's nodes render in #dock-world instead of #world while
+       docked; the panel has its own pan/zoom. -->
+  <aside id="dock-panel" class="hidden" aria-label="Docked frame">
+    <div id="dock-resizer" title="Drag to resize"></div>
+    <div id="dock-header">
+      <span id="dock-title"></span>
+      <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
+      <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen"><span class="icon icon-remove"></span></button>
+      <button class="btn" id="dockUndockBtn" title="Return the frame to the canvas">Undock</button>
+    </div>
+    <div id="dock-viewport">
+      <div id="dock-world"></div>
+    </div>
+  </aside>
+  <button id="dock-tab" class="hidden" title="Restore the docked frame"></button>
+
   <!-- Centered guidance shown only while the board is empty -->
   <div id="empty-hint" class="hidden">
     <span class="icon icon-add"></span>
@@ -101,6 +119,7 @@
         <div class="help-row"><span>Duplicate</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>D</kbd></span></div>
         <div class="help-row"><span>Copy / cut / paste</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd></span></div>
         <div class="help-row"><span>Pin a button to the toolbar</span><span class="help-keys">right-click it → Pin</span></div>
+        <div class="help-row"><span>Dock a frame to the side</span><span class="help-keys">right-click its tab → Dock</span></div>
         <div class="help-row"><span>Colors, links &amp; more</span><span class="help-keys">right-click</span></div>
         <div class="help-row"><span>Remove</span><span class="help-keys"><kbd>Del</kbd></span></div>
       </div>

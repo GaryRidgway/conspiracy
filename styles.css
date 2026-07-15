@@ -519,6 +519,99 @@ body.space-pan #viewport.panning,
 }
 #conflict-notice .notice-dismiss:hover { color: var(--text); }
 
+/* ── Docked frame window — one frame's region as a second window on the
+   right edge. #dock-world carries its own pan/zoom transform (same world
+   units as #world; nodes reparent between the two). The main canvas shows
+   only the frame's collapsed tab while docked (.frame-docked). ── */
+#dock-panel {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: var(--dock-w, 420px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border2);
+  box-shadow: -12px 0 32px rgba(0,0,0,0.45);
+}
+#dock-panel.hidden { display: none; }
+#dock-resizer {
+  position: absolute;
+  left: -5px; top: 0; bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+#dock-resizer:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+#dock-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+#dock-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 650;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#dock-viewport {
+  position: relative;
+  flex: 1;
+  overflow: clip;
+  touch-action: none;      /* pointer events drive pan/pinch, like #viewport */
+  /* same dot grid as the canvas, statically anchored (no pan phase) */
+  background-image: radial-gradient(circle, var(--grid-dot, rgba(255,255,255,0.07)) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+#dock-viewport.panning { cursor: grabbing; }
+#dock-world {
+  position: absolute;
+  left: 0; top: 0;
+  width: 0; height: 0;
+  transform-origin: 0 0;
+}
+#dock-connections { position: absolute; overflow: visible; }
+/* minimized: a labeled tab hugging the right edge */
+#dock-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  writing-mode: vertical-rl;
+  padding: 0.8rem 0.35rem;
+  max-height: 40vh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--accent-soft);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  box-shadow: -6px 0 22px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+#dock-tab:hover { background: var(--border); }
+#dock-tab.hidden { display: none; }
+/* the docked frame's canvas presence collapses to its tab: the region lives
+   in the panel now, and moving/resizing it from here is disabled */
+.frame-node.frame-docked { border-style: dashed; opacity: 0.6; }
+.frame-node.frame-docked .frame-edge,
+.frame-node.frame-docked .frame-resize { display: none; }
+.frame-node.frame-docked .frame-tab { cursor: default; }
+/* fixed chrome on the right slides left of the open panel */
+body.docked #zoombar { right: calc(var(--dock-w, 420px) + 1rem); }
+body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
+
 /* ── Merge review panel — flip conflicted records between the two devices'
    versions. Non-modal: docked bottom-center (where its notice was) so the
    board stays visible and rows can fly to the node under review. ── */

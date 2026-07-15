@@ -110,6 +110,44 @@ the board to every device. Invariants:
   (`duplicateNodes`, `copyNodes`, `setNodesColor`) — never the
   selection-based wrappers, which can't see pinned ids.
 
+### Docked frame window (`#dock-panel`, DOCKED FRAME WINDOW section)
+
+One frame's region can dock to the right edge as a **second window into the
+same world** — a bespoke work area with its own pan/zoom. The invariants:
+
+- **Exclusive model**: while docked, the region's nodes render in
+  `#dock-world` instead of `#world` (the canvas keeps only the frame's
+  dashed outline + tab, `.frame-docked`). A node still has exactly ONE
+  element; `nodeEls` stays a single map. Never render a node in both.
+- **One shared coordinate space.** Both windows view the same world units;
+  only the transform differs. All screen→world conversions go through
+  `ctxToWorld(ctx, x, y)` / `pointerWorld(e)` (which picks the window under
+  the pointer). This is what makes cross-window drags work: the drag delta
+  is world-space, so dropping over the other window just lands there —
+  never mix `getBoundingClientRect` with the wrong window's transform.
+- **Membership is geometric** (fully inside the frame rect — same rule as
+  `frameContents`; docked-button assemblies follow their root) and is
+  recomputed at every `commit()`/reconcile (`recomputeDockMembers`), which
+  reparents crossers and re-routes their arrows. Unrendered nodes use a
+  record-based size estimate that self-corrects once they render.
+- **Dock state is a per-device view preference** — `{frameId, width,
+  minimized, viewport}` rides `whiteboard:viewport:<id>`, never board
+  content, never bumps `version`, never syncs. Other devices see a normal
+  board.
+- Arrows: both ends in one window → that window's SVG (`#dock-connections`
+  vs `#connections`, entries move via appendChild); one end each →
+  hidden, records intact. `url(#…)` marker refs resolve document-wide.
+- While docked the frame itself can't move or resize (its rect anchors the
+  panel's contents); undock first. Deleting it (or losing it to
+  undo/remote merge) closes the panel via the reconcile guard.
+- Main-canvas geometry consumers exclude members: fit, marquee (per-window
+  via `ctx`), `findSnapTarget` (same-window only). `frameViewState`
+  treats panel embeds as visible while open, far while minimized.
+  Navigation (`frameNode`) into a member pans the PANEL.
+- Reparenting an `<iframe>` element reloads its page — embeds crossing the
+  boundary (or dock/undock of a region containing them) reload. Inherent
+  browser behavior; accepted.
+
 ### Record shape rules (the merge depends on these)
 
 - Records are flat objects, except fields may nest **one level** of plain

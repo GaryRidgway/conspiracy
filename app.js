@@ -421,7 +421,25 @@
   }
   function saveViewport(id) {
     const v = board.viewport;
-    try { localStorage.setItem(viewportKey(id), JSON.stringify({ x: v.x, y: v.y, zoom: v.zoom })); } catch (e) { /* quota */ }
+    const payload = { x: v.x, y: v.y, zoom: v.zoom };
+    // the docked-frame window is a per-device view preference too — it rides
+    // the same local key and never touches board content
+    if (dock) {
+      payload.dock = { frameId: dock.frameId, width: dock.width, minimized: dock.minimized,
+        x: dock.viewport.x, y: dock.viewport.y, zoom: dock.viewport.zoom };
+    }
+    try { localStorage.setItem(viewportKey(id), JSON.stringify(payload)); } catch (e) { /* quota */ }
+  }
+  function loadDockState(id) {
+    try {
+      const raw = localStorage.getItem(viewportKey(id));
+      const d = raw && JSON.parse(raw).dock;
+      if (d && d.frameId) {
+        return { frameId: d.frameId, width: +d.width || 420, minimized: !!d.minimized,
+          viewport: { x: +d.x || 0, y: +d.y || 0, zoom: +d.zoom || 1 } };
+      }
+    } catch (e) { /* ignore */ }
+    return null;
   }
   let vpTimer = null;
   function scheduleViewportSave() {
@@ -498,6 +516,10 @@
     // they don't touch content, aren't undoable, and must NOT bump the version
     // or trigger a Drive push — just persist the viewport to its own local key.
     if (opts && opts.viewportOnly) { scheduleViewportSave(); return; }
+    // Docked-frame window membership follows geometry, so any content change
+    // can move a node across the boundary — recompute (and reparent) at the
+    // same chokepoint. No-op while nothing is docked.
+    recomputeDockMembers();
     // Docked buttons re-derive their x/y at the chokepoint, so whatever
     // mutated content (a drag, typing that grew a card, a color change)
     // can't leave a stale stored position behind. Unguarded on purpose: the
@@ -830,7 +852,10 @@
       const d = getNode(nid).data;
       return { nid, d, ox: d.x, oy: d.y, el: nodeEls.get(nid) };
     });
-    const start = toWorld(e.clientX, e.clientY);
+    // pointerWorld (not toWorld): the drag may start in — or cross into — the
+    // docked panel; both windows share world units, so the delta math is
+    // uniform and a drop over the other window lands where the cursor points
+    const start = pointerWorld(e);
     const pid = e.pointerId;      // a second finger must never steer this drag
     let moved = false;
     movers.forEach((m) => m.el.classList.add('dragging'));
@@ -850,7 +875,7 @@
 
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
-      const now = toWorld(ev.clientX, ev.clientY);
+      const now = pointerWorld(ev);
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
       for (const m of movers) {
         m.d.x = m.ox + dx; m.d.y = m.oy + dy;
@@ -900,7 +925,7 @@
     const temp = document.createElementNS(SVGNS, 'path');
     temp.setAttribute('class', 'conn-temp');
     temp.setAttribute('marker-end', 'url(#arrow)');
-    svg.appendChild(temp);
+    (inDock(fromId) ? dockSvg : svg).appendChild(temp);   // draw in the source's window
 
     let hoverEl = null;
     const setHover = (el) => {
@@ -912,7 +937,7 @@
 
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
-      const w = toWorld(ev.clientX, ev.clientY);
+      const w = pointerWorld(ev);
       const g = nodeGeom(fromId);
       const a = borderPoint(g, w.x, w.y);
       temp.setAttribute('d', `M${a.x},${a.y} L${w.x},${w.y}`);
@@ -1105,7 +1130,7 @@
           <button class="card-delete icon-btn" title="Delete card"><span class="icon icon-delete"></span></button>
         </div>
         <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
-      world.appendChild(el);
+      worldFor(id).appendChild(el);
       nodeEls.set(id, el);
       wireCard(id, el);
       addPorts(el, id);
@@ -1192,7 +1217,7 @@
       el.className = 'node btn-node';
       el.dataset.id = id;
       el.innerHTML = `<span class="btn-disc"><span class="icon"></span></span><span class="btn-node-label" spellcheck="false"></span>`;
-      world.appendChild(el);
+      worldFor(id).appendChild(el);
       nodeEls.set(id, el);
       wireButton(id, el);
       addPorts(el, id);
@@ -1389,8 +1414,10 @@
         let x, y;
         if (kind === 'title') {
           tel.classList.add('has-tab-buttons');
+          // client rect → world through the frame's own window transform
+          // (the frame may live in the docked panel)
           const r = tel.querySelector('.frame-tab').getBoundingClientRect();
-          const p = toWorld(r.right, r.top);
+          const p = ctxToWorld(inDock(rid) ? 'dock' : 'main', r.right, r.top);
           x = p.x - 1;   // share the 1px border
           y = p.y;
         } else {
@@ -1433,13 +1460,16 @@
     };
     for (const [tid, c] of Object.entries(board.cards)) {
       if (tid === buttonId || c.kind === 'button') continue;
+      if (inDock(tid) !== inDock(buttonId)) continue;   // snap within one window
       const tg = nodeGeom(tid);
       if (!tg) continue;
       if (c.kind === 'frame') {
-        // the row's growing end: the last docked button, or the tab itself
+        // the row's growing end: the last docked button, or the tab itself.
+        // Client rect → world through the TARGET's window transform.
+        const tctx = inDock(tid) ? 'dock' : 'main';
         const r = nodeEls.get(tid).querySelector('.frame-tab').getBoundingClientRect();
-        const p = toWorld(r.right, r.top);
-        let end = { x: p.x, y: p.y, h: r.height / board.viewport.zoom };
+        const p = ctxToWorld(tctx, r.right, r.top);
+        let end = { x: p.x, y: p.y, h: r.height / ctxViewport(tctx).zoom };
         for (const [bid, bc] of Object.entries(board.cards)) {
           if (bc.kind !== 'button' || bc.attachedTo !== tid || bid === buttonId) continue;
           const bg = nodeGeom(bid);
@@ -1455,6 +1485,7 @@
     }
     for (const [tid, c] of Object.entries(board.cards)) {
       if (tid === buttonId || c.kind !== 'button') continue;
+      if (inDock(tid) !== inDock(buttonId)) continue;
       const root = dockRoot(tid);
       if (!root || root === buttonId) continue;   // never dock onto your own chain
       const rn = getNode(root);
@@ -1670,6 +1701,211 @@
   });
 
   // ════════════════════════════════════════════════════════
+  //  DOCKED FRAME WINDOW — one frame's region can dock to the
+  //  side as a SECOND WINDOW into the same world (#dock-panel).
+  //  Exclusive model: while docked, the region's nodes render
+  //  in #dock-world instead of #world (the canvas shows only
+  //  the frame's collapsed tab), so a node still has exactly
+  //  one element and `nodeEls` stays a single map. Both windows
+  //  share ONE world coordinate space — only the viewing
+  //  transform differs — so gesture math stays uniform through
+  //  pointerWorld()/ctxToWorld(). Membership is geometric
+  //  (fully inside the frame rect, same rule as frameContents)
+  //  and recomputed at every commit/reconcile; crossing the
+  //  boundary just reparents the element. Dock state is a
+  //  per-DEVICE view preference (stored with the viewport,
+  //  never board content, never synced).
+  // ════════════════════════════════════════════════════════
+  const dockPanel = document.getElementById('dock-panel');
+  const dockViewport = document.getElementById('dock-viewport');
+  const dockWorld = document.getElementById('dock-world');
+  const dockTab = document.getElementById('dock-tab');
+  const dockTitleEl = document.getElementById('dock-title');
+  const dockSvg = document.createElementNS(SVGNS, 'svg');
+  dockSvg.id = 'dock-connections';
+  dockWorld.appendChild(dockSvg);   // url(#…) marker refs resolve document-wide
+
+  let dock = null;                  // { frameId, width, minimized, viewport: {x, y, zoom} } | null
+  const dockMembers = new Set();    // node ids currently living in the panel window
+  const inDock = (id) => dockMembers.has(id);
+  const worldFor = (id) => (inDock(id) ? dockWorld : world);
+
+  // ── Shared-world coordinate plumbing ──
+  // ctx is 'main' or 'dock'. Both map to the SAME world units; only the
+  // origin (panel offset) and viewport transform differ.
+  function ctxViewport(ctx) { return ctx === 'dock' ? dock.viewport : board.viewport; }
+  function ctxOrigin(ctx) {
+    if (ctx !== 'dock') return { x: 0, y: 0 };
+    const r = dockViewport.getBoundingClientRect();
+    return { x: r.left, y: r.top };
+  }
+  function ctxToWorld(ctx, cx, cy) {
+    const o = ctxOrigin(ctx), v = ctxViewport(ctx);
+    return { x: (cx - o.x - v.x) / v.zoom, y: (cy - o.y - v.y) / v.zoom };
+  }
+  function applyCtxViewport(ctx) { if (ctx === 'dock') applyDockViewport(); else applyViewport(); }
+  // Which window is under this client point right now?
+  function pointerCtx(cx, cy) {
+    if (!dock || dock.minimized) return 'main';
+    const r = dockViewport.getBoundingClientRect();
+    return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom ? 'dock' : 'main';
+  }
+  // The world point under the pointer, respecting whichever window it is
+  // over. THE cross-window drag primitive: a drag's delta math works in
+  // world units, so dropping over the other window "just lands" there.
+  function pointerWorld(e) { return ctxToWorld(pointerCtx(e.clientX, e.clientY), e.clientX, e.clientY); }
+
+  function applyDockViewport() {
+    if (!dock) return;
+    const v = dock.viewport;
+    dockWorld.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.zoom})`;
+  }
+
+  // ── Membership ──
+  function dockFrameRect() {
+    const d = dock && board.cards[dock.frameId];
+    return d && d.kind === 'frame' ? { x: d.x, y: d.y, w: d.w, h: d.h } : null;
+  }
+  // el geometry when rendered; a modest record-based estimate before that
+  // (self-corrects at the next recompute once the element has real size)
+  function memberGeom(id) {
+    const el = nodeEls.get(id);
+    if (el) return nodeGeom(id);
+    const n = getNode(id);
+    if (!n) return null;
+    const d = n.data;
+    return { x: d.x, y: d.y, w: d.w || (d.kind === 'button' ? 140 : 280), h: d.h || (d.kind === 'button' ? 40 : 160) };
+  }
+  // Recompute who lives in the panel and reparent whatever changed sides.
+  // Runs at every commit()/reconcile — cheap when nothing is docked.
+  function recomputeDockMembers() {
+    if (!dock && !dockMembers.size) return false;
+    const before = new Set(dockMembers);
+    dockMembers.clear();
+    const fr = dockFrameRect();
+    if (fr) {
+      for (const id of [...Object.keys(board.cards), ...Object.keys(board.iframes)]) {
+        if (id === dock.frameId || isPinned(id)) continue;
+        const c = board.cards[id];
+        if (c && c.kind === 'button' && c.attachedTo) continue;   // resolved with its root below
+        const g = memberGeom(id);
+        if (g && g.x >= fr.x && g.y >= fr.y && g.x + g.w <= fr.x + fr.w && g.y + g.h <= fr.y + fr.h) dockMembers.add(id);
+      }
+      // a docked-button assembly is one unit: buttons live where their root lives
+      for (const [bid, c] of Object.entries(board.cards)) {
+        if (c.kind === 'button' && c.attachedTo && dockMembers.has(dockRoot(bid))) dockMembers.add(bid);
+      }
+    }
+    let changed = false;
+    for (const id of new Set([...before, ...dockMembers])) {
+      if (before.has(id) === dockMembers.has(id)) continue;
+      const el = nodeEls.get(id);
+      if (el && el.parentElement !== worldFor(id)) worldFor(id).appendChild(el);
+      redrawConnectionsFor(id);        // arrows re-route (or hide) across windows
+      changed = true;
+    }
+    if (changed) scheduleFrameEval();  // embeds crossing in become panel-visible
+    return changed;
+  }
+
+  // ── Open / close / minimize ──
+  function syncDockPanel() {
+    const open = !!dock;
+    dockPanel.classList.toggle('hidden', !open || dock.minimized);
+    dockTab.classList.toggle('hidden', !open || !dock.minimized);
+    document.body.classList.toggle('docked', open && !dock.minimized);
+    if (open) {
+      const d = board.cards[dock.frameId];
+      const name = (d && d.title) || 'Frame';
+      dockTitleEl.textContent = name;
+      dockTab.textContent = name;
+      document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
+    }
+    const f = dock && nodeEls.get(dock.frameId);
+    for (const el of world.querySelectorAll('.frame-node.frame-docked')) {
+      if (el !== f) el.classList.remove('frame-docked');
+    }
+    if (f) f.classList.add('frame-docked');
+  }
+  // Fit the frame's region into the panel (the panel's "home view").
+  function dockFitRegion() {
+    const fr = dockFrameRect();
+    if (!fr || dock.minimized) return;
+    const r = dockViewport.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const pad = 16;
+    const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+      Math.min((r.width - pad * 2) / fr.w, (r.height - pad * 2) / fr.h)));
+    dock.viewport = {
+      x: (r.width - fr.w * zoom) / 2 - fr.x * zoom,
+      y: (r.height - fr.h * zoom) / 2 - fr.y * zoom,
+      zoom,
+    };
+    applyDockViewport();
+    commit({ viewportOnly: true });
+  }
+  function dockFrame(frameId) {
+    const d = board.cards[frameId];
+    if (!d || d.kind !== 'frame') return;
+    if (dock && dock.frameId === frameId) { setDockMinimized(false); return; }
+    if (dock) undockFrame();           // one docked frame at a time
+    exitInteract();
+    hydrateAll();                      // membership needs every node's geometry
+    dock = { frameId, width: Math.min(innerWidth * 0.6, 420), minimized: false, viewport: { x: 0, y: 0, zoom: 1 } };
+    syncDockPanel();
+    recomputeDockMembers();
+    dockFitRegion();
+    scheduleFrameEval();
+    commit({ viewportOnly: true });    // persist dock state (view preference)
+  }
+  function undockFrame() {
+    if (!dock) return;
+    const fid = dock.frameId;
+    dock = null;
+    recomputeDockMembers();            // everyone back to the canvas
+    syncDockPanel();
+    const f = nodeEls.get(fid);
+    if (f) f.classList.remove('frame-docked');
+    scheduleFrameEval();
+    commit({ viewportOnly: true });
+  }
+  function setDockMinimized(min) {
+    if (!dock || dock.minimized === !!min) return;
+    dock.minimized = !!min;
+    syncDockPanel();
+    scheduleFrameEval();               // embeds pause/resume with visibility
+    commit({ viewportOnly: true });
+  }
+
+  // ── Panel chrome wiring ──
+  document.getElementById('dockFitBtn').addEventListener('click', () => dockFitRegion());
+  document.getElementById('dockMinBtn').addEventListener('click', () => setDockMinimized(true));
+  document.getElementById('dockUndockBtn').addEventListener('click', () => undockFrame());
+  dockTab.addEventListener('click', () => setDockMinimized(false));
+  // width resizer on the panel's left edge
+  document.getElementById('dock-resizer').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !dock) return;
+    e.preventDefault();
+    const pid = e.pointerId;
+    const startX = e.clientX, startW = dock.width;
+    const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
+      dock.width = Math.max(260, Math.min(innerWidth * 0.7, startW + (startX - ev.clientX)));
+      document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
+    };
+    const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      commit({ viewportOnly: true });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+
+  // ════════════════════════════════════════════════════════
   //  FRAME NODE — a named region of the board (Miro-style frame): sits behind
   //  everything, its interior is click-through, and only the title tab and
   //  resize handle are interactive. Linkable like any node (deep links,
@@ -1693,7 +1929,7 @@
           <button class="copy-link icon-btn" title="Copy link to this frame"><span class="icon icon-tag"></span></button>
         </div>
         <div class="frame-resize" data-dir="se" title="Resize"></div>`;
-      world.appendChild(el);
+      worldFor(id).appendChild(el);
       nodeEls.set(id, el);
       wireFrameNode(id, el);
       // no ports: arrows connect ideas, not regions
@@ -1703,6 +1939,7 @@
     el.style.width = data.w + 'px';
     el.style.height = data.h + 'px';
     applyNodeColor(el, data.color);
+    el.classList.toggle('frame-docked', !!dock && dock.frameId === id);
     const nameEl = el.querySelector('.frame-name');
     if (document.activeElement !== nameEl) nameEl.textContent = data.title || 'Frame';
     return el;
@@ -1716,6 +1953,9 @@
     tab.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
       if (nameEl.isContentEditable) return;
+      // while docked, the region's coordinates anchor the panel's contents —
+      // moving or resizing it would eject everything; undock first
+      if (dock && dock.frameId === id) return;
       startNodeDrag(id, el, e);
     });
     makeRenamable(nameEl, {
@@ -1732,18 +1972,19 @@
     for (const handle of el.querySelectorAll('.frame-edge, .frame-resize')) {
       handle.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
+        if (dock && dock.frameId === id) return;   // docked: rect is the panel's anchor
         e.preventDefault();
         e.stopPropagation();
         selectNode(id);
         const dir = handle.dataset.dir;
         const data = board.cards[id];
-        const start = toWorld(e.clientX, e.clientY);
+        const start = pointerWorld(e);
         const pid = e.pointerId;
         const o = { x: data.x, y: data.y, w: data.w, h: data.h };
         let moved = false;
         const onMove = (ev) => {
           if (ev.pointerId !== pid) return;
-          const now = toWorld(ev.clientX, ev.clientY);
+          const now = pointerWorld(ev);
           const dx = now.x - start.x, dy = now.y - start.y;
           if (dir.includes('e')) data.w = Math.max(200, Math.round(o.w + dx));
           if (dir.includes('s')) data.h = Math.max(140, Math.round(o.h + dy));
@@ -1866,7 +2107,7 @@
                   referrerpolicy="no-referrer"></iframe>
         </div>
         <div class="resize-handle" title="Resize"></div>`;
-      world.appendChild(el);
+      worldFor(id).appendChild(el);
       nodeEls.set(id, el);
       wireIframe(id, el);
       addPorts(el, id);
@@ -1917,7 +2158,10 @@
 
   // 'visible' = intersects the real viewport, 'near' = within the prefetch
   // ring, 'far' = neither (or too small on screen to be worth a page load).
-  function frameViewState(data) {
+  function frameViewState(id, data) {
+    // panel contents are a curated work area: everything loads while the
+    // panel is open, nothing new starts while it's minimized
+    if (inDock(id)) return dock && !dock.minimized ? 'visible' : 'far';
     const z = board.viewport.zoom;
     const w = data.w * z, h = data.h * z;
     if (w < FRAME_MIN_LOAD_PX) return 'far';          // a dot — even on screen
@@ -1948,7 +2192,7 @@
       while ((id = idleQueue.shift())) {
         const el = nodeEls.get(id);
         if (el && !el.classList.contains('loaded') &&
-            board.iframes[id] && frameViewState(board.iframes[id]) !== 'far') break;
+            board.iframes[id] && frameViewState(id, board.iframes[id]) !== 'far') break;
       }
       if (!id) { idlePrefetching = false; return; }
       const frame = nodeEls.get(id).querySelector('.iframe-frame');
@@ -1974,7 +2218,7 @@
       const el = nodeEls.get(id);
       if (!el || el.classList.contains('loaded')) continue;
       const d = board.iframes[id];
-      const state = frameViewState(d);
+      const state = frameViewState(id, d);
       if (state === 'visible') loadFrame(id);         // what the user sees loads first
       else if (state === 'near') {
         const fx = (d.x + d.w / 2) * z + board.viewport.x;
@@ -2116,14 +2360,14 @@
       e.stopPropagation();
       selectNode(id);
       const data = board.iframes[id];
-      const start = toWorld(e.clientX, e.clientY);
+      const start = pointerWorld(e);
       const pid = e.pointerId;
       const ow = data.w, oh = data.h;
       let moved = false;
 
       const onMove = (ev) => {
         if (ev.pointerId !== pid) return;
-        const now = toWorld(ev.clientX, ev.clientY);
+        const now = pointerWorld(ev);
         data.w = Math.max(220, Math.round(ow + (now.x - start.x)));
         data.h = Math.max(160, Math.round(oh + (now.y - start.y)));
         el.style.width = data.w + 'px';
@@ -2369,11 +2613,20 @@
     const entry = connEls.get(id);
     const data = board.connections[id];
     if (!entry || !data) return;
-    const p = pathBetween(data.from, data.to);
+    // which window does this arrow live in? Both ends in the docked panel →
+    // the panel's SVG; both on the canvas → the main SVG; one on each side →
+    // hidden (records survive; the arrow returns when the ends reunite)
+    const spanning = inDock(data.from) !== inDock(data.to);
+    const p = spanning ? null : pathBetween(data.from, data.to);
     // an endpoint without DOM (pending hydration, or pinned to the chrome
     // dock) has no geometry — hide the arrow until both ends exist again
     entry.g.style.display = p ? '' : 'none';
     if (!p) { entry.labelEl.classList.add('hidden'); return; }
+    const tSvg = inDock(data.from) ? dockSvg : svg;
+    if (entry.g.parentNode !== tSvg) {
+      tSvg.appendChild(entry.g);
+      (inDock(data.from) ? dockWorld : world).appendChild(entry.labelEl);
+    }
     entry.line.setAttribute('d', p.d);
     entry.hit.setAttribute('d', p.d);
     // Gradient runs along the curve's endpoints and rotates through the color
@@ -2436,7 +2689,7 @@
     const temp = document.createElementNS(SVGNS, 'path');
     temp.setAttribute('class', 'conn-temp');
     temp.setAttribute('marker-end', 'url(#arrow)');
-    svg.appendChild(temp);
+    (inDock(fromId) ? dockSvg : svg).appendChild(temp);
     kbConnect = { fromId, targetId: null, temp };
     // start aimed at the nearest node — most connections are local
     const g0 = nodeGeom(fromId);
@@ -2484,6 +2737,7 @@
   //  DELETE (any node) — also removes attached connections
   // ════════════════════════════════════════════════════════
   function deleteNode(id) {
+    if (dock && id === dock.frameId) undockFrame();   // panel can't outlive its frame
     // deleting a dock orphans its buttons in place (buttons that were ALSO
     // selected get their own deleteNode call in the same sweep)
     for (const c of Object.values(board.cards)) {
@@ -2830,13 +3084,14 @@
   function renderAll() {
     healPins();                                  // stale pins from a shrunk allowlist
     pendingNodes.clear();
+    recomputeDockMembers();                      // estimate-based pre-render pass
     for (const id of Object.keys(board.cards)) {
       if (isPinned(id)) continue;                // lives in the pin dock, not the canvas
-      if (nodeNearView(board.cards[id], 0.5)) renderCard(id);
+      if (inDock(id) || nodeNearView(board.cards[id], 0.5)) renderCard(id);
       else pendingNodes.add(id);
     }
     for (const id of Object.keys(board.iframes)) {
-      if (nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
+      if (inDock(id) || nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
       else pendingNodes.add(id);
     }
     // connections after nodes exist so geometry is available; entries are
@@ -2847,6 +3102,9 @@
     // stale DOM transform writes them to garbage coordinates until the next
     // layout pass (the "docked button missing until the frame moves" bug)
     applyViewport();
+    applyDockViewport();
+    recomputeDockMembers();                      // real geometry now — fix estimates
+    syncDockPanel();
     layoutAttachments();                         // classes + any layout drift
     refreshColorFilter();
     renderPinDock();
@@ -2875,17 +3133,22 @@
     }
     // existing nodes update in place (undo/redo touches few); only NEW
     // off-screen nodes defer — e.g. switching to a big board hydrates lazily
+    // the docked frame can vanish under undo/remote merge — close the panel
+    if (dock && !(board.cards[dock.frameId] && board.cards[dock.frameId].kind === 'frame')) undockFrame();
+    recomputeDockMembers();
     for (const id of Object.keys(board.cards)) {
       if (isPinned(id)) continue;
-      if (nodeEls.has(id) || nodeNearView(board.cards[id], 0.5)) renderCard(id);
+      if (inDock(id) || nodeEls.has(id) || nodeNearView(board.cards[id], 0.5)) renderCard(id);
       else pendingNodes.add(id);
     }
     for (const id of Object.keys(board.iframes)) {
-      if (nodeEls.has(id) || nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
+      if (inDock(id) || nodeEls.has(id) || nodeNearView(board.iframes[id], 0.5)) renderIframe(id);
       else pendingNodes.add(id);
     }
     for (const id of Object.keys(board.connections)) renderConnection(id);
     applyViewport();                 // before layoutAttachments — see renderAll
+    recomputeDockMembers();          // new nodes now have real geometry
+    syncDockPanel();                 // docked frame's title may have changed
     layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
@@ -2912,22 +3175,25 @@
   // (pinch/long-press), and deselecting then would be a surprise.
   function startPan(e, opts = {}) {
     exitInteract();
-    viewport.classList.add('panning');
+    const ctx = opts.ctx || 'main';
+    const vpEl = ctx === 'dock' ? dockViewport : viewport;
+    const vp = ctxViewport(ctx);
+    vpEl.classList.add('panning');
     const startX = e.clientX, startY = e.clientY;
     const pid = e.pointerId;
-    const ox = board.viewport.x, oy = board.viewport.y;
+    const ox = vp.x, oy = vp.y;
     let moved = false;
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
-      board.viewport.x = ox + (ev.clientX - startX);
-      board.viewport.y = oy + (ev.clientY - startY);
-      applyViewport();
-      markPanActive();
+      vp.x = ox + (ev.clientX - startX);
+      vp.y = oy + (ev.clientY - startY);
+      applyCtxViewport(ctx);
+      if (ctx === 'main') markPanActive();
       moved = true;
     };
     const onUp = (ev) => {
       if (ev.pointerId !== pid) return;
-      viewport.classList.remove('panning');
+      vpEl.classList.remove('panning');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -2946,6 +3212,8 @@
   // long-press marquee uses it to open the canvas menu on press-without-drag.
   function startBoxSelect(e, opts = {}) {
     exitInteract();
+    const ctx = opts.ctx || 'main';
+    const vpEl = ctx === 'dock' ? dockViewport : viewport;
     if (!e.shiftKey) clearSelection();
     const baseSel = new Set(selectedNodes);
     const sx = e.clientX, sy = e.clientY;
@@ -2956,7 +3224,7 @@
     selectionBox.style.left = sx + 'px'; selectionBox.style.top = sy + 'px';
     selectionBox.style.width = '0px'; selectionBox.style.height = '0px';
     selectionBox.classList.remove('hidden');
-    viewport.classList.add('selecting');
+    vpEl.classList.add('selecting');
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
       const x = Math.min(sx, ev.clientX), y = Math.min(sy, ev.clientY);
@@ -2964,9 +3232,10 @@
       selectionBox.style.left = x + 'px'; selectionBox.style.top = y + 'px';
       selectionBox.style.width = w + 'px'; selectionBox.style.height = h + 'px';
       if (w > 3 || h > 3) moved = true;
-      const a = toWorld(x, y), b = toWorld(x + w, y + h);   // box in world coords
+      const a = ctxToWorld(ctx, x, y), b = ctxToWorld(ctx, x + w, y + h);   // box in world coords
       const sel = new Set(baseSel);
       for (const id of nodeEls.keys()) {
+        if (inDock(id) !== (ctx === 'dock')) continue;   // marquee stays in its window
         const g = nodeGeom(id);
         if (!g) continue;
         // frames span whole regions — mere overlap would grab them (and drag
@@ -2984,7 +3253,7 @@
     const onUp = (ev) => {
       if (ev.pointerId !== pid) return;
       selectionBox.classList.add('hidden');
-      viewport.classList.remove('selecting');
+      vpEl.classList.remove('selecting');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -3012,6 +3281,48 @@
     if (e.button !== 0 || spaceHeld) return;
     startBoxSelect(e);
   });
+
+  // ── The docked panel is a second window: same gesture grammar, its own
+  //    viewport. Handlers mirror the canvas ones with ctx:'dock'. ──
+  const dockEmpty = (t) => t === dockViewport || t === dockWorld || t === dockSvg;
+  dockViewport.addEventListener('pointerdown', (e) => {
+    if (spaceHeld && e.button === 0) { e.preventDefault(); e.stopPropagation(); startPan(e, { ctx: 'dock' }); }
+  }, true);
+  dockViewport.addEventListener('pointerdown', (e) => {
+    if (!dockEmpty(e.target)) return;
+    if (e.button === 1) { e.preventDefault(); startPan(e, { ctx: 'dock' }); return; }
+    if (e.pointerType === 'touch') { startPan(e, { ctx: 'dock', clearOnTap: true }); return; }
+    if (e.button !== 0 || spaceHeld) return;
+    startBoxSelect(e, { ctx: 'dock' });
+  });
+  let dockWheelRAF = 0;
+  dockViewport.addEventListener('wheel', (e) => {
+    if (!dock) return;
+    e.preventDefault();
+    exitInteract();
+    if (e.ctrlKey) {   // ctrl+scroll / trackpad pinch zooms about the cursor
+      const zoom = dock.viewport.zoom;
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * Math.exp(-e.deltaY * ZOOM_SPEED)));
+      if (next === zoom) return;
+      const w = ctxToWorld('dock', e.clientX, e.clientY);
+      const o = ctxOrigin('dock');
+      dock.viewport.zoom = next;
+      dock.viewport.x = (e.clientX - o.x) - w.x * next;
+      dock.viewport.y = (e.clientY - o.y) - w.y * next;
+      applyDockViewport();
+      commit({ viewportOnly: true });
+      return;
+    }
+    dock.viewport.x -= e.deltaX;
+    dock.viewport.y -= e.deltaY;
+    if (!dockWheelRAF) {
+      dockWheelRAF = requestAnimationFrame(() => {
+        dockWheelRAF = 0;
+        applyDockViewport();
+        commit({ viewportOnly: true });
+      });
+    }
+  }, { passive: false });
 
   // ════════════════════════════════════════════════════════
   //  TOUCH GESTURES — one finger pans the canvas or drags a
@@ -3041,11 +3352,12 @@
     clearTimeout(longPress.timer);
     longPress = null;
   }
-  function scheduleLongPress(e) {
+  function scheduleLongPress(e, ctx) {
     cancelLongPress();
     longPress = {
-      id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target,
-      onCanvas: e.target === viewport || e.target === world || e.target === svg,
+      id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target, ctx,
+      onCanvas: e.target === viewport || e.target === world || e.target === svg ||
+                e.target === dockViewport || e.target === dockWorld || e.target === dockSvg,
       timer: setTimeout(fireLongPress, LONG_PRESS_MS),
     };
   }
@@ -3059,21 +3371,21 @@
       { bubbles: true, cancelable: true, clientX: lp.x, clientY: lp.y }));
     // Empty canvas: hold-then-drag draws the marquee (the zero-size box that
     // appears under the finger is the cue), hold-then-release opens the menu.
-    if (lp.onCanvas) startBoxSelect({ clientX: lp.x, clientY: lp.y, pointerId: lp.id, shiftKey: false }, { onTap: openMenu });
+    if (lp.onCanvas) startBoxSelect({ clientX: lp.x, clientY: lp.y, pointerId: lp.id, shiftKey: false }, { onTap: openMenu, ctx: lp.ctx });
     else openMenu();
   }
 
-  function startPinch() {
+  function startPinch(ctx) {
     cancelLongPress();
     exitInteract();
     const [a, b] = [...touchPts.keys()];
     const pa = touchPts.get(a), pb = touchPts.get(b);
     const m0 = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
     pinch = {
-      a, b,
+      a, b, ctx,
       d0: Math.max(30, Math.hypot(pa.x - pb.x, pa.y - pb.y)),   // floor: adjacent fingers would explode the ratio
-      z0: board.viewport.zoom,
-      w0: toWorld(m0.x, m0.y),
+      z0: ctxViewport(ctx).zoom,
+      w0: ctxToWorld(ctx, m0.x, m0.y),
     };
     claimedTouches.add(a).add(b);
   }
@@ -3081,30 +3393,35 @@
     const pa = touchPts.get(pinch.a), pb = touchPts.get(pinch.b);
     const m = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
     const d = Math.max(30, Math.hypot(pa.x - pb.x, pa.y - pb.y));
+    const vp = ctxViewport(pinch.ctx);
+    const o = ctxOrigin(pinch.ctx);
     const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinch.z0 * (d / pinch.d0)));
     // Anchor from the START of the pinch: the world point that was under the
     // fingers' midpoint stays under the live midpoint, so pan and zoom fall
     // out of one equation and never drift apart across events.
-    if (next === board.viewport.zoom) markPanActive();
-    else endPanLayer();             // never composite while scaling — keep text crisp
-    board.viewport.zoom = next;
-    board.viewport.x = m.x - pinch.w0.x * next;
-    board.viewport.y = m.y - pinch.w0.y * next;
-    applyViewport();
+    if (pinch.ctx === 'main') {
+      if (next === vp.zoom) markPanActive();
+      else endPanLayer();           // never composite while scaling — keep text crisp
+    }
+    vp.zoom = next;
+    vp.x = (m.x - o.x) - pinch.w0.x * next;
+    vp.y = (m.y - o.y) - pinch.w0.y * next;
+    applyCtxViewport(pinch.ctx);
     commit({ viewportOnly: true });
   }
   function endPinch(liftedId) {
     const rem = liftedId === pinch.a ? pinch.b : pinch.a;
+    const ctx = pinch.ctx;
     pinch = null;
     const p = touchPts.get(rem);
     // the surviving finger keeps panning from where it stands
-    if (p) startPan({ clientX: p.x, clientY: p.y, pointerId: rem, button: 0 });
+    if (p) startPan({ clientX: p.x, clientY: p.y, pointerId: rem, button: 0 }, { ctx });
   }
 
-  viewport.addEventListener('pointerdown', (e) => {
+  const onTouchViewportDown = (ctx) => (e) => {
     if (e.pointerType !== 'touch') return;
     touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (touchPts.size === 1) { scheduleLongPress(e); return; }
+    if (touchPts.size === 1) { scheduleLongPress(e, ctx); return; }
     // fingers past the first belong to the view, never to nodes
     cancelLongPress();
     e.preventDefault();
@@ -3112,11 +3429,13 @@
     if (touchPts.size === 2) {
       const other = [...touchPts.keys()].find((id) => id !== e.pointerId);
       abortTouchGesture(other);     // whatever finger 1 was doing, the view takes over
-      startPinch();
+      startPinch(ctx);              // the window under the LAST finger owns the pinch
     } else {
       claimedTouches.add(e.pointerId);   // 3rd+ finger: swallowed
     }
-  }, true);
+  };
+  viewport.addEventListener('pointerdown', onTouchViewportDown('main'), true);
+  dockViewport.addEventListener('pointerdown', onTouchViewportDown('dock'), true);
 
   window.addEventListener('pointermove', (e) => {
     if (e.pointerType !== 'touch') return;
@@ -3221,20 +3540,22 @@
   // judge "was the user editing?" from activeElement after the fact — record it
   // at pointerdown, before focus moves.
   let ctxPreActive = null;
-  viewport.addEventListener('pointerdown', (e) => {
+  const recordCtxPreActive = (e) => {
     // touch too: a long-press may become a contextmenu, and the same
     // "was the user editing?" question applies to it
     if (e.button === 2 || e.pointerType === 'touch') ctxPreActive = document.activeElement;
-  }, true);
+  };
+  viewport.addEventListener('pointerdown', recordCtxPreActive, true);
+  dockPanel.addEventListener('pointerdown', recordCtxPreActive, true);
 
-  viewport.addEventListener('contextmenu', (e) => {
+  const onCanvasContextMenu = (e) => {
     // if the user was already editing text (or is inside an interactive frame),
     // leave the native menu alone for paste/spellcheck
     const pa = ctxPreActive;
     if (pa && (pa.tagName === 'IFRAME' ||
         ((pa.isContentEditable || pa.tagName === 'INPUT' || pa.tagName === 'TEXTAREA') && pa.contains(e.target)))) return;
     e.preventDefault();
-    const world = toWorld(e.clientX, e.clientY);
+    const world = pointerWorld(e);   // "here" respects whichever window was clicked
     const nodeEl = e.target.closest && e.target.closest('.node');
     const connG = e.target.closest && e.target.closest('.conn');
     const items = [];
@@ -3267,6 +3588,9 @@
           },
         });
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.frame-name')) });
+        items.push(dock && dock.frameId === id
+          ? { label: 'Undock from side panel', action: () => undockFrame() }
+          : { label: 'Dock to side panel', action: () => dockFrame(id) });
         items.push('sep');
       }
       if (isButton) {
@@ -3308,7 +3632,9 @@
       items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
     }
     openContextMenu(e.clientX, e.clientY, items);
-  });
+  };
+  viewport.addEventListener('contextmenu', onCanvasContextMenu);
+  dockPanel.addEventListener('contextmenu', onCanvasContextMenu);
 
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Space') return;
@@ -3370,7 +3696,9 @@
     const tb = document.getElementById('toolbar').getBoundingClientRect();
     const top = tb.bottom + 12;
     const bottomChrome = 52;          // status strip / zoom widget
-    return { x: 0, y: top, w: innerWidth, h: Math.max(50, innerHeight - top - bottomChrome) };
+    // the docked panel covers the right side — frame within what's left
+    const dockW = dock && !dock.minimized ? dockPanel.getBoundingClientRect().width : 0;
+    return { x: 0, y: top, w: Math.max(200, innerWidth - dockW), h: Math.max(50, innerHeight - top - bottomChrome) };
   }
 
   // A node's full on-screen footprint in world units, INCLUDING children that
@@ -3401,6 +3729,25 @@
   // centered. With the 1440px logical-width iframes, this reads as a crisp
   // full-window view of the embed.
   function frameNode(id) {
+    // navigation into the docked window pans the PANEL, not the canvas
+    if (dock && id === dock.frameId) { setDockMinimized(false); dockFitRegion(); return; }
+    if (inDock(id)) {
+      setDockMinimized(false);
+      const g = nodeGeom(id);
+      const r = dockViewport.getBoundingClientRect();
+      if (!g || !r.width) return;
+      const pad = 24;
+      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+        Math.min(r.width / (g.w + pad * 2), r.height / (g.h + pad * 2))));
+      dock.viewport = {
+        x: (r.width - g.w * zoom) / 2 - g.x * zoom,
+        y: (r.height - g.h * zoom) / 2 - g.y * zoom,
+        zoom,
+      };
+      applyDockViewport();
+      commit({ viewportOnly: true });
+      return;
+    }
     ensureNode(id);        // deep links / jumps can target a pending node
     const g = nodeVisualGeom(id);
     if (!g) return;
@@ -3476,7 +3823,8 @@
   function fitToContent() {
     exitInteract();
     hydrateAll();          // framing "everything" needs every node's geometry
-    const ids = [...nodeEls.keys()];
+    // docked-window contents are framed by their panel, not the canvas
+    const ids = [...nodeEls.keys()].filter((id) => !inDock(id));
     if (!ids.length) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const id of ids) {
@@ -5198,10 +5546,15 @@
     currentBoardId = id;
     localStorage.setItem(CURRENT_KEY, id);
     board = loadBoardContent(id);
+    // restore this device's docked-frame window (a view preference, like the
+    // viewport) BEFORE rendering, so members render straight into the panel
+    const ds = loadDockState(id);
+    dock = ds && board.cards[ds.frameId] && board.cards[ds.frameId].kind === 'frame' ? ds : null;
     undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
     clearSelection(); interactiveId = null;
     reconcileToBoard();
+    applyDockViewport();
     lastContent = contentSnapshot();
     updateHistoryButtons();
     setHashBoard(id);
@@ -5359,6 +5712,11 @@
   currentBoardId = pickInitialBoardId(library);
   localStorage.setItem(CURRENT_KEY, currentBoardId);
   board = loadBoardContent(currentBoardId);
+  {
+    // docked-frame window: restore before first render (see loadAndShow)
+    const ds = loadDockState(currentBoardId);
+    dock = ds && board.cards[ds.frameId] && board.cards[ds.frameId].kind === 'frame' ? ds : null;
+  }
   renderAll();
   updateEmptyState();
   lastContent = contentSnapshot();   // baseline for undo history
