@@ -79,7 +79,8 @@ visibly misaligns the row.
 ### Pinned nodes: chrome, not canvas
 
 A record with `pinned` (epoch ms — doubles as the dock's sort order) renders
-as a chip in `#pin-dock` beside the tool palette instead of on the canvas.
+as a chip in `#pin-dock`, hugging the top of the tool palette, instead of on
+the canvas.
 The field is shared content (syncs/merges like any field), so pins follow
 the board to every device. Invariants:
 
@@ -250,6 +251,16 @@ both sides = conflict, **local wins**, counted and surfaced ("merged, N kept
 this device" + notice naming the nodes); delete-vs-edit keeps the edit;
 both-delete stays deleted. Exposed as `window.__wb_mergeBoards` so tests
 exercise it without OAuth — keep it pure.
+
+Each conflict also carries `alt` — the record as the OTHER side would have
+resolved it (swap the args to `mergeRecord` to flip every tie), undefined
+meaning "the alternative is the delete" — plus `keptSide`. The notice's
+Review button opens the merge-review panel (`openMergeReview`, test hook
+`window.__wb_openMergeReview`), which snapshots kept-vs-alt per record and
+flips them via plain content commits: local-wins stays the default, but it
+is REVERSIBLE (and undoable) after the fact. There are still no per-record
+timestamps — "which is newer" is unknowable across devices; the panel shows
+both versions instead of guessing.
 
 ### Known limitations (accepted, not bugs)
 

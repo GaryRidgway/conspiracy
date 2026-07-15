@@ -519,6 +519,77 @@ body.space-pan #viewport.panning,
 }
 #conflict-notice .notice-dismiss:hover { color: var(--text); }
 
+/* ── Merge review panel — flip conflicted records between the two devices'
+   versions. Non-modal: docked bottom-center (where its notice was) so the
+   board stays visible and rows can fly to the node under review. ── */
+#merge-review {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  z-index: 56;
+  width: min(92vw, 560px);
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface2);
+  border: 1px solid var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+#merge-review.hidden { display: none; }
+#merge-review .mr-head {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.55rem 0.7rem 0.35rem 0.9rem;
+}
+#merge-review .mr-title { flex: 1; font-weight: 650; }
+#merge-review .mr-all { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
+#merge-review .notice-dismiss {
+  flex: none;
+  font-size: 1.1rem; line-height: 1;
+  color: var(--text-3); background: transparent;
+  border: none; cursor: pointer; padding: 0 0.2rem;
+}
+#merge-review .notice-dismiss:hover { color: var(--text); }
+#merge-review .mr-note { padding: 0 0.9rem 0.45rem; color: var(--text-2); line-height: 1.35; }
+#merge-review .mr-list { overflow-y: auto; padding: 0 0.5rem 0.5rem; }
+#merge-review .mr-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-top: 1px solid var(--border);
+}
+#merge-review .mr-name {
+  flex: 1; min-width: 0;
+  text-align: left;
+  font: inherit; color: var(--text);
+  background: transparent; border: none;
+  padding: 0.2rem 0.3rem; border-radius: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+#merge-review .mr-name:hover:not(:disabled) { background: var(--surface); color: var(--accent); }
+#merge-review .mr-name:disabled { cursor: default; color: var(--text-2); }
+#merge-review .mr-choice {
+  flex: none;
+  font: inherit; font-size: 0.76rem;
+  color: var(--text-2);
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  cursor: pointer;
+}
+#merge-review .mr-choice:hover { border-color: var(--accent-soft); color: var(--text); }
+#merge-review .mr-choice.active {
+  color: #1a1205;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+
 /* ── Right-click context menu ── */
 #context-menu {
   position: fixed;
@@ -664,13 +735,14 @@ body.space-pan #viewport.panning,
   border-color: rgba(255, 138, 122, 0.5);
 }
 
-/* ── Pin dock — pinned buttons riding the viewport beside the palette.
-   Absolute inside #tools (like #color-filter) so it tracks the palette
-   without disturbing its centering. ── */
+/* ── Pin dock — pinned buttons riding the viewport, hugging the top of the
+   palette (the mirror of #color-filter below it). Absolute inside #tools so
+   it tracks the palette without disturbing its centering; bottom-anchored,
+   so it grows upward as pins are added. ── */
 #pin-dock {
   position: absolute;
-  left: calc(100% + 10px);
-  top: 0;
+  bottom: calc(100% + 10px);
+  left: 0;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;

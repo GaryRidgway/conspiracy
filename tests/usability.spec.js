@@ -1128,6 +1128,43 @@ test('a button docks to the right of a frame title and moves with the frame', as
   expect(bp2.y - bp.y).toBe(50);
 });
 
+// Regression: at boot, layoutAttachments must run AFTER the world transform
+// is applied — frame rows are measured from the tab's client rect through
+// toWorld (the model viewport). With a saved pan, measuring under the default
+// transform wrote the docked button to garbage coordinates, invisible until
+// the next layout pass ("button missing until the frame is dragged").
+test('a frame-docked button lays out correctly on load with a panned viewport', async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');
+  const tab = page.locator('.frame-node .frame-tab');
+  const btn = await addFreeButton(page);
+  const tb = await tab.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: tb.x + tb.width + 20 + b0.width / 2, y: tb.y + tb.height / 2 });
+  await expect(btn).toHaveClass(/attached-title/);
+
+  // leave the viewport somewhere that is NOT the boot default…
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 3; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: -120, deltaY: -80, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => page.evaluate(() => {
+    const k = Object.keys(localStorage).find((k) => k.startsWith('whiteboard:viewport:'));
+    return k ? JSON.parse(localStorage.getItem(k)).x : 0;
+  })).not.toBe(0);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+
+  // …and reload: the button must sit flush on the tab with no interaction
+  await page.reload();
+  await expect(page.locator('.btn-node')).toHaveClass(/attached-title/);
+  await expect.poll(() => page.evaluate(() => {
+    const b = document.querySelector('.btn-node').getBoundingClientRect();
+    const t = document.querySelector('.frame-tab').getBoundingClientRect();
+    return Math.max(Math.abs(b.left - (t.right - 1)), Math.abs(b.top - t.top));
+  })).toBeLessThan(1);
+});
+
 // Up to three buttons form a full-width tab tray under a card; a fourth
 // won't dock. Chains: a button dropped on a free button's right edge forms
 // a menu row that moves with its root; dropping on a DOCKED button appends

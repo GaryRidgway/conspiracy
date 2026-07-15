@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════
 //  PIN DOCK
-//  Right-click a button → "Pin beside toolbar": the button leaves the canvas
+//  Right-click a button → "Pin to toolbar": the button leaves the canvas
 //  and becomes a chip in #pin-dock, riding the viewport for quick navigation.
 //  `pinned` is shared board content (it syncs), the record's x/y is never
 //  touched while pinned, and a kind that falls off PINNABLE_KINDS self-heals
@@ -71,7 +71,7 @@ test('pin a button: it leaves the canvas, the chip navigates, and it all survive
   await expect(modal).toBeHidden();
 
   await page.locator('.btn-node').click({ button: 'right' });
-  await page.locator('#context-menu .ctx-item', { hasText: 'Pin beside toolbar' }).click();
+  await page.locator('#context-menu .ctx-item', { hasText: 'Pin to toolbar' }).click();
 
   const chip = page.locator('#pin-dock .pin-chip');
   await expect(page.locator('.btn-node:not(.pin-chip)')).toHaveCount(0);   // gone from the canvas
@@ -119,7 +119,7 @@ test('arrows to a pinned button hide, and return on unpin', async ({ page }) => 
   await expect.poll(() => line.evaluate((el) => el.getAttribute('d') || '')).toMatch(/^M/);
 
   await page.locator('.btn-node').click({ button: 'right' });
-  await page.locator('#context-menu .ctx-item', { hasText: 'Pin beside toolbar' }).click();
+  await page.locator('#context-menu .ctx-item', { hasText: 'Pin to toolbar' }).click();
   await expect(page.locator('#connections .conn')).toBeHidden();   // endpoint left the canvas
 
   await page.locator('#pin-dock .pin-chip').click({ button: 'right' });
@@ -157,7 +157,7 @@ test('a chip is a real button: rename, color, and duplicate from its context men
   await page.click('#addButton');
   await page.locator('#button-link-modal .np-item').first().click();
   await page.locator('.btn-node').click({ button: 'right' });
-  await page.locator('#context-menu .ctx-item', { hasText: 'Pin beside toolbar' }).click();
+  await page.locator('#context-menu .ctx-item', { hasText: 'Pin to toolbar' }).click();
 
   const chip = page.locator('#pin-dock .pin-chip');
   await expect(chip).toHaveCount(1);

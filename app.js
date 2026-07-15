@@ -78,9 +78,13 @@
     return [merged, conflict];
   }
   // Merge one keyed collection (cards | iframes | connections).
+  // Each conflict carries `alt` — the record as it would read with the OTHER
+  // side winning (undefined = the alternative is the delete) — so the merge
+  // review panel can flip a record after the fact instead of the losing
+  // version being discarded here. keptSide names whose edit survived.
   function mergeCollection(base, local, remote) {
     const out = {};
-    const conflictIds = [];
+    const conflicts = [];
     const ids = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
     for (const id of ids) {
       const b = base[id], l = local[id], r = remote[id];
@@ -91,12 +95,17 @@
       if (!lChanged && rChanged)  { if (r !== undefined) out[id] = r; continue; }   // only the other side
       // both sides changed this id:
       if (l === undefined && r === undefined) continue;                 // both deleted → gone
-      if (l === undefined || r === undefined) { out[id] = l || r; conflictIds.push(id); continue; } // delete vs edit → keep the edit
+      if (l === undefined || r === undefined) {                         // delete vs edit → keep the edit
+        out[id] = l || r;
+        conflicts.push({ id, alt: undefined, keptSide: l === undefined ? 'remote' : 'local' });
+        continue;
+      }
       const [merged, hadConflict] = mergeRecord(b, l, r);
       out[id] = merged;
-      if (hadConflict) conflictIds.push(id);
+      // swapping the sides makes mergeRecord resolve every tie the other way
+      if (hadConflict) conflicts.push({ id, alt: mergeRecord(b, r, l)[0], keptSide: 'local' });
     }
-    return { out, conflictIds };
+    return { out, conflicts };
   }
   // Three-way merge of whole boards. Keeps THIS device's viewport, bumps
   // version. Returns { merged, conflicts }.
@@ -111,7 +120,7 @@
     for (const coll of ['cards', 'iframes', 'connections']) {
       const res = mergeCollection(base[coll] || {}, local[coll] || {}, remote[coll] || {});
       merged[coll] = res.out;
-      for (const id of res.conflictIds) conflictItems.push({ coll, id });
+      for (const c of res.conflicts) conflictItems.push({ coll, id: c.id, alt: c.alt, keptSide: c.keptSide });
     }
     const normalized = normalizeBoard(merged);
     // label each conflicted item from the merged content, for the notice
@@ -2833,8 +2842,12 @@
     // connections after nodes exist so geometry is available; entries are
     // cheap and pathBetween skips pending endpoints until they hydrate
     for (const id of Object.keys(board.connections)) renderConnection(id);
-    layoutAttachments();                         // classes + any layout drift
+    // transform FIRST: layoutAttachments positions frame-docked buttons from
+    // the tab's client rect via toWorld (model viewport) — measuring under a
+    // stale DOM transform writes them to garbage coordinates until the next
+    // layout pass (the "docked button missing until the frame moves" bug)
     applyViewport();
+    layoutAttachments();                         // classes + any layout drift
     refreshColorFilter();
     renderPinDock();
     queueHydration();
@@ -2872,10 +2885,10 @@
       else pendingNodes.add(id);
     }
     for (const id of Object.keys(board.connections)) renderConnection(id);
+    applyViewport();                 // before layoutAttachments — see renderAll
     layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
-    applyViewport();
     updateEmptyState();
     refreshColorFilter();
     renderPinDock();
@@ -3263,7 +3276,7 @@
       // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for
       // more node types with no further menu work
       if (gn0 && gn0.type === 'card' && PINNABLE_KINDS.has(gn0.data.kind) && !gn0.data.pinned) {
-        items.push({ label: 'Pin beside toolbar', action: () => pinNode(id) });
+        items.push({ label: 'Pin to toolbar', action: () => pinNode(id) });
         items.push('sep');
       }
       items.push({ label: many ? 'Duplicate selection' : 'Duplicate', hint: '⌘D', action: duplicateSelection });
@@ -4825,7 +4838,7 @@
   conflictNotice.setAttribute('role', 'status');   // screen readers announce the merge notice
   conflictNotice.innerHTML =
     '<span class="notice-text"></span>' +
-    '<button class="notice-show" type="button">Show</button>' +
+    '<button class="notice-show" type="button">Review</button>' +
     '<button class="notice-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>';
   document.body.appendChild(conflictNotice);
   const hideConflictNotice = () => conflictNotice.classList.add('hidden');
@@ -4837,14 +4850,116 @@
     const what = named.length ? shown : items.length + ' item(s)';
     conflictNotice.querySelector('.notice-text').textContent =
       'Merged with Drive — kept this device’s edits to ' + what + ' (the other device changed the same thing).';
-    // "Show" selects the still-present conflicted nodes and centers the first.
-    const ids = items.map((i) => i.id).filter((id) => nodeEls.has(id));
-    const showBtn = conflictNotice.querySelector('.notice-show');
-    showBtn.classList.toggle('hidden', !ids.length);
-    showBtn.onclick = () => { setSelection(ids); if (ids[0]) frameNode(ids[0]); hideConflictNotice(); };
+    conflictNotice.querySelector('.notice-show').onclick = () => {
+      hideConflictNotice();
+      openMergeReview(items);
+    };
     conflictNotice.classList.remove('hidden');
     clearTimeout(conflictNoticeTimer);
     conflictNoticeTimer = setTimeout(hideConflictNotice, 15000);
+  }
+
+  // ── Merge review: the notice's "Review" opens this panel. The merge keeps
+  // this device's version on a true conflict, but it also computed the other
+  // side's version (conflictItems[].alt) — holding both here is what makes
+  // the local-wins default REVERSIBLE. Non-modal on purpose: rows fly to the
+  // node so the two versions can be judged in place.
+  const mergeReview = document.createElement('div');
+  mergeReview.id = 'merge-review';
+  mergeReview.className = 'hidden';
+  mergeReview.setAttribute('role', 'dialog');
+  mergeReview.setAttribute('aria-label', 'Review merged changes');
+  document.body.appendChild(mergeReview);
+  let mergeReviewItems = [];
+  let mergeReviewBoard = null;
+
+  function closeMergeReview() { mergeReview.classList.add('hidden'); }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || mergeReview.classList.contains('hidden')) return;
+    e.stopPropagation();                 // one layer per Escape
+    closeMergeReview();
+  }, true);
+
+  function openMergeReview(items) {
+    mergeReviewBoard = currentBoardId;
+    mergeReviewItems = items.map((it) => ({
+      ...it,
+      // snapshot what the merge kept NOW (the live record), so a flip to the
+      // other side can be flipped back
+      kept: board[it.coll][it.id] !== undefined
+        ? JSON.parse(JSON.stringify(board[it.coll][it.id])) : undefined,
+      alt: it.alt !== undefined ? JSON.parse(JSON.stringify(it.alt)) : undefined,
+      choice: 'kept',
+    }));
+    renderMergeReview();
+    mergeReview.classList.remove('hidden');
+  }
+  // Test hook: the panel's logic is exercised without a live Drive round-trip
+  // (mergeBoards being pure covers the data; this covers the apply path).
+  window.__wb_openMergeReview = openMergeReview;
+
+  function setMergeChoice(item, choice) {
+    item.choice = choice;
+    const v = choice === 'other' ? item.alt : item.kept;
+    if (v === undefined) delete board[item.coll][item.id];
+    else board[item.coll][item.id] = JSON.parse(JSON.stringify(v));
+  }
+  function applyMergeChoices(changes) {   // [{item, choice}] → one undo step
+    if (mergeReviewBoard !== currentBoardId) { closeMergeReview(); return; }
+    for (const { item, choice } of changes) setMergeChoice(item, choice);
+    reconcileToBoard();
+    commit();
+    renderMergeReview();
+  }
+
+  function renderMergeReview() {
+    mergeReview.innerHTML =
+      '<div class="mr-head"><span class="mr-title">Merged changes</span>' +
+      '<button class="mr-all btn" type="button">Use other device for all</button>' +
+      '<button class="notice-dismiss" type="button" title="Close" aria-label="Close">×</button></div>' +
+      '<div class="mr-note">Both devices edited these. Flip any of them — either way stays undoable.</div>' +
+      '<div class="mr-list"></div>';
+    mergeReview.querySelector('.notice-dismiss').addEventListener('click', closeMergeReview);
+    mergeReview.querySelector('.mr-all').addEventListener('click', () =>
+      applyMergeChoices(mergeReviewItems.map((item) => ({ item, choice: 'other' }))));
+    const list = mergeReview.querySelector('.mr-list');
+    for (const item of mergeReviewItems) {
+      const row = document.createElement('div');
+      row.className = 'mr-row';
+      const name = document.createElement('button');
+      name.type = 'button';
+      name.className = 'mr-name';
+      name.textContent = item.label;
+      if (item.coll === 'connections') name.disabled = true;
+      else {
+        name.title = 'Show on the board';
+        name.addEventListener('click', () => {
+          if (getNode(item.id)) { frameNode(item.id); selectNode(item.id); flashNode(item.id); }
+        });
+      }
+      const mk = (label, choice, title) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'mr-choice' + (item.choice === choice ? ' active' : '');
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('click', () => {
+          if (item.choice !== choice) applyMergeChoices([{ item, choice }]);
+        });
+        return b;
+      };
+      row.appendChild(name);
+      // delete-vs-edit: the kept side is the EDIT (possibly the other
+      // device's); the alternative is honoring the delete
+      row.appendChild(mk(
+        item.keptSide === 'remote' ? 'Other device’s edit' : 'This device',
+        'kept', 'The version the merge kept'));
+      row.appendChild(mk(
+        item.alt === undefined ? 'Delete' : 'Other device',
+        'other',
+        item.alt === undefined ? 'Apply the delete instead' : 'Switch to the other device’s version'));
+      list.appendChild(row);
+    }
   }
 
   const conflictModal = document.getElementById('conflict-modal');
