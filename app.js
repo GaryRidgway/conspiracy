@@ -939,8 +939,10 @@
     labelEl.focus();
     document.execCommand('selectAll', false);
   }
-  function makeRenamable(labelEl, { onInput, onCommit, onEnter } = {}) {
-    labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); beginRename(labelEl); });
+  function makeRenamable(labelEl, { onInput, onCommit, onEnter, viaDblclick = true } = {}) {
+    // pin-dock chips opt out: their single click already acts (navigates), so
+    // renaming arms only from the context menu
+    if (viaDblclick) labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); beginRename(labelEl); });
     labelEl.addEventListener('input', () => { if (onInput) onInput(labelEl.textContent); });
     labelEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); labelEl.blur(); if (onEnter) onEnter(); }
@@ -999,7 +1001,9 @@
       redrawConnectionsFor(id);          // connections fade to the new color
       changed = true;
     }
-    if (changed) commit();
+    if (!changed) return;
+    if (ids.some((id) => isPinned(id))) renderPinDock();   // chips tint too
+    commit();
   }
 
   // ════════════════════════════════════════════════════════
@@ -1573,31 +1577,64 @@
     pinDock.innerHTML = '';
     for (const id of ids) {
       const d = board.cards[id];
+      // same skin as the canvas button — identical markup and classes, so
+      // color coding, the icon disc, hover/press all come from .btn-node CSS.
+      // Only the behaviors differ: no ports, no drag, chrome-local events.
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'pin-chip';
+      chip.className = 'btn-node pin-chip';
       chip.dataset.id = id;
       const a = d.action;
-      chip.innerHTML = '<span class="icon"></span><span class="pin-chip-label"></span>';
+      chip.innerHTML = '<span class="btn-disc"><span class="icon"></span></span><span class="btn-node-label" spellcheck="false"></span>';
       chip.querySelector('.icon').className = 'icon ' +
         (!a || !a.target ? 'icon-add' : a.type === 'url' ? 'icon-link' : 'icon-center_focus_strong');
-      chip.querySelector('.pin-chip-label').textContent = d.title || 'Button';
+      chip.querySelector('.btn-node-label').textContent = d.title || 'Button';
       chip.title = !a || !a.target ? 'Click to set this button’s link'
         : a.type === 'url' ? a.target : 'Go to: ' + nodeTitle(a.target);
-      chip.addEventListener('click', () => runButtonAction(id));
+      applyNodeColor(chip, d.color);
+      const labelEl = chip.querySelector('.btn-node-label');
+      makeRenamable(labelEl, {
+        viaDblclick: false,
+        onCommit: (text) => {
+          const c = board.cards[id];
+          if (!c) return;
+          c.title = text;
+          commit();
+          renderPinDock();          // re-derive label/tooltip (empty → 'Button')
+        },
+      });
+      chip.addEventListener('click', () => { if (!labelEl.isContentEditable) runButtonAction(id); });
       chip.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const configured = d.action && d.action.target;
         openContextMenu(e.clientX, e.clientY, [
-          { label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) },
+          ...buttonMenuItems(id, labelEl),
           { label: 'Unpin', action: () => unpinNode(id) },
+          'sep',
+          { label: 'Duplicate', action: () => duplicateNodes([id]) },
+          { label: 'Copy', action: () => copyNodes([id]) },
+          { label: 'Cut', action: () => { copyNodes([id]); deleteNode(id); renderPinDock(); } },
+          'sep',
+          { swatches: true, current: d.color || null, onPick: (key) => setNodesColor([id], key) },
           'sep',
           { label: 'Delete button', danger: true, action: () => { deleteNode(id); renderPinDock(); } },
         ]);
       });
       pinDock.appendChild(chip);
     }
+  }
+  // Everything a button offers wherever it lives — one builder shared by the
+  // canvas context menu and the chip menu, so the two can't drift.
+  // labelEl: where Rename edits in place.
+  function buttonMenuItems(id, labelEl) {
+    const d = board.cards[id];
+    const configured = d.action && d.action.target;
+    const items = [];
+    items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
+    items.push({ label: 'Rename', action: () => beginRename(labelEl) });
+    if (configured) items.push({ label: 'Remove link', action: () => setButtonAction(id, null) });
+    if (d.attachedTo) items.push({ label: 'Detach', action: () => detachButton(id) });
+    return items;
   }
   // The canvas touch layer stops at the viewport's edge, so the dock wires its
   // own long-press → contextmenu (with the same click squelch on fire).
@@ -2465,7 +2502,13 @@
   // Create a node from a plain data object (a deep copy of another node's data);
   // returns the new id. Shared by duplicate and paste.
   function addNodeFromData(type, data) {
-    if (type === 'card') { const nid = newId('c_'); board.cards[nid] = data; renderCard(nid); return nid; }
+    if (type === 'card') {
+      const nid = newId('c_');
+      board.cards[nid] = data;
+      // a copy of a pinned button is born pinned: dock chip, not canvas node
+      if (isPinned(nid)) renderPinDock(); else renderCard(nid);
+      return nid;
+    }
     const nid = newId('f_'); board.iframes[nid] = data; renderIframe(nid); return nid;
   }
   // Re-create connections from {from,to} pairs, remapping endpoints through
@@ -2483,8 +2526,7 @@
 
   // Duplicate the current selection (nodes + connections between them),
   // offset slightly, and select the copies. One undo step.
-  function duplicateSelection() {
-    const ids = [...selectedNodes];
+  function duplicateNodes(ids) {
     if (!ids.length) return;
     const OFF = 24;
     const idMap = {};
@@ -2493,14 +2535,16 @@
       if (!n) continue;
       const data = JSON.parse(JSON.stringify(n.data));
       data.x += OFF; data.y += OFF;
+      if (data.pinned) data.pinned = Date.now();   // the copy pins after its source
       idMap[oldId] = addNodeFromData(n.type, data);
     }
     remapConnections(Object.values(board.connections), idMap);
     remapAttachments(idMap);
-    setSelection(Object.values(idMap));
+    setSelection(Object.values(idMap));            // pinned copies drop out (no el)
     scheduleFrameEval();
     commit();
   }
+  const duplicateSelection = () => duplicateNodes([...selectedNodes]);
 
   function selectAllNodes() { hydrateAll(); setSelection([...nodeEls.keys()]); }
 
@@ -2537,8 +2581,7 @@
   let clipboard = null;
   let pasteCount = 0;
 
-  function copySelection() {
-    const ids = [...selectedNodes];
+  function copyNodes(ids) {
     if (!ids.length) return;
     const nodes = [];
     for (const id of ids) {
@@ -2552,6 +2595,7 @@
     clipboard = { nodes, conns };
     pasteCount = 0;
   }
+  const copySelection = () => copyNodes([...selectedNodes]);
 
   function pasteClipboard(anchor) {
     if (!clipboard || !clipboard.nodes.length) return;
@@ -2569,6 +2613,7 @@
     for (const item of clipboard.nodes) {
       const data = JSON.parse(JSON.stringify(item.data));
       data.x += dx; data.y += dy;
+      if (data.pinned) data.pinned = Date.now();   // pasted pins join the dock's tail
       idMap[item.oldId] = addNodeFromData(item.type, data);
     }
     remapConnections(clipboard.conns, idMap);
@@ -3212,11 +3257,7 @@
         items.push('sep');
       }
       if (isButton) {
-        const configured = gn0.data.action && gn0.data.action.target;
-        items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
-        items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.btn-node-label')) });
-        if (configured) items.push({ label: 'Remove link', action: () => setButtonAction(id, null) });
-        if (gn0.data.attachedTo) items.push({ label: 'Detach', action: () => detachButton(id) });
+        items.push(...buttonMenuItems(id, nodeEl.querySelector('.btn-node-label')));
         items.push('sep');
       }
       // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for
@@ -3319,12 +3360,36 @@
     return { x: 0, y: top, w: innerWidth, h: Math.max(50, innerHeight - top - bottomChrome) };
   }
 
+  // A node's full on-screen footprint in world units, INCLUDING children that
+  // overflow its border box — a frame's title tab rides above the frame, and
+  // plain nodeGeom would let framing math tuck it under the top toolbar.
+  // Measured from live client rects (then mapped through toWorld), so it holds
+  // at any zoom. Invisible hover affordances (ports at opacity 0) are skipped
+  // so they don't pad every card.
+  function nodeVisualGeom(id) {
+    const el = nodeEls.get(id);
+    const g = nodeGeom(id);
+    if (!el || !g) return g;
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return g;
+    let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+    for (const child of el.children) {
+      const cr = child.getBoundingClientRect();
+      if (!cr.width || !cr.height) continue;
+      if (getComputedStyle(child).opacity === '0') continue;
+      left = Math.min(left, cr.left); top = Math.min(top, cr.top);
+      right = Math.max(right, cr.right); bottom = Math.max(bottom, cr.bottom);
+    }
+    const a = toWorld(left, top), b = toWorld(right, bottom);
+    return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+  }
+
   // Frame a single node: zoom the canvas so it (nearly) fills the visible area,
   // centered. With the 1440px logical-width iframes, this reads as a crisp
   // full-window view of the embed.
   function frameNode(id) {
     ensureNode(id);        // deep links / jumps can target a pending node
-    const g = nodeGeom(id);
+    const g = nodeVisualGeom(id);
     if (!g) return;
     const r = visibleRect();
     const pad = 24;

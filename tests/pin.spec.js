@@ -74,7 +74,7 @@ test('pin a button: it leaves the canvas, the chip navigates, and it all survive
   await page.locator('#context-menu .ctx-item', { hasText: 'Pin beside toolbar' }).click();
 
   const chip = page.locator('#pin-dock .pin-chip');
-  await expect(page.locator('.btn-node')).toHaveCount(0);   // gone from the canvas
+  await expect(page.locator('.btn-node:not(.pin-chip)')).toHaveCount(0);   // gone from the canvas
   await expect(chip).toHaveCount(1);
 
   // the chip is chrome: select-all must not include the pinned button
@@ -94,13 +94,13 @@ test('pin a button: it leaves the canvas, the chip navigates, and it all survive
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   await page.reload();
   await expect(page.locator('#pin-dock .pin-chip')).toHaveCount(1);
-  await expect(page.locator('.btn-node')).toHaveCount(0);
+  await expect(page.locator('.btn-node:not(.pin-chip)')).toHaveCount(0);
 
   // unpin via the chip's context menu: back onto the canvas, mid-view
   await page.locator('#pin-dock .pin-chip').click({ button: 'right' });
   await page.locator('#context-menu .ctx-item', { hasText: 'Unpin' }).click();
   await expect(page.locator('#pin-dock')).toBeHidden();
-  const btn = page.locator('.btn-node');
+  const btn = page.locator('.btn-node:not(.pin-chip)');
   await expect(btn).toHaveCount(1);
   expect(within(await btn.boundingBox(), vp.width, vp.height)).toBe(true);
 });
@@ -150,6 +150,63 @@ test('a pinned record whose kind is not pinnable heals: canvas at original x/y, 
     const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
     return b.cards.stale_pin.pinned === undefined;
   })).toBe(true);
+});
+
+test('a chip is a real button: rename, color, and duplicate from its context menu', async ({ page }) => {
+  await addCardAt(page, 450, 350);
+  await page.click('#addButton');
+  await page.locator('#button-link-modal .np-item').first().click();
+  await page.locator('.btn-node').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Pin beside toolbar' }).click();
+
+  const chip = page.locator('#pin-dock .pin-chip');
+  await expect(chip).toHaveCount(1);
+
+  // rename in place
+  await chip.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Rename' }).click();
+  await page.keyboard.type('Case files');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#pin-dock .pin-chip .btn-node-label')).toHaveText('Case files');
+
+  // color: the chip shares the canvas button's colored styling
+  await chip.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Green"]').click();
+  await expect(page.locator('#pin-dock .pin-chip')).toHaveClass(/colored/);
+
+  // duplicate: the copy is born pinned, after its source
+  await page.locator('#pin-dock .pin-chip').first().click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Duplicate' }).click();
+  await expect(page.locator('#pin-dock .pin-chip')).toHaveCount(2);
+  await expect(page.locator('.btn-node:not(.pin-chip)')).toHaveCount(0);   // nothing leaked to canvas
+
+  // all of it is board content
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.reload();
+  await expect(page.locator('#pin-dock .pin-chip')).toHaveCount(2);
+  await expect(page.locator('#pin-dock .pin-chip .btn-node-label').first()).toHaveText('Case files');
+  await expect(page.locator('#pin-dock .pin-chip').first()).toHaveClass(/colored/);
+});
+
+test('zoom-to-node keeps a frame\'s title tab clear of the top toolbar', async ({ page }) => {
+  // small frame → fit zoom ≈ 3×: the tab (which rides ABOVE the frame's box)
+  // used to land under the toolbar because framing measured the box alone
+  await addCardAt(page, 400, 300);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await seedBoard(page, `
+    b.cards.tiny = { kind: 'frame', x: 2400, y: 1600, w: 220, h: 150, title: 'Tiny room' };
+  `);
+
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.keyboard.type('tiny room');
+  await expect(page.locator('#jump-list .np-item')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  const tab = page.locator('.frame-node .frame-tab');
+  await expect(tab).toBeVisible();
+  const toolbar = await page.locator('#toolbar').boundingBox();
+  const tb = await tab.boundingBox();
+  expect(tb.y).toBeGreaterThan(toolbar.y + toolbar.height);   // fully below the bar
 });
 
 test('the canvas context menu offers every palette node type', async ({ page }) => {

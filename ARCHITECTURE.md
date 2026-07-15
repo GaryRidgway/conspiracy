@@ -101,6 +101,13 @@ the board to every device. Invariants:
   path) but the connection records survive for the unpin.
 - Pinning detaches (`attachedTo` is deleted first); `setButtonAction`
   re-renders the dock, not the canvas, for pinned ids.
+- **Chips are button nodes visually**: same markup and `.btn-node` classes
+  (plus `.pin-chip` layout overrides), `applyNodeColor` for color coding —
+  only behaviors differ (no ports/drag/selection). The chip and canvas
+  context menus share `buttonMenuItems()`; chip-only extras (Unpin,
+  Duplicate/Copy/Cut, swatches, Delete) call the id-taking cores
+  (`duplicateNodes`, `copyNodes`, `setNodesColor`) — never the
+  selection-based wrappers, which can't see pinned ids.
 
 ### Record shape rules (the merge depends on these)
 
@@ -295,6 +302,9 @@ exercise it without OAuth — keep it pure.
   committed, no version bump, per device.
 - `frameNode(id)` / `selectNode` / `flashNode` are the shared navigation
   primitive — deep links, ⌘K jump, and button actions all go through them.
+  Framing measures `nodeVisualGeom` (border box ∪ overflowing visible
+  children), not `nodeGeom` — a frame's title tab rides above its box and
+  would otherwise tuck under the top toolbar at high zoom.
 - Cross-file constant couplings: `GRID_INSET` (app.js) must equal
   `#grid { inset: -160px }` in styles.css (the grid phase math folds it in),
   and `visibleRect()` hard-codes the bottom chrome height (52px).
