@@ -859,6 +859,7 @@
     const start = pointerWorld(e);
     const pid = e.pointerId;      // a second finger must never steer this drag
     let moved = false;
+    let dragCtx = pointerCtx(e.clientX, e.clientY);
     movers.forEach((m) => m.el.classList.add('dragging'));
 
     // a single dragged free button can dock: track the zone under it live
@@ -877,6 +878,16 @@
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
       const now = pointerWorld(ev);
+      // the ghost follows the cursor across windows: without this, dragging
+      // toward the panel leaves the element rendering in its OLD window (at
+      // the region's canvas coordinates — visually "wrapped" away from the
+      // cursor). Reparent on crossing so it stays under the pointer.
+      const pctx = pointerCtx(ev.clientX, ev.clientY);
+      if (pctx !== dragCtx) {
+        dragCtx = pctx;
+        const w = pctx === 'dock' ? dockWorld : world;
+        for (const m of movers) if (m.el.parentElement !== w) w.appendChild(m.el);
+      }
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
       for (const m of movers) {
         m.d.x = m.ox + dx; m.d.y = m.oy + dy;
@@ -886,7 +897,8 @@
       }
       if (dx || dy) moved = true;
       layoutAttachments();                         // docked buttons ride along live
-      if (snapButton) setSnapTarget(findSnapTarget(snapButton));
+      // snap zones only make sense in the window the pointer is actually in
+      if (snapButton) setSnapTarget(pctx === (inDock(snapButton) ? 'dock' : 'main') ? findSnapTarget(snapButton) : null);
       scheduleFrameEval();
     };
     const onUp = (ev) => {
@@ -897,6 +909,25 @@
       window.removeEventListener('pointercancel', onUp);
       if (snapButton && snapTarget) { attachButton(snapButton, snapTarget); moved = true; }
       setSnapTarget(null);
+      // dropped in the panel: settle every mover fully inside the region, so
+      // the fully-inside membership test can't strand a node that pokes past
+      // the rect's edge back on the canvas
+      if (moved && dock && pointerCtx(ev.clientX, ev.clientY) === 'dock') {
+        const fr = dockFrameRect();
+        if (fr) {
+          for (const m of movers) {
+            const g = nodeGeom(m.nid);
+            if (!g || g.w > fr.w - 16 || g.h > fr.h - 16) continue;   // can't fit — geometry decides
+            const nx = Math.round(Math.min(Math.max(m.d.x, fr.x + 8), fr.x + fr.w - g.w - 8));
+            const ny = Math.round(Math.min(Math.max(m.d.y, fr.y + 8), fr.y + fr.h - g.h - 8));
+            if (nx !== m.d.x || ny !== m.d.y) {
+              m.d.x = nx; m.d.y = ny;
+              m.el.style.left = nx + 'px'; m.el.style.top = ny + 'px';
+              redrawConnectionsFor(m.nid);
+            }
+          }
+        }
+      }
       if (moved) commit();
     };
     window.addEventListener('pointermove', onMove);

@@ -112,13 +112,21 @@ test('dragging a card from the canvas into the panel re-homes it into the region
   await dockViaMenu(page);
   expect(await parentWorld(card)).toBe('world');
 
-  // drop it over the panel's centre (which is showing the frame region)
+  // grab it by the MIDDLE of its header (a large grab offset), and hold it
+  // over the panel before releasing: the ghost must follow the cursor across
+  // the boundary (live reparent), not render back on the canvas
   const hb = await card.locator('.card-header').boundingBox();
   const panel = await page.locator('#dock-viewport').boundingBox();
-  await drag(page, { x: hb.x + 24, y: hb.y + hb.height / 2 },
-                   { x: panel.x + panel.width / 2, y: panel.y + panel.height / 2 });
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move((hb.x + panel.x) / 2, (hb.y + panel.y + panel.height / 2) / 2, { steps: 6 });
+  // hover near the panel's LEFT EDGE — with the grab offset, the card's box
+  // pokes past the region's edge here; the drop must settle it fully inside
+  await page.mouse.move(panel.x + 40, panel.y + panel.height / 2, { steps: 6 });
+  expect(await parentWorld(card)).toBe('dock-world');        // follows mid-drag
+  await page.mouse.up();
 
-  expect(await parentWorld(card)).toBe('dock-world');        // crossed the boundary
+  expect(await parentWorld(card)).toBe('dock-world');        // and stays after the drop
   // its world coordinates are now inside the frame's rect
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   const rec = await page.evaluate(() => {
