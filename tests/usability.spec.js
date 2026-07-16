@@ -1031,6 +1031,36 @@ test('move to top raises an overlapped card and survives a reload', async ({ pag
   expect(await topAt(520, 350)).toBe(idA);                 // z came back from storage
 });
 
+// "Move to top" raises the whole assembly — a card and its docked buttons
+// must come forward together, not leave the buttons sandwiched underneath.
+test('move to top raises a card together with its docked buttons', async ({ page }) => {
+  const card = await addCardAt(page, 480, 280);
+  const idA = await card.getAttribute('data-id');
+  const cb = await card.boundingBox();
+  const btn = await addFreeButton(page);
+  const bb0 = await btn.boundingBox();
+  await drag(page, { x: bb0.x + bb0.width / 2, y: bb0.y + bb0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+  const btnId = await btn.getAttribute('data-id');
+
+  // a second card overlapping the button tray, created later = naturally on top
+  const cover = await addCardAt(page, 560, 380);
+  const coverId = await cover.getAttribute('data-id');
+  const bb = await btn.boundingBox();
+  const probe = [bb.x + bb.width / 2, bb.y + bb.height / 2];
+  const topAt = () => page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x, y);
+    const n = el && el.closest('.node');
+    return n ? n.dataset.id : null;
+  }, probe);
+  expect(await topAt()).toBe(coverId);              // sanity: tray is covered
+
+  await page.locator(`.node[data-id="${idA}"] .card-header`).click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Move to top' }).click();
+  expect(await topAt()).toBe(btnId);                // the button rose WITH its card
+});
+
 // Nudging a partly off-screen card must not yank the viewport through a full
 // rescue jump — the view follows at nudge speed instead.
 test('arrow-key nudge of a partly off-screen card pans gently, never jumps', async ({ page }) => {

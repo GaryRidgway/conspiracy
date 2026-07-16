@@ -3090,11 +3090,15 @@
     return max;
   }
   function bringToFront(ids) {
+    // an assembly raises as one unit — a card coming to the front while its
+    // docked buttons stay behind looks torn in half
+    const expanded = new Set();
+    for (const id of ids) for (const cid of dockCohort(id)) expanded.add(cid);
     const domIndex = (id) => {
       const el = nodeEls.get(id);
       return el ? [...world.children].indexOf(el) : -1;
     };
-    const movers = ids
+    const movers = [...expanded]
       .map((id) => ({ id, n: getNode(id) }))
       .filter((m) => m.n && m.n.data.kind !== 'frame')   // frames stay behind by design
       .sort((a, b) => ((a.n.data.z || 0) - (b.n.data.z || 0)) || (domIndex(a.id) - domIndex(b.id)));
