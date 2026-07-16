@@ -131,15 +131,17 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   Movers reparent live when the pointer crosses, so the ghost follows.
 - **Membership is STICKY, not geometric.** Each tab carries an explicit
   member list: seeded center-in-rect when the frame docks, then changed
-  ONLY by gestures — drop over the panel joins the active tab (settling
-  each center inside the region), drop over the canvas leaves, panel-menu
-  creations/pastes join, duplicates of members follow their source, and
-  docked-button assemblies follow their root. Geometry must never silently
-  reassign: the docked region's canvas ghost is invisible, so a node
-  created on the canvas over those world coordinates must NOT vanish into
-  the panel. The one geometric rule left: reconcile (undo/remote — never
-  commit) prunes members whose center left their region, so a reverted
-  cross-window drag doesn't strand an off-region node in the panel.
+  ONLY by gestures — drop over the panel joins the active tab, drop over
+  the canvas leaves, panel-menu creations/pastes join, duplicates of
+  members follow their source, and docked-button assemblies follow their
+  root. **The drop/creation position is law** — the panel is a free work
+  surface, so members may live outside the frame's rect; never clamp
+  placements to the region. Geometry must never silently reassign: the
+  docked region's canvas ghost is invisible, so a node created on the
+  canvas over those world coordinates must NOT vanish into the panel. The
+  one geometric rule left: reconcile (undo/remote — never commit) prunes
+  members a full region-size beyond the rect — reverted cross-window
+  drags, not deliberate placements.
 - **Dock state is a per-device view preference** — `{width, minimized,
   active, tabs: [{frameId, members, viewport}]}` rides
   `whiteboard:viewport:<id>`, never board content, never bumps `version`,

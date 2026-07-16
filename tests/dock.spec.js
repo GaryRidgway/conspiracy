@@ -129,20 +129,8 @@ test('dragging a card from the canvas into the panel re-homes it into the region
   await page.mouse.up();
 
   expect(await parentWorld(card)).toBe('dock-world');        // and stays after the drop
-  // its CENTER now sits inside the frame's rect (membership rule — the box
-  // itself may overhang an edge)
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
-  const rec = await page.evaluate(() => {
-    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
-    const frame = Object.values(b.cards).find((c) => c.kind === 'frame');
-    const [id, card] = Object.entries(b.cards).find(([, c]) => !c.kind);
-    const el = document.querySelector(`.node.card[data-id="${id}"]`);
-    return { frame, cx: card.x + el.offsetWidth / 2, cy: card.y + el.offsetHeight / 2 };
-  });
-  expect(rec.cx).toBeGreaterThan(rec.frame.x);
-  expect(rec.cx).toBeLessThan(rec.frame.x + rec.frame.w);
-  expect(rec.cy).toBeGreaterThan(rec.frame.y);
-  expect(rec.cy).toBeLessThan(rec.frame.y + rec.frame.h);
+  await expect(card).toBeVisible();                          // visible where it was dropped
 
   // and back out: drop over empty canvas → it leaves the region. Grab a
   // VISIBLE part of the header — the card may overhang the panel's edge,
@@ -229,35 +217,42 @@ test('multiple frames dock as tabs: switching stows one region and shows the oth
   await expect(page.locator('#dock-tabs .dock-tab-btn')).toHaveCount(2);
 });
 
-test('a member dragged to the region\'s edge keeps its drop position (no snap-away)', async ({ page }) => {
+test('a member dropped in the panel\'s top third stays exactly where dropped (no snap-away)', async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 300);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   await dockViaMenu(page);
 
-  // drag the card up so it OVERHANGS the region's top edge (center still
-  // inside): it must stay in the panel and not jump on release
-  const target = await page.evaluate(() => {
-    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
-    const fr = Object.values(b.cards).find((c) => c.kind === 'frame');
-    const m = document.getElementById('dock-world').style.transform
-      .match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/);
-    const r = document.getElementById('dock-viewport').getBoundingClientRect();
-    const zoom = parseFloat(m[3]);
-    // screen-y where a card top should land so ~40% of it pokes above the edge
-    const el = document.querySelector('.node.card');
-    return r.top + parseFloat(m[2]) + fr.y * zoom - el.offsetHeight * 0.4 * zoom;
-  });
+  // the fitted region occupies the panel's middle band; drag the card into
+  // the TOP THIRD of the panel (world space above the frame's rect). The
+  // panel is a free work surface — the drop position is law.
+  const pv = await page.locator('#dock-viewport').boundingBox();
   const hb = await card.locator('.card-header').boundingBox();
-  const bb = await card.boundingBox();
   await page.mouse.move(hb.x + 24, hb.y + 10);
   await page.mouse.down();
-  await page.mouse.move(hb.x + 24, hb.y + 10 - (bb.y - target), { steps: 8 });
+  await page.mouse.move(pv.x + pv.width / 2, pv.y + pv.height * 0.15, { steps: 8 });
   const preDrop = await nodePos(card);
   await page.mouse.up();
   const postDrop = await nodePos(card);
-  expect(Math.abs(postDrop.y - preDrop.y)).toBeLessThan(2);   // no snap-away on release
+  expect(postDrop).toEqual(preDrop);                          // zero movement on release
   expect(await parentWorld(card)).toBe('dock-world');         // still a member
+  await expect(card).toBeVisible();
+
+  // bottom third too
+  const hb2 = await card.locator('.card-header').boundingBox();
+  await page.mouse.move(hb2.x + 24, hb2.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(pv.x + pv.width / 2, pv.y + pv.height * 0.85, { steps: 8 });
+  const preDrop2 = await nodePos(card);
+  await page.mouse.up();
+  expect(await nodePos(card)).toEqual(preDrop2);
+  expect(await parentWorld(card)).toBe('dock-world');
+
+  // and the placement survives the panel's per-device persistence
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.waitForTimeout(500);
+  await page.reload();
+  expect(await parentWorld(page.locator('.node.card'))).toBe('dock-world');
 });
 
 test('minimize flies the region off screen to an edge tab; restore brings it back', async ({ page }) => {
@@ -325,8 +320,9 @@ test('"Add card here" from inside the panel creates the card in the region', asy
   await addFrame(page);
   await dockViaMenu(page);
 
-  // right-click near the panel's top: that point maps ABOVE the frame rect
-  // (the fit view has vertical margin), so creation must clamp into the rect
+  // right-click near the panel's top — the point maps ABOVE the frame rect,
+  // and that's fine: membership is sticky, so the card joins the tab and
+  // lands exactly where clicked
   const pv = await page.locator('#dock-viewport').boundingBox();
   await page.mouse.click(pv.x + pv.width / 2, pv.y + 60, { button: 'right' });
   await page.locator('#context-menu .ctx-item', { hasText: 'Add card here' }).click();

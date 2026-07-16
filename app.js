@@ -925,29 +925,13 @@
       window.removeEventListener('pointercancel', onUp);
       if (snapButton && snapTarget) { attachButton(snapButton, snapTarget); moved = true; }
       setSnapTarget(null);
-      // membership follows the DROP gesture: released over the panel → join
-      // the active tab (settling each center inside the region so a later
-      // prune can't strand it); released over the canvas → leave the dock
+      // membership follows the DROP gesture, and the drop position is LAW —
+      // the panel is a free work surface (membership is sticky, so nothing
+      // needs to sit inside the frame's rect): released over the panel →
+      // join the active tab right where it landed; over the canvas → leave
       if (moved && dock) {
-        if (pointerCtx(ev.clientX, ev.clientY) === 'dock') {
-          const fr = dockFrameRect();
-          if (fr) {
-            for (const m of movers) {
-              const g = nodeGeom(m.nid);
-              if (!g) continue;
-              const nx = Math.round(Math.min(Math.max(m.d.x, fr.x - g.w / 2 + 2), fr.x + fr.w - g.w / 2 - 2));
-              const ny = Math.round(Math.min(Math.max(m.d.y, fr.y - g.h / 2 + 2), fr.y + fr.h - g.h / 2 - 2));
-              if (nx !== m.d.x || ny !== m.d.y) {
-                m.d.x = nx; m.d.y = ny;
-                m.el.style.left = nx + 'px'; m.el.style.top = ny + 'px';
-                redrawConnectionsFor(m.nid);
-              }
-            }
-          }
-          addToDockTab(movers.map((m) => m.nid));
-        } else {
-          removeFromDock(movers.map((m) => m.nid));
-        }
+        if (pointerCtx(ev.clientX, ev.clientY) === 'dock') addToDockTab(movers.map((m) => m.nid));
+        else removeFromDock(movers.map((m) => m.nid));
       }
       if (moved) commit();
     };
@@ -1850,10 +1834,14 @@
         t.members = t.members.filter((id) => {
           if (!getNode(id) || isPinned(id) || isDockedFrame(id)) return false;
           if (opts && opts.prune && fd) {
+            // members may live anywhere AROUND the region (the panel is a
+            // free surface) — prune only genuinely-far strays, a full
+            // region-size beyond the rect, i.e. reverted cross-window drags
             const g = nodeGeom(id);
             if (g) {
               const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
-              if (cx < fd.x || cx > fd.x + fd.w || cy < fd.y || cy > fd.y + fd.h) return false;
+              if (cx < fd.x - fd.w || cx > fd.x + fd.w * 2 ||
+                  cy < fd.y - fd.h || cy > fd.y + fd.h * 2) return false;
             }
           }
           return true;
@@ -3714,19 +3702,9 @@
         ((pa.isContentEditable || pa.tagName === 'INPUT' || pa.tagName === 'TEXTAREA') && pa.contains(e.target)))) return;
     e.preventDefault();
     const world = pointerWorld(e);   // "here" respects whichever window was clicked
-    // the panel can show world beyond the frame's edges (free pan/zoom), but
-    // only the region itself lives in the panel — clamp each tool's placement
-    // footprint inside the rect so nothing is created invisibly outside it
+    // membership is sticky, so panel creations join the active tab and land
+    // exactly where clicked — no clamping to the frame's rect
     const inDockMenu = pointerCtx(e.clientX, e.clientY) === 'dock';
-    const clampToRegion = (w, box) => {
-      const fr = inDockMenu && dockFrameRect();
-      if (!fr || !box) return w;
-      const m = 8;
-      return {
-        x: Math.min(Math.max(w.x, fr.x + box.dx + m), Math.max(fr.x + box.dx + m, fr.x + fr.w - (box.w - box.dx) - m)),
-        y: Math.min(Math.max(w.y, fr.y + box.dy + m), Math.max(fr.y + box.dy + m, fr.y + fr.h - (box.h - box.dy) - m)),
-      };
-    };
     const nodeEl = e.target.closest && e.target.closest('.node');
     const connG = e.target.closest && e.target.closest('.conn');
     const items = [];
@@ -3801,7 +3779,7 @@
       // gesture-based; the embed modal carries the flag through its submit)
       for (const t of ADD_TOOLS) {
         items.push({ label: t.menu, action: () => {
-          const nid = t.at(clampToRegion(world, t.box), { intoDock: inDockMenu });
+          const nid = t.at(world, { intoDock: inDockMenu });
           if (inDockMenu && typeof nid === 'string') addToDockTab([nid]);
         } });
       }
@@ -4033,15 +4011,11 @@
   // One registry for every "add a node" entry point: the palette buttons AND
   // the canvas context menu ("Add X here") are both generated from it, so a
   // new node type can't appear in one and silently miss the other.
-  // box = the node's placement footprint around the point (offset + size) —
-  // the docked panel's "Add X here" clamps the point so the whole footprint
-  // lands inside the frame rect (a node created outside it would fall out of
-  // the panel and onto the canvas, invisibly).
   const ADD_TOOLS = [
-    { btn: 'addCard', menu: 'Add card here', box: { dx: 120, dy: 24, w: 280, h: 170 }, at: (w) => createCard(w.x - 120, w.y - 24) },
-    { btn: 'addFrameNode', menu: 'Add frame here', box: { dx: 320, dy: 200, w: 640, h: 400 }, at: (w) => createFrameNode(w.x - 320, w.y - 200) },
-    { btn: 'addFrame', menu: 'Add embed here', box: { dx: 240, dy: 160, w: 480, h: 320 }, at: (w, o) => openFrameModal({ type: 'create', at: w, intoDock: o && o.intoDock }), center: () => openFrameModal({ type: 'create' }) },
-    { btn: 'addButton', menu: 'Add button here', box: { dx: 60, dy: 18, w: 160, h: 44 }, at: (w) => createButton(w.x - 60, w.y - 18) },
+    { btn: 'addCard', menu: 'Add card here', at: (w) => createCard(w.x - 120, w.y - 24) },
+    { btn: 'addFrameNode', menu: 'Add frame here', at: (w) => createFrameNode(w.x - 320, w.y - 200) },
+    { btn: 'addFrame', menu: 'Add embed here', at: (w, o) => openFrameModal({ type: 'create', at: w, intoDock: o && o.intoDock }), center: () => openFrameModal({ type: 'create' }) },
+    { btn: 'addButton', menu: 'Add button here', at: (w) => createButton(w.x - 60, w.y - 18) },
   ];
   for (const t of ADD_TOOLS) {
     document.getElementById(t.btn).addEventListener('click', () =>
