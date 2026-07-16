@@ -1365,7 +1365,12 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   transition: opacity 0.12s, transform 0.1s;
   z-index: 4;
 }
-.node:hover .port, .node.selected .port { opacity: 0.95; pointer-events: auto; }
+/* Hit targets arm on hover/selection as before, but a handle only LIGHTS when
+   the cursor is near its side (JS toggles .near) — four dots on every hover
+   read as permanent chrome. An armed-but-invisible port still grabs, so a
+   drag that starts right on one keeps working. */
+.node:hover .port, .node.selected .port { pointer-events: auto; }
+.port.near, .port:hover { opacity: 0.95; }
 .port:hover { transform: translate(-50%, -50%) scale(1.3); }
 .port.top    { left: 50%;  top: 0; }
 .port.right  { left: 100%; top: 50%; }
@@ -1851,6 +1856,8 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
    touch flow is tap-to-select first; these rules only grow the targets. */
 @media (pointer: coarse) {
   .port { width: 22px; height: 22px; border-width: 3px; }
+  /* no cursor to derive nearness from — selection lights all four handles */
+  .node.selected .port { opacity: 0.95; }
   /* edge strips widen outward and pull back from the (also bigger) corners */
   .frame-node .edge-n { top: -12px; left: 26px; right: 26px; height: 24px; }
   .frame-node .edge-s { bottom: -12px; left: 26px; right: 26px; height: 24px; }

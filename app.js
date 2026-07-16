@@ -982,13 +982,31 @@
   //  PORTS — hover a node to reveal handles; drag one to a
   //  target node to create a connection (Miro / FigJam model)
   // ════════════════════════════════════════════════════════
+  // Reveal radius around each handle, in screen px (zoom-independent feel).
+  const PORT_NEAR_PX = 48;
   function addPorts(el, id) {
+    const ports = [];
     for (const side of ['top', 'right', 'bottom', 'left']) {
       const port = document.createElement('div');
       port.className = 'port ' + side;
+      port.dataset.side = side;
       port.addEventListener('pointerdown', (e) => startConnectionDrag(id, e));
       el.appendChild(port);
+      ports.push(port);
     }
+    // A handle lights only while the cursor is near it (CSS keeps them all
+    // grabbable on hover regardless) — all four lit on every hover reads as
+    // permanent chrome on a busy board.
+    el.addEventListener('pointermove', (e) => {
+      const r = el.getBoundingClientRect();
+      const mx = r.left + r.width / 2, my = r.top + r.height / 2;
+      const at = { top: [mx, r.top], right: [r.right, my], bottom: [mx, r.bottom], left: [r.left, my] };
+      for (const p of ports) {
+        const [px, py] = at[p.dataset.side];
+        p.classList.toggle('near', Math.hypot(e.clientX - px, e.clientY - py) < PORT_NEAR_PX);
+      }
+    });
+    el.addEventListener('pointerleave', () => { for (const p of ports) p.classList.remove('near'); });
   }
 
   function startConnectionDrag(fromId, e) {

@@ -240,6 +240,29 @@ test('fly-to setting: deep-link navigation glides to the same destination', asyn
   expect(near(glide[glide.length - 1], finalB)).toBe(true);        // on the same landing spot
 });
 
+// Connection handles reveal only near the cursor's side of the node, so a
+// hover doesn't light all four dots up as permanent-looking chrome.
+test('connection dots reveal only near their side of the node', async ({ page }) => {
+  const id = await (await addCardAt(page, 450, 320)).getAttribute('data-id');
+  const node = page.locator(`.node.card[data-id="${id}"]`);
+  const bb = await node.boundingBox();
+
+  // mid-card: the left/right handles (~120px away) stay dark
+  await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
+  await expect(node.locator('.port.left')).not.toHaveClass(/near/);
+  await expect(node.locator('.port.right')).not.toHaveClass(/near/);
+
+  // near the left edge: that handle lights, the far one stays dark
+  await page.mouse.move(bb.x + 8, bb.y + bb.height / 2);
+  await expect(node.locator('.port.left')).toHaveClass(/near/);
+  await expect(node.locator('.port.left')).toHaveCSS('opacity', '0.95');
+  await expect(node.locator('.port.right')).not.toHaveClass(/near/);
+
+  // leaving the node clears everything
+  await page.mouse.move(bb.x - 80, bb.y + bb.height / 2);
+  await expect(node.locator('.port.left')).not.toHaveClass(/near/);
+});
+
 // ── 5. Accidental deletion + weak undo (Microsoft Whiteboard: "can't undo a
 //      deleted sticky", "lost months"). Deletion must be recoverable. ──
 test('a deleted node is recoverable via undo', async ({ page }) => {
