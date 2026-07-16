@@ -1031,6 +1031,57 @@ test('move to top raises an overlapped card and survives a reload', async ({ pag
   expect(await topAt(520, 350)).toBe(idA);                 // z came back from storage
 });
 
+// Nudging a partly off-screen card must not yank the viewport through a full
+// rescue jump — the view follows at nudge speed instead.
+test('arrow-key nudge of a partly off-screen card pans gently, never jumps', async ({ page }) => {
+  const card = await addCardAt(page, 200, 400);
+  // push the card halfway off the left edge by panning the view right
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 3; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 110, deltaY: 0, clientX: 640, clientY: 360, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(async () => (await card.boundingBox()).x).toBeLessThan(0);
+  const vx = () => page.evaluate(() => {
+    const m = document.getElementById('world').style.transform.match(/translate\(([-\d.]+)px/);
+    return parseFloat(m[1]);
+  });
+  const x0 = await vx();
+  await page.keyboard.press('ArrowDown');           // nudge 10px — not even toward the off edge
+  const x1 = await vx();
+  expect(Math.abs(x1 - x0)).toBeLessThanOrEqual(11); // follows by ≤ the nudge step, no rescue jump
+});
+
+// A long title pasted into a narrower card must wrap inside the card while
+// editing — not spill past its right edge.
+test('editing a long title wraps inside the card instead of overflowing', async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  await card.locator('.card-title').dblclick();
+  await page.keyboard.type('An extremely long investigation title that would never fit in one card width');
+  const cb = await card.boundingBox();
+  const tb = await card.locator('.card-title').boundingBox();
+  expect(tb.x + tb.width).toBeLessThanOrEqual(cb.x + cb.width + 1);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+});
+
+// Triple-click line selection drags a trailing newline along; pasting a
+// single line into a card body must insert just the line.
+test('pasting a single line with a trailing newline inserts no stray break', async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  await card.locator('.card-body').click();
+  await page.keyboard.type('start');
+  await page.evaluate(() => {
+    const body = document.querySelector('.card-body');
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'pasted line\n');
+    body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const html = await card.locator('.card-body').evaluate((el) => el.innerHTML);
+  expect(html).toContain('startpasted line');       // inline, no <br>/<div> break
+});
+
 // ── Docked buttons: drop a button on a card's bottom edge (or beside a frame
 //    title) and it becomes part of the assembly — follows drags, survives
 //    reloads, frees itself via right-click → Detach. ──

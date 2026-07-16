@@ -567,6 +567,7 @@
   const undoStack = [];
   const redoStack = [];
   let lastContent = null;     // last recorded content snapshot (string)
+  let lastDock = null;        // last recorded dock-structure snapshot (string)
   let coalesceBase = null;    // pre-burst snapshot while a text edit is in flight
   let coalesceTimer = null;
   const undoBtn = document.getElementById('undoBtn');
@@ -579,8 +580,35 @@
   function contentSnapshot() {
     return JSON.stringify({ cards: board.cards, iframes: board.iframes, connections: board.connections });
   }
-  function pushUndo(snap) {
-    undoStack.push(snap);
+  // Dock STRUCTURE rides the undo history alongside content, so docking,
+  // undocking, and membership changes undo like anything else. Only the
+  // structure (which frames, which members) — active tab, minimized state,
+  // widths and viewports are ephemeral arrangement, and restoring those on
+  // every ⌘Z would make unrelated undos yank the panel around.
+  function dockStructureSnapshot() {
+    return JSON.stringify(dock ? dock.tabs.map((t) => ({ frameId: t.frameId, members: t.members })) : null);
+  }
+  function applyDockStructure(snapStr) {
+    const tabs = JSON.parse(snapStr);
+    if (!tabs || !tabs.length) {
+      if (dock) { dock = null; }
+    } else {
+      const width = dock ? dock.width : Math.min(innerWidth * 0.6, 420);
+      const minimized = dock ? dock.minimized : false;
+      const restored = tabs.map((t) => {
+        const prev = dock && dock.tabs.find((p) => p.frameId === t.frameId);
+        return { frameId: t.frameId, members: [...t.members],
+          viewport: prev ? prev.viewport : { x: 0, y: 0, zoom: 1 } };
+      });
+      const active = restored.some((t) => t.frameId === (dock && dock.active))
+        ? dock.active : restored[0].frameId;
+      dock = { width, minimized, active, tabs: restored };
+    }
+    lastDock = snapStr;
+    flushViewport();
+  }
+  function pushUndo(entry) {
+    undoStack.push(entry);
     if (undoStack.length > MAX_HISTORY) undoStack.shift();
     redoStack.length = 0;
   }
@@ -592,17 +620,19 @@
   }
   function recordUndo(coalesce) {
     const snap = contentSnapshot();
-    if (lastContent === null) { lastContent = snap; return; }  // first commit: seed baseline
-    if (snap === lastContent) return;                          // no content change (e.g. pan/zoom)
-    if (coalesce) {
-      if (!coalesceTimer) coalesceBase = lastContent;          // remember pre-burst state
+    const dsnap = dockStructureSnapshot();
+    if (lastContent === null) { lastContent = snap; lastDock = dsnap; return; }  // first commit: seed baseline
+    if (snap === lastContent && dsnap === lastDock) return;    // nothing history-worthy (e.g. pan/zoom)
+    if (coalesce && snap !== lastContent && dsnap === lastDock) {
+      if (!coalesceTimer) coalesceBase = { c: lastContent, d: lastDock };  // remember pre-burst state
       clearTimeout(coalesceTimer);
       coalesceTimer = setTimeout(flushCoalesce, 600);
     } else {
       flushCoalesce();                                          // finalize any pending text burst
-      pushUndo(lastContent);
+      pushUndo({ c: lastContent, d: lastDock });
     }
     lastContent = snap;
+    lastDock = dsnap;
     updateHistoryButtons();
   }
   function applyContentSnapshot(snapStr) {
@@ -616,17 +646,25 @@
     scheduleSave();
     updateHistoryButtons();
   }
+  function applyHistoryEntry(entry) {
+    applyDockStructure(entry.d);       // dock first: parents drive rendering
+    applyContentSnapshot(entry.c);     // reconcile re-homes/stows under the restored dock
+    syncDockPanel();
+    applyDockViewport();
+    for (const cid of connEls.keys()) drawConnection(cid);
+    scheduleFrameEval();
+  }
   function undo() {
     flushCoalesce();
     if (!undoStack.length) { updateHistoryButtons(); return; }
-    redoStack.push(contentSnapshot());
-    applyContentSnapshot(undoStack.pop());
+    redoStack.push({ c: contentSnapshot(), d: dockStructureSnapshot() });
+    applyHistoryEntry(undoStack.pop());
   }
   function redo() {
     if (!redoStack.length) return;
-    undoStack.push(contentSnapshot());
+    undoStack.push({ c: contentSnapshot(), d: dockStructureSnapshot() });
     if (undoStack.length > MAX_HISTORY) undoStack.shift();
-    applyContentSnapshot(redoStack.pop());
+    applyHistoryEntry(redoStack.pop());
   }
   if (undoBtn) undoBtn.addEventListener('click', undo);
   if (redoBtn) redoBtn.addEventListener('click', redo);
@@ -1206,6 +1244,20 @@
       onEnter: () => bodyEl.focus(),
     });
     bodyEl.addEventListener('input', () => saveCardBody(id, bodyEl));
+    // Triple-click selects a line INCLUDING its trailing break, so pasting a
+    // bulleted/plain line drags a stray newline (and list wrapper) along.
+    // For single-line pastes, insert the bare trimmed text; anything truly
+    // multi-line keeps the native rich paste.
+    bodyEl.addEventListener('paste', (e) => {
+      const dt = e.clipboardData;
+      if (!dt || [...dt.items].some((i) => i.type.startsWith('image/'))) return;  // images: global handler
+      const text = dt.getData('text/plain');
+      if (!text || !/\n$/.test(text)) return;          // no trailing break — native paste is fine
+      const line = text.replace(/\r?\n+$/, '');
+      if (line.includes('\n')) return;                 // real multi-line content — keep structure
+      e.preventDefault();
+      document.execCommand('insertText', false, line);
+    });
 
     // rich-text editing: floating toolbar on focus.
     bodyEl.addEventListener('focus', () => { activeBody = { id, el: bodyEl }; showTextToolbar(el); });
@@ -1708,8 +1760,8 @@
     const d = board.cards[id];
     const configured = d.action && d.action.target;
     const items = [];
-    items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
     items.push({ label: 'Rename', action: () => beginRename(labelEl) });
+    items.push({ label: configured ? 'Change link…' : 'Set link…', action: () => openButtonLinkModal(id) });
     if (configured) items.push({ label: 'Remove link', action: () => setButtonAction(id, null) });
     if (d.attachedTo) items.push({ label: 'Detach', action: () => detachButton(id) });
     return items;
@@ -1883,6 +1935,7 @@
     for (const id of ids) if (!t.members.includes(id) && !isDockedFrame(id) && !isPinned(id)) t.members.push(id);
     recomputeDockMembers();
     flushViewport();                   // membership must survive an abrupt reload
+    recordUndo();
   }
   function removeFromDock(ids) {
     if (!dock) return;
@@ -1890,6 +1943,7 @@
     for (const t of dock.tabs) t.members = t.members.filter((id) => !drop.has(id));
     recomputeDockMembers();
     flushViewport();
+    recordUndo();
   }
   // Inactive tabs' members stay parented in the panel but invisible —
   // visibility (not display) so their geometry stays measurable.
@@ -1944,9 +1998,10 @@
     }
     const name = (fid) => (board.cards[fid] && board.cards[fid].title) || 'Frame';
     document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
-    // header title: the ACTIVE frame's name in its color — renamable in place
+    // the panel wears the active frame's color the way canvas nodes do:
+    // tinted border + header wash, plain white text
     if (document.activeElement !== dockActiveName) dockActiveName.textContent = name(dock.active);
-    applyNodeColor(dockActiveName, board.cards[dock.active] && board.cards[dock.active].color);
+    applyNodeColor(dockPanel, board.cards[dock.active] && board.cards[dock.active].color);
     // edge rail: one vertical tab per docked frame, in the frame's color
     dockRail.innerHTML = '';
     for (const t of dock.tabs) {
@@ -2022,6 +2077,7 @@
     scheduleFrameEval();
     commit({ viewportOnly: true });    // persist dock state (view preference)
     flushViewport();                   // …immediately: membership must survive an abrupt reload
+    recordUndo();                      // docking is a history step (structure changed)
   }
   function undockFrame(fid) {
     if (!dock) return;
@@ -2062,6 +2118,7 @@
     if (grew) commit();                // the resize is board content
     else commit({ viewportOnly: true });
     flushViewport();
+    recordUndo();                      // undocking is a history step (structure changed)
   }
   function setDockMinimized(min) {
     if (!dock || dock.minimized === !!min) return;
@@ -4384,19 +4441,36 @@
   }
 
   // Pan (keeping zoom) just enough to bring a node fully into the visible area.
-  function ensureNodeVisible(id) {
+  // Pan (in the node's own window) just enough to bring it into view.
+  // opts.maxPan caps the pan per call: keyboard nudges pass their own step so
+  // the viewport FOLLOWS the node at nudge speed instead of jumping the whole
+  // rescue distance at once when the node starts partly off screen.
+  function ensureNodeVisible(id, opts = {}) {
     const g = nodeGeom(id);
     if (!g) return;
-    const z = board.viewport.zoom;
-    const left = g.x * z + board.viewport.x, top = g.y * z + board.viewport.y;
+    const ctx = inDock(id) ? 'dock' : 'main';
+    if (ctx === 'dock' && (!dock || dock.minimized || !inActiveDock(id))) return;
+    const vp = ctxViewport(ctx);
+    const z = vp.zoom;
+    let r;
+    if (ctx === 'dock') {
+      const b = dockViewport.getBoundingClientRect();
+      r = { x: 0, y: 0, w: b.width, h: b.height };   // panel-relative, like its transform
+    } else {
+      r = visibleRect();
+    }
+    const left = g.x * z + vp.x, top = g.y * z + vp.y;
     const right = left + g.w * z, bottom = top + g.h * z;
-    const r = visibleRect();
     let dx = 0, dy = 0;
     if (left < r.x) dx = r.x - left + 20;
     else if (right > r.x + r.w) dx = (r.x + r.w) - right - 20;
     if (top < r.y) dy = r.y - top + 20;
     else if (bottom > r.y + r.h) dy = (r.y + r.h) - bottom - 20;
-    if (dx || dy) { board.viewport.x += dx; board.viewport.y += dy; applyViewport(); commit({ viewportOnly: true }); }
+    if (opts.maxPan != null) {
+      dx = Math.max(-opts.maxPan, Math.min(opts.maxPan, dx));
+      dy = Math.max(-opts.maxPan, Math.min(opts.maxPan, dy));
+    }
+    if (dx || dy) { vp.x += dx; vp.y += dy; applyCtxViewport(ctx); commit({ viewportOnly: true }); }
   }
 
   function tabToNode(dir) {
@@ -4661,7 +4735,13 @@
       if (el) { el.style.left = n.data.x + 'px'; el.style.top = n.data.y + 'px'; }
       redrawConnectionsFor(nid);
     }
-    if (selectedNodes.size === 1) ensureNodeVisible([...selectedNodes][0]);
+    if (selectedNodes.size === 1) {
+      const id = [...selectedNodes][0];
+      // follow at nudge speed — a partly off-screen node must not yank the
+      // whole viewport into a full rescue on every keypress
+      const z = ctxViewport(inDock(id) ? 'dock' : 'main').zoom;
+      ensureNodeVisible(id, { maxPan: Math.max(Math.abs(dx), Math.abs(dy)) * z });
+    }
     scheduleFrameEval();
     commit({ coalesce: true });   // a burst of nudges undoes as one step
   }
@@ -4902,9 +4982,21 @@
   let toolbarReleased = false;
   // Returns true if it (re)positioned, false if it left a frozen off-screen
   // toolbar untouched — so the picker only re-tracks when the toolbar moved.
+  // The floating editing chrome scales with the card's own window zoom
+  // (main canvas or docked panel), clamped so it never becomes unusably
+  // small or comically large — otherwise a zoomed panel card gets a toolbar
+  // wildly out of proportion with the text being edited.
+  function editUiScale(cardEl) {
+    const id = cardEl && cardEl.dataset && cardEl.dataset.id;
+    const z = id && inDock(id) && dock ? ctxViewport('dock').zoom : board.viewport.zoom;
+    return Math.max(0.7, Math.min(1.6, z));
+  }
   function positionTextToolbar(cardEl) {
     const r = cardEl.getBoundingClientRect();
-    const th = textToolbar.offsetHeight, tw = textToolbar.offsetWidth;
+    textToolbar.style.transformOrigin = '0 0';
+    textToolbar.style.transform = `scale(${editUiScale(cardEl)})`;
+    const tb = textToolbar.getBoundingClientRect();     // post-scale footprint
+    const th = tb.height, tw = tb.width;
     let left = Math.max(8, Math.min(r.left, innerWidth - tw - 8));
     let top = r.top - th - 8;
     if (top < 8) top = r.bottom + 8;                          // flip below when clipped above
@@ -4984,9 +5076,15 @@
     // picker chase a moving anchor. The target keeps the picker glued to it.
     const barLeft = parseFloat(textToolbar.style.left) || 0;
     const barTop = parseFloat(textToolbar.style.top) || 0;
-    const pw = nodePicker.offsetWidth, ph = nodePicker.offsetHeight;
-    let left = Math.max(8, Math.min(barLeft + ttLink.offsetLeft, innerWidth - pw - 8));
-    const top = barTop + ttLink.offsetTop + ttLink.offsetHeight + 6;
+    // the picker matches the toolbar's zoom-scale; anchor math multiplies the
+    // link button's UNSCALED offsets by the same factor
+    const s = editUiScale(textToolbarEl);
+    nodePicker.style.transformOrigin = '0 0';
+    nodePicker.style.transform = `scale(${s})`;
+    const pr = nodePicker.getBoundingClientRect();
+    const pw = pr.width, ph = pr.height;
+    let left = Math.max(8, Math.min(barLeft + ttLink.offsetLeft * s, innerWidth - pw - 8));
+    const top = barTop + (ttLink.offsetTop + ttLink.offsetHeight) * s + 6;
     if (!anchorOnScreen(cardR)) {                             // fleeing card → ease off once, freeze
       if (pickerReleased) return;
       pickerReleased = true;
@@ -5166,16 +5264,25 @@
   }
   // A brief pulse so the eye lands on the found node after the viewport moves.
   function flashNode(id) {
-    const el = nodeEls.get(id);
-    if (!el) return;
-    el.classList.remove('flash');
-    void el.offsetWidth;               // restart the animation if re-triggered
-    el.classList.add('flash');
-    const off = () => el.classList.remove('flash');
-    el.addEventListener('animationend', off, { once: true });
-    // Under prefers-reduced-motion the flash is a static ring (no animation,
-    // so no animationend) — clear it on a timer instead.
-    setTimeout(off, 1500);
+    // the node plus its docked-button row flash as one assembly — landing on
+    // a card whose buttons stay dark reads like the buttons aren't part of it
+    const els = [nodeEls.get(id)].filter(Boolean);
+    for (const [bid, c] of Object.entries(board.cards)) {
+      if (c.kind === 'button' && c.attachedTo && dockRoot(bid) === id) {
+        const bel = nodeEls.get(bid);
+        if (bel) els.push(bel);
+      }
+    }
+    for (const el of els) {
+      el.classList.remove('flash');
+      void el.offsetWidth;             // restart the animation if re-triggered
+      el.classList.add('flash');
+      const off = () => el.classList.remove('flash');
+      el.addEventListener('animationend', off, { once: true });
+      // Under prefers-reduced-motion the flash is a static ring (no animation,
+      // so no animationend) — clear it on a timer instead.
+      setTimeout(off, 1500);
+    }
   }
 
   function renderJumpList(query) {
@@ -5412,6 +5519,7 @@
       clearSelection(); interactiveId = null;
       reconcileToBoard();
       lastContent = contentSnapshot();
+      lastDock = dockStructureSnapshot();
       updateHistoryButtons();
     }
   }
@@ -5794,6 +5902,7 @@
     reconcileToBoard();
     applyDockViewport();
     lastContent = contentSnapshot();
+    lastDock = dockStructureSnapshot();
     updateHistoryButtons();
     setHashBoard(id);
     setSaveState('saved');
@@ -5955,6 +6064,7 @@
   renderAll();
   updateEmptyState();
   lastContent = contentSnapshot();   // baseline for undo history
+  lastDock = dockStructureSnapshot();
   setSaveState('saved');
   updateBoardMenuLabel();
   renderBoardMenu();

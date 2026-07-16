@@ -289,7 +289,7 @@ test('rail tabs open the frame menu: color them like frames, rename via the pill
   await railTab.click({ button: 'right' });
   await page.locator('#context-menu .ctx-swatch[title="Purple"]').click();
   await expect(railTab).toHaveClass(/colored/);
-  await expect(page.locator('#dock-active-name')).toHaveClass(/colored/);
+  await expect(page.locator('#dock-panel')).toHaveClass(/colored/);
   // …and it IS the frame's color (stored on the record, syncs like any color)
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   expect(await page.evaluate(() => {
@@ -339,6 +339,41 @@ test('undocking grows the frame to fully contain members placed outside its rect
   expect(rec.card.y).toBeGreaterThanOrEqual(rec.fr.y);
   expect(rec.card.x + rec.card.w).toBeLessThanOrEqual(rec.fr.x + rec.fr.w);
   expect(rec.card.y + rec.card.h).toBeLessThanOrEqual(rec.fr.y + rec.fr.h);
+});
+
+test('docking and undocking ride the undo history', async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  await dockViaMenu(page);
+  expect(await parentWorld(card)).toBe('dock-world');
+
+  // undo the dock: panel closes, the region is back on the canvas
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  expect(await parentWorld(card)).toBe('world');
+  await expect(page.locator('.frame-node')).toBeVisible();
+
+  // redo: docked again, membership restored
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(card)).toBe('dock-world');
+
+  // undock (grows nothing here), then undo THAT: docked again
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(card)).toBe('dock-world');
+});
+
+test('editing chrome scales with the panel zoom', async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  await dockViaMenu(page);                        // fit zoom ≈ 0.6 → clamped scale 0.7
+  await card.locator('.card-body').click();
+  await expect(page.locator('#text-toolbar')).toBeVisible();
+  const tf = await page.locator('#text-toolbar').evaluate((el) => el.style.transform);
+  expect(tf).toMatch(/scale\(0\.7/);
 });
 
 test('the docked window survives a reload (per-device view state)', async ({ page }) => {
