@@ -289,7 +289,7 @@ test('rail tabs open the frame menu: color them like frames, rename via the pill
   await railTab.click({ button: 'right' });
   await page.locator('#context-menu .ctx-swatch[title="Purple"]').click();
   await expect(railTab).toHaveClass(/colored/);
-  await expect(page.locator('#dock-active')).toHaveClass(/colored/);
+  await expect(page.locator('#dock-active-name')).toHaveClass(/colored/);
   // …and it IS the frame's color (stored on the record, syncs like any color)
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   expect(await page.evaluate(() => {

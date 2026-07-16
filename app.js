@@ -1758,7 +1758,6 @@
   const dockViewport = document.getElementById('dock-viewport');
   const dockWorld = document.getElementById('dock-world');
   const dockRail = document.getElementById('dock-rail');
-  const dockActive = document.getElementById('dock-active');
   const dockActiveName = document.getElementById('dock-active-name');
   const dockSvg = document.createElementNS(SVGNS, 'svg');
   dockSvg.id = 'dock-connections';
@@ -1945,9 +1944,9 @@
     }
     const name = (fid) => (board.cards[fid] && board.cards[fid].title) || 'Frame';
     document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
-    // header pill: the ACTIVE frame — renamable, colored, × undocks
+    // header title: the ACTIVE frame's name in its color — renamable in place
     if (document.activeElement !== dockActiveName) dockActiveName.textContent = name(dock.active);
-    applyNodeColor(dockActive, board.cards[dock.active] && board.cards[dock.active].color);
+    applyNodeColor(dockActiveName, board.cards[dock.active] && board.cards[dock.active].color);
     // edge rail: one vertical tab per docked frame, in the frame's color
     dockRail.innerHTML = '';
     for (const t of dock.tabs) {
@@ -2077,12 +2076,8 @@
   document.getElementById('dockFitBtn').addEventListener('click', () => dockFitRegion());
   document.getElementById('dockMinBtn').addEventListener('click', () => setDockMinimized(true));
   document.getElementById('dockUndockBtn').addEventListener('click', () => undockFrame());
-  // header pill: rename inline, × undocks, right-click = the frame menu
-  document.getElementById('dock-active-undock').addEventListener('click', (e) => {
-    e.stopPropagation();
-    undockFrame();
-  });
-  dockActive.addEventListener('contextmenu', (e) => { if (dock) openDockTabMenu(e, dock.active); });
+  // header title: rename inline, right-click = the frame menu
+  dockActiveName.addEventListener('contextmenu', (e) => { if (dock) openDockTabMenu(e, dock.active); });
   makeRenamable(dockActiveName, {
     viaDblclick: true,               // double-click the pill name to rename too
     onCommit: (text) => {

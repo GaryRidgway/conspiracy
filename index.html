@@ -18,13 +18,10 @@
   <aside id="dock-panel" class="hidden" aria-label="Docked frame">
     <div id="dock-resizer" title="Drag to resize"></div>
     <div id="dock-header">
-      <!-- the active frame's pill: rename inline, right-click for the frame
-           menu (colors etc.), × undocks. Switching frames lives on the
-           EDGE RAIL (#dock-rail), one vertical tab per docked frame. -->
-      <div id="dock-active" title="Right-click for frame options">
-        <span id="dock-active-name" spellcheck="false"></span>
-        <button id="dock-active-undock" title="Undock this frame" aria-label="Undock">×</button>
-      </div>
+      <!-- the active frame's title, in its color: rename inline (double-click
+           or menu), right-click for the frame menu. Switching frames lives on
+           the EDGE RAIL (#dock-rail), one vertical tab per docked frame. -->
+      <span id="dock-active-name" spellcheck="false" title="Right-click for frame options"></span>
       <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
       <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen"><span class="icon icon-remove"></span></button>
       <button class="btn" id="dockUndockBtn" title="Return the frame to the canvas">Undock</button>

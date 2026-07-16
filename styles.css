@@ -622,47 +622,27 @@ body.docked #dock-rail { right: var(--dock-w, 420px); }
 .dock-rail-tab.colored { border-color: var(--node-color); color: var(--node-color-hi); }
 .dock-rail-tab.colored.active { color: var(--text); border-color: var(--node-color-hi); }
 
-/* header pill: the active frame's name — renamable, right-click for menu */
-#dock-active {
-  min-width: 0;
-  margin-right: auto;        /* pill hugs left, buttons hug right */
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.35rem 0.25rem 0.7rem;
-  background: var(--surface2);
-  border: 1px solid var(--accent-soft);
-  border-radius: 999px;
-}
-#dock-active.colored { border-color: var(--node-color); }
-#dock-active.colored #dock-active-name { color: var(--node-color-hi); }
+/* header title: the active frame's bare name in its color — no chrome,
+   renamable in place, right-click for the frame menu */
 #dock-active-name {
   min-width: 0;
+  margin-right: auto;        /* title hugs left, buttons hug right */
+  padding: 0.15rem 0.2rem;
   font-weight: 650;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   outline: none;
   border-radius: 4px;
 }
+#dock-active-name.colored { color: var(--node-color-hi); }
 #dock-active-name[contenteditable] {
   cursor: text;
   overflow: visible;
   background: var(--bg);
-  padding: 0 0.25rem;
+  padding: 0.15rem 0.3rem;
 }
-#dock-active-undock {
-  flex: none;
-  font-size: 1rem;
-  line-height: 1;
-  color: var(--text-3);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0 0.25rem;
-}
-#dock-active-undock:hover { color: var(--danger); }
 /* a docked frame leaves the canvas entirely — visibility (not display) so
    layout code can still measure its rect/tab for docked-button geometry */
 .frame-node.frame-docked { visibility: hidden; pointer-events: none; }
