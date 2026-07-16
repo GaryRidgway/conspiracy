@@ -577,82 +577,98 @@ body.space-pan #viewport.panning,
   transform-origin: 0 0;
 }
 #dock-connections { position: absolute; overflow: visible; }
-/* minimized: a labeled tab hugging the right edge */
-#dock-tab {
+/* Edge rail: one vertical tab per docked frame, hugging the panel's left
+   edge while it's open and the screen's right edge while minimized. Tabs
+   tint with their frame's color (border + text — flat faces, no fills). */
+#dock-rail {
   position: fixed;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 30;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 80vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+body.docked #dock-rail { right: var(--dock-w, 420px); }
+#dock-rail.hidden { display: none; }
+.dock-rail-tab {
   writing-mode: vertical-rl;
   padding: 0.8rem 0.35rem;
-  max-height: 40vh;
+  max-height: 32vh;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 650;
-  color: var(--text);
+  color: var(--text-2);
   background: var(--surface2);
-  border: 1px solid var(--accent-soft);
+  border: 1px solid var(--border2);
   border-right: none;
   border-radius: 10px 0 0 10px;
   box-shadow: -6px 0 22px rgba(0,0,0,0.4);
   cursor: pointer;
 }
-#dock-tab:hover { background: var(--border); }
-#dock-tab.hidden { display: none; }
+.dock-rail-tab:hover { background: var(--border); color: var(--text); }
+.dock-rail-tab.active {
+  color: var(--text);
+  border-color: var(--accent-soft);
+  background: var(--bg);
+}
+.dock-rail-tab.colored { border-color: var(--node-color); color: var(--node-color-hi); }
+.dock-rail-tab.colored.active { color: var(--text); border-color: var(--node-color-hi); }
+
+/* header pill: the active frame's name — renamable, right-click for menu */
+#dock-active {
+  min-width: 0;
+  margin-right: auto;        /* pill hugs left, buttons hug right */
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.7rem;
+  background: var(--surface2);
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+}
+#dock-active.colored { border-color: var(--node-color); }
+#dock-active.colored #dock-active-name { color: var(--node-color-hi); }
+#dock-active-name {
+  min-width: 0;
+  font-weight: 650;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  outline: none;
+  border-radius: 4px;
+}
+#dock-active-name[contenteditable] {
+  cursor: text;
+  overflow: visible;
+  background: var(--bg);
+  padding: 0 0.25rem;
+}
+#dock-active-undock {
+  flex: none;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+#dock-active-undock:hover { color: var(--danger); }
 /* a docked frame leaves the canvas entirely — visibility (not display) so
    layout code can still measure its rect/tab for docked-button geometry */
 .frame-node.frame-docked { visibility: hidden; pointer-events: none; }
 /* members of an INACTIVE dock tab: parked in the panel, invisible but
    measurable, waiting for their tab */
 .dock-stowed { visibility: hidden !important; pointer-events: none !important; }
-/* tab strip: one pill per docked frame */
-#dock-tabs {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  gap: 0.3rem;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.dock-tab-btn {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  max-width: 160px;
-  padding: 0.25rem 0.45rem 0.25rem 0.6rem;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 650;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.dock-tab-btn:hover { color: var(--text); border-color: var(--border2); }
-.dock-tab-btn.active {
-  color: var(--text);
-  background: var(--surface2);
-  border-color: var(--accent-soft);
-}
-.dock-tab-name {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dock-tab-close {
-  flex: none;
-  padding: 0 0.15rem;
-  color: var(--text-3);
-  border-radius: 4px;
-  line-height: 1;
-}
-.dock-tab-close:hover { color: var(--danger); background: var(--surface); }
 /* fixed chrome on the right slides left of the open panel */
 body.docked #zoombar { right: calc(var(--dock-w, 420px) + 1rem); }
 body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }

@@ -1074,6 +1074,7 @@
     }
     if (!changed) return;
     if (ids.some((id) => isPinned(id))) renderPinDock();   // chips tint too
+    if (ids.some((id) => isDockedFrame(id))) syncDockPanel();   // tab/pill tints too
     commit();
   }
 
@@ -1756,8 +1757,9 @@
   const dockPanel = document.getElementById('dock-panel');
   const dockViewport = document.getElementById('dock-viewport');
   const dockWorld = document.getElementById('dock-world');
-  const dockTab = document.getElementById('dock-tab');
-  const dockTabsEl = document.getElementById('dock-tabs');
+  const dockRail = document.getElementById('dock-rail');
+  const dockActive = document.getElementById('dock-active');
+  const dockActiveName = document.getElementById('dock-active-name');
   const dockSvg = document.createElementNS(SVGNS, 'svg');
   dockSvg.id = 'dock-connections';
   dockWorld.appendChild(dockSvg);   // url(#…) marker refs resolve document-wide
@@ -1881,12 +1883,14 @@
     if (!t) return;
     for (const id of ids) if (!t.members.includes(id) && !isDockedFrame(id) && !isPinned(id)) t.members.push(id);
     recomputeDockMembers();
+    flushViewport();                   // membership must survive an abrupt reload
   }
   function removeFromDock(ids) {
     if (!dock) return;
     const drop = new Set(ids);
     for (const t of dock.tabs) t.members = t.members.filter((id) => !drop.has(id));
     recomputeDockMembers();
+    flushViewport();
   }
   // Inactive tabs' members stay parented in the panel but invisible —
   // visibility (not display) so their geometry stays measurable.
@@ -1898,36 +1902,68 @@
   }
 
   // ── Open / close / switch / minimize ──
+  // The frame menu for a docked tab — rename, colors (tabs inherit the
+  // frame's color everywhere), default view, undock, delete. Opened by
+  // right-clicking the header pill or an edge-rail tab.
+  function openDockTabMenu(e, fid) {
+    e.preventDefault();
+    e.stopPropagation();
+    const d = board.cards[fid];
+    if (!d) return;
+    const isHome = !!d.homeView;
+    openContextMenu(e.clientX, e.clientY, [
+      { label: 'Rename', action: () => { setActiveDockTab(fid); setDockMinimized(false); beginRename(dockActiveName); } },
+      { label: 'Fit region', action: () => { setActiveDockTab(fid); setDockMinimized(false); dockFitRegion(); } },
+      {
+        label: (isHome ? '✓ ' : '') + 'Use as default view',
+        action: () => {
+          for (const c of Object.values(board.cards)) if (c.kind === 'frame') delete c.homeView;
+          if (!isHome) d.homeView = true;
+          commit();
+        },
+      },
+      'sep',
+      { swatches: true, current: d.color || null, onPick: (key) => setNodesColor([fid], key) },
+      'sep',
+      { label: 'Undock', action: () => undockFrame(fid) },
+      { label: 'Delete frame', danger: true, action: () => deleteNode(fid) },
+    ]);
+  }
   function syncDockPanel() {
     const open = !!dock;
     dockPanel.classList.toggle('hidden', !open || dock.minimized);
-    dockTab.classList.toggle('hidden', !open || !dock.minimized);
+    dockRail.classList.toggle('hidden', !open);
     document.body.classList.toggle('docked', open && !dock.minimized);
     // canvas ghosts: docked frames are stowed entirely off the board view
     for (const el of world.querySelectorAll('.frame-node.frame-docked')) {
       if (!isDockedFrame(el.dataset.id)) el.classList.remove('frame-docked');
     }
-    if (!open) { dockTabsEl.innerHTML = ''; return; }
+    if (!open) { dockRail.innerHTML = ''; return; }
     for (const t of dock.tabs) {
       const el = nodeEls.get(t.frameId);
       if (el) el.classList.add('frame-docked');
     }
     const name = (fid) => (board.cards[fid] && board.cards[fid].title) || 'Frame';
-    dockTab.textContent = name(dock.active) + (dock.tabs.length > 1 ? ' +' + (dock.tabs.length - 1) : '');
     document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
-    // one tab per docked frame: click switches, × undocks that frame
-    dockTabsEl.innerHTML = '';
+    // header pill: the ACTIVE frame — renamable, colored, × undocks
+    if (document.activeElement !== dockActiveName) dockActiveName.textContent = name(dock.active);
+    applyNodeColor(dockActive, board.cards[dock.active] && board.cards[dock.active].color);
+    // edge rail: one vertical tab per docked frame, in the frame's color
+    dockRail.innerHTML = '';
     for (const t of dock.tabs) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'dock-tab-btn' + (t.frameId === dock.active ? ' active' : '');
-      b.innerHTML = '<span class="dock-tab-name"></span><span class="dock-tab-close" title="Undock">×</span>';
-      b.querySelector('.dock-tab-name').textContent = name(t.frameId);
-      b.addEventListener('click', (e) => {
-        if (e.target.classList.contains('dock-tab-close')) undockFrame(t.frameId);
+      b.className = 'dock-rail-tab' + (t.frameId === dock.active && !dock.minimized ? ' active' : '');
+      b.textContent = name(t.frameId);
+      b.title = name(t.frameId);
+      applyNodeColor(b, board.cards[t.frameId] && board.cards[t.frameId].color);
+      b.addEventListener('click', () => {
+        if (dock.minimized) { setDockMinimized(false); setActiveDockTab(t.frameId); }
+        else if (dock.active === t.frameId) setDockMinimized(true);   // toggle away
         else setActiveDockTab(t.frameId);
       });
-      dockTabsEl.appendChild(b);
+      b.addEventListener('contextmenu', (e) => openDockTabMenu(e, t.frameId));
+      dockRail.appendChild(b);
     }
   }
   function setActiveDockTab(fid) {
@@ -1939,6 +1975,7 @@
     syncDockPanel();
     scheduleFrameEval();               // the incoming tab's embeds become visible
     commit({ viewportOnly: true });
+    flushViewport();                   // membership/arrangement saves immediately
   }
   // Fit the active frame's region into the panel (the tab's "home view").
   function dockFitRegion() {
@@ -1985,21 +2022,47 @@
     for (const cid of connEls.keys()) drawConnection(cid);   // stow states changed
     scheduleFrameEval();
     commit({ viewportOnly: true });    // persist dock state (view preference)
+    flushViewport();                   // …immediately: membership must survive an abrupt reload
   }
   function undockFrame(fid) {
     if (!dock) return;
     fid = fid || dock.active;
+    const tab = dock.tabs.find((t) => t.frameId === fid);
+    const d = board.cards[fid];
+    // members may live anywhere around the region (free surface) — grow the
+    // frame to CONTAIN them all before they land back on the canvas, so an
+    // undocked frame always fully encloses its contents
+    let grew = false;
+    if (tab && d && d.kind === 'frame') {
+      const pad = 24;
+      let minX = d.x, minY = d.y, maxX = d.x + d.w, maxY = d.y + d.h;
+      for (const id of tab.members) {
+        if (dockMembers.get(id) !== fid) continue;
+        const g = nodeGeom(id);
+        if (!g) continue;
+        minX = Math.min(minX, g.x - pad); minY = Math.min(minY, g.y - pad);
+        maxX = Math.max(maxX, g.x + g.w + pad); maxY = Math.max(maxY, g.y + g.h + pad);
+      }
+      if (minX < d.x || minY < d.y || maxX > d.x + d.w || maxY > d.y + d.h) {
+        d.x = Math.round(minX); d.y = Math.round(minY);
+        d.w = Math.round(maxX - minX); d.h = Math.round(maxY - minY);
+        grew = true;
+      }
+    }
     dock.tabs = dock.tabs.filter((t) => t.frameId !== fid);
     if (!dock.tabs.length) dock = null;
     else if (dock.active === fid) dock.active = dock.tabs[0].frameId;
     recomputeDockMembers();            // that region's nodes go back to the canvas
     syncDockPanel();
+    if (board.cards[fid]) renderCard(fid);   // apply the (possibly grown) rect
     const f = nodeEls.get(fid);
     if (f) f.classList.remove('frame-docked');
     for (const cid of connEls.keys()) drawConnection(cid);
     applyDockViewport();
     scheduleFrameEval();
-    commit({ viewportOnly: true });
+    if (grew) commit();                // the resize is board content
+    else commit({ viewportOnly: true });
+    flushViewport();
   }
   function setDockMinimized(min) {
     if (!dock || dock.minimized === !!min) return;
@@ -2007,13 +2070,30 @@
     syncDockPanel();
     scheduleFrameEval();               // embeds pause/resume with visibility
     commit({ viewportOnly: true });
+    flushViewport();
   }
 
   // ── Panel chrome wiring ──
   document.getElementById('dockFitBtn').addEventListener('click', () => dockFitRegion());
   document.getElementById('dockMinBtn').addEventListener('click', () => setDockMinimized(true));
   document.getElementById('dockUndockBtn').addEventListener('click', () => undockFrame());
-  dockTab.addEventListener('click', () => setDockMinimized(false));
+  // header pill: rename inline, × undocks, right-click = the frame menu
+  document.getElementById('dock-active-undock').addEventListener('click', (e) => {
+    e.stopPropagation();
+    undockFrame();
+  });
+  dockActive.addEventListener('contextmenu', (e) => { if (dock) openDockTabMenu(e, dock.active); });
+  makeRenamable(dockActiveName, {
+    viaDblclick: true,               // double-click the pill name to rename too
+    onCommit: (text) => {
+      const d = dock && board.cards[dock.active];
+      if (!d) return;
+      d.title = text.trim();
+      if (nodeEls.has(dock.active)) renderCard(dock.active);   // hidden el keeps its label in sync
+      commit();
+      syncDockPanel();
+    },
+  });
   // width resizer on the panel's left edge
   document.getElementById('dock-resizer').addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !dock) return;

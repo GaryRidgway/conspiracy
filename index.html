@@ -18,7 +18,13 @@
   <aside id="dock-panel" class="hidden" aria-label="Docked frame">
     <div id="dock-resizer" title="Drag to resize"></div>
     <div id="dock-header">
-      <div id="dock-tabs" role="tablist" aria-label="Docked frames"></div>
+      <!-- the active frame's pill: rename inline, right-click for the frame
+           menu (colors etc.), × undocks. Switching frames lives on the
+           EDGE RAIL (#dock-rail), one vertical tab per docked frame. -->
+      <div id="dock-active" title="Right-click for frame options">
+        <span id="dock-active-name" spellcheck="false"></span>
+        <button id="dock-active-undock" title="Undock this frame" aria-label="Undock">×</button>
+      </div>
       <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
       <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen"><span class="icon icon-remove"></span></button>
       <button class="btn" id="dockUndockBtn" title="Return the frame to the canvas">Undock</button>
@@ -27,7 +33,10 @@
       <div id="dock-world"></div>
     </div>
   </aside>
-  <button id="dock-tab" class="hidden" title="Restore the docked frame"></button>
+  <!-- Edge rail: one vertical tab per docked frame, always visible while
+       anything is docked (panel open or minimized) — click to switch/restore,
+       click the active one to minimize, right-click for the frame menu. -->
+  <div id="dock-rail" class="hidden" role="tablist" aria-label="Docked frames"></div>
 
   <!-- Centered guidance shown only while the board is empty -->
   <div id="empty-hint" class="hidden">

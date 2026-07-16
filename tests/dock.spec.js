@@ -64,7 +64,7 @@ test('docking a frame moves its contents into the panel; undocking returns them'
   const outside = await addCardAt(page, 150, 640);           // canvas-only
   await dockViaMenu(page);
 
-  await expect(page.locator('#dock-tabs .dock-tab-btn')).toHaveText(/Frame/);
+  await expect(page.locator('#dock-active-name')).toHaveText('Frame');
   expect(await parentWorld(inside)).toBe('dock-world');      // region node → panel
   expect(await parentWorld(outside)).toBe('world');          // the rest stays put
   await expect(page.locator('.frame-node')).toHaveClass(/frame-docked/);
@@ -190,9 +190,10 @@ test('multiple frames dock as tabs: switching stows one region and shows the oth
   await page.locator('.frame-node:not(.frame-docked) .frame-tab').click({ button: 'right' });
   await page.locator('#context-menu .ctx-item', { hasText: 'Dock to side panel' }).click();
 
-  const tabs = page.locator('#dock-tabs .dock-tab-btn');
+  const tabs = page.locator('#dock-rail .dock-rail-tab');
   await expect(tabs).toHaveCount(2);
   await expect(tabs.nth(1)).toHaveClass(/active/);            // newest tab is active
+  await expect(page.locator('#dock-active-name')).toHaveText('Beta');
   await expect(cardB).toBeVisible();                          // Beta's card shows
   await expect(cardA).toBeHidden();                           // Alpha's card is stowed
   expect(await parentWorld(cardA)).toBe('dock-world');        // …but still off-canvas
@@ -201,20 +202,21 @@ test('multiple frames dock as tabs: switching stows one region and shows the oth
   await expect(cardA).toBeVisible();
   await expect(cardB).toBeHidden();
 
-  // close Beta's tab: its region returns to the canvas, Alpha stays docked
-  await tabs.nth(1).locator('.dock-tab-close').click();
-  await expect(page.locator('#dock-tabs .dock-tab-btn')).toHaveCount(1);
+  // undock Beta via its rail tab's context menu: its region returns to the
+  // canvas, Alpha stays docked
+  await tabs.nth(1).click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Undock' }).click();
+  await expect(page.locator('#dock-rail .dock-rail-tab')).toHaveCount(1);
   expect(await parentWorld(cardB)).toBe('world');
   expect(await parentWorld(cardA)).toBe('dock-world');
 
   // both-tab arrangement survives reload
   await page.locator('.frame-node:not(.frame-docked) .frame-tab').click({ button: 'right' });
   await page.locator('#context-menu .ctx-item', { hasText: 'Dock to side panel' }).click();
-  await expect(page.locator('#dock-tabs .dock-tab-btn')).toHaveCount(2);
+  await expect(page.locator('#dock-rail .dock-rail-tab')).toHaveCount(2);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
-  await page.waitForTimeout(500);
   await page.reload();
-  await expect(page.locator('#dock-tabs .dock-tab-btn')).toHaveCount(2);
+  await expect(page.locator('#dock-rail .dock-rail-tab')).toHaveCount(2);
 });
 
 test('a member dropped in the panel\'s top third stays exactly where dropped (no snap-away)', async ({ page }) => {
@@ -262,13 +264,81 @@ test('minimize flies the region off screen to an edge tab; restore brings it bac
 
   await page.click('#dockMinBtn');
   await expect(page.locator('#dock-panel')).toBeHidden();
-  await expect(page.locator('#dock-tab')).toBeVisible();
-  await expect(page.locator('#dock-tab')).toHaveText('Frame');
+  const railTab = page.locator('#dock-rail .dock-rail-tab');
+  await expect(railTab).toBeVisible();
+  await expect(railTab).toHaveText('Frame');
   await expect(card).toBeHidden();                           // stowed with the panel
 
-  await page.click('#dock-tab');
+  await railTab.click();
   await expect(page.locator('#dock-panel')).toBeVisible();
   await expect(card).toBeVisible();
+
+  // clicking the ACTIVE rail tab minimizes again (fewer-clicks toggle)
+  await railTab.click();
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await railTab.click();
+  await expect(page.locator('#dock-panel')).toBeVisible();
+});
+
+test('rail tabs open the frame menu: color them like frames, rename via the pill', async ({ page }) => {
+  await addFrame(page);
+  await dockViaMenu(page);
+  const railTab = page.locator('#dock-rail .dock-rail-tab');
+
+  // color from the tab's right-click menu — the tab AND the header pill tint
+  await railTab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Purple"]').click();
+  await expect(railTab).toHaveClass(/colored/);
+  await expect(page.locator('#dock-active')).toHaveClass(/colored/);
+  // …and it IS the frame's color (stored on the record, syncs like any color)
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect(await page.evaluate(() => {
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+    return Object.values(b.cards).find((c) => c.kind === 'frame').color;
+  })).toBe('purple');
+
+  // rename from the same menu, editing the header pill in place
+  await railTab.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Rename' }).click();
+  await page.keyboard.type('War room');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#dock-active-name')).toHaveText('War room');
+  await expect(railTab).toHaveText('War room');
+
+  // undock: the frame comes back colored and renamed
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('.frame-node')).toHaveClass(/colored/);
+  await expect(page.locator('.frame-node .frame-name')).toHaveText('War room');
+});
+
+test('undocking grows the frame to fully contain members placed outside its rect', async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 300);
+  const id = await card.getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await dockViaMenu(page);
+
+  // park the member in the panel's top area — world space above the rect
+  const pv = await page.locator('#dock-viewport').boundingBox();
+  const hb = await card.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + 24, y: hb.y + 10 }, { x: pv.x + pv.width / 2, y: pv.y + pv.height * 0.12 });
+  expect(await parentWorld(card)).toBe('dock-world');
+
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  // the frame's rect now fully contains the card
+  const rec = await page.evaluate((id) => {
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+    const fr = Object.values(b.cards).find((c) => c.kind === 'frame');
+    const el = document.querySelector(`.node.card[data-id="${id}"]`);
+    const c = b.cards[id];
+    return { fr, card: { x: c.x, y: c.y, w: el.offsetWidth, h: el.offsetHeight } };
+  }, id);
+  expect(rec.card.x).toBeGreaterThanOrEqual(rec.fr.x);
+  expect(rec.card.y).toBeGreaterThanOrEqual(rec.fr.y);
+  expect(rec.card.x + rec.card.w).toBeLessThanOrEqual(rec.fr.x + rec.fr.w);
+  expect(rec.card.y + rec.card.h).toBeLessThanOrEqual(rec.fr.y + rec.fr.h);
 });
 
 test('the docked window survives a reload (per-device view state)', async ({ page }) => {
