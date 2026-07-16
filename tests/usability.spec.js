@@ -710,6 +710,43 @@ test('image pastes inline into a card being edited; remote images are stripped',
   expect(srcs[0].startsWith('data:image/')).toBe(true);
 });
 
+// A table pasted from GitHub/docs keeps its structure: the sanitizer lets
+// table tags (and cell spans) through, and it survives an edit + save cycle
+// instead of collapsing into a run of text.
+test('pasted table structure survives sanitization and edits', async ({ page }) => {
+  // seed via the legacy key before boot — mutating the live board key races
+  // with the app's unload flush, which rewrites the board from memory
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('whiteboard', JSON.stringify({
+      schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
+      connections: {},
+      cards: { c_t: { x: 120, y: 120, title: 'tabled', body:
+        '<table onclick="x()"><thead><tr><th>Col A</th><th style="color:red" colspan="2">Col B</th></tr></thead>' +
+        '<tbody><tr><td>1</td><td rowspan="junk">2</td><td>3</td></tr></tbody></table>' } },
+    }));
+  });
+  await page.reload();
+
+  const body = page.locator('.node.card .card-body');
+  await expect(body.locator('table')).toHaveCount(1);
+  await expect(body.locator('th')).toHaveCount(2);
+  await expect(body.locator('td')).toHaveCount(3);
+  await expect(body.locator('th[colspan="2"]')).toHaveCount(1);
+  // event handlers, inline styles, and malformed spans are all stripped
+  expect(await body.innerHTML()).not.toMatch(/onclick|style=|rowspan/);
+
+  // editing the card (which re-saves through the sanitizer) keeps the table
+  await body.click();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' edited');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  await expect(page.locator('.node.card .card-body table')).toHaveCount(1);
+  await expect(page.locator('.node.card .card-body th[colspan="2"]')).toHaveCount(1);
+});
+
 // SECURITY: board content is untrusted (a shared Drive board or imported JSON
 // is authored by someone else). An <iframe src="javascript:…"> executes in
 // THIS page's origin (the frame has no sandbox), which would be stored XSS

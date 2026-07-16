@@ -4815,7 +4815,10 @@
   //  RICH TEXT — card bodies are sanitized HTML, edited with a
   //  mini toolbar (bold / italic / list) and inline node links.
   // ════════════════════════════════════════════════════════
-  const ALLOWED_TAGS = new Set(['B', 'I', 'EM', 'STRONG', 'U', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'A', 'IMG']);
+  // Tables aren't offered by the toolbar, but pasted ones (GitHub, docs)
+  // keep their structure rather than collapsing to a run of text.
+  const ALLOWED_TAGS = new Set(['B', 'I', 'EM', 'STRONG', 'U', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'A', 'IMG',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION']);
 
   function sanitizeHtml(html) {
     const src = document.createElement('div');
@@ -4838,6 +4841,14 @@
             return;
           }
           const el = document.createElement(n.tagName.toLowerCase());
+          // Cell spans are structure, not styling — without them a spanned
+          // table re-flows into the wrong columns.
+          if (n.tagName === 'TD' || n.tagName === 'TH') {
+            for (const attr of ['colspan', 'rowspan']) {
+              const v = n.getAttribute(attr);
+              if (v && /^\d+$/.test(v)) el.setAttribute(attr, v);
+            }
+          }
           if (n.tagName === 'A') {
             const href = n.getAttribute('href') || '';
             const isNode = n.classList.contains('node-link');

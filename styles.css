@@ -941,6 +941,23 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   margin: 0.25rem 0;
 }
 
+/* Pasted tables (GitHub, docs) — no table editing UI, but the structure
+   survives sanitization and reads cleanly. */
+.card-body table {
+  border-collapse: collapse;
+  margin: 0.25rem 0;
+  max-width: 100%;
+  font-size: 0.95em;
+}
+.card-body th,
+.card-body td {
+  border: 1px solid var(--border2);
+  padding: 3px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.card-body th { background: var(--surface2); font-weight: 600; }
+
 .tool-btn {
   display: flex;
   flex-direction: column;
