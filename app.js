@@ -4461,6 +4461,47 @@
   document.getElementById('clear-cancel').addEventListener('click', closeClearModal);
   clearModal.addEventListener('pointerdown', (e) => { if (e.target === clearModal) closeClearModal(); });
 
+  // ── Delete board (typed-DELETE confirmation modal) ──
+  // Clearing a board demands typed confirmation; deleting a whole board is
+  // strictly bigger, so it can't hide behind a double-click on a trash icon.
+  const deleteBoardModal = document.getElementById('delete-board-modal');
+  const deleteBoardInput = document.getElementById('delete-board-confirm');
+  const deleteBoardBtn = document.getElementById('delete-board-btn');
+  let deleteBoardTarget = null;
+  function openDeleteBoardModal(id) {
+    const entry = libraryEntry(id);
+    if (!entry) return;
+    deleteBoardTarget = id;
+    document.getElementById('delete-board-name').textContent = entry.name;
+    // a Drive-backed board only leaves this device — its file survives
+    document.getElementById('delete-board-note').textContent = entry.mode === 'drive'
+      ? 'This removes the board from this device. Its file stays in your Google Drive.'
+      : 'This permanently deletes the board and everything on it. There is no undo.';
+    rememberModalFocus();
+    deleteBoardModal.classList.remove('hidden');
+    deleteBoardInput.value = '';
+    deleteBoardBtn.disabled = true;
+    deleteBoardInput.focus();
+  }
+  function closeDeleteBoardModal() {
+    deleteBoardTarget = null;
+    deleteBoardModal.classList.add('hidden');
+    restoreModalFocus();
+  }
+  function confirmDeleteBoard() {
+    if (deleteBoardInput.value !== 'DELETE' || !deleteBoardTarget) return;
+    const id = deleteBoardTarget;
+    closeDeleteBoardModal();
+    removeBoard(id);
+  }
+  deleteBoardInput.addEventListener('input', () => { deleteBoardBtn.disabled = deleteBoardInput.value !== 'DELETE'; });
+  deleteBoardInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmDeleteBoard(); }
+  });
+  deleteBoardBtn.addEventListener('click', confirmDeleteBoard);
+  document.getElementById('delete-board-cancel').addEventListener('click', closeDeleteBoardModal);
+  deleteBoardModal.addEventListener('pointerdown', (e) => { if (e.target === deleteBoardModal) closeDeleteBoardModal(); });
+
   // ── JSON export / import — a portable backup, same shape as the cloud doc ──
   function boardIsEmpty() {
     return !Object.keys(board.cards).length &&
@@ -4621,6 +4662,11 @@
     if (e.key === 'Escape' && !clearModal.classList.contains('hidden')) {
       e.preventDefault();
       closeClearModal();
+      return;
+    }
+    if (e.key === 'Escape' && !deleteBoardModal.classList.contains('hidden')) {
+      e.preventDefault();
+      closeDeleteBoardModal();
       return;
     }
     if (e.key === 'Escape' && blModal && !blModal.classList.contains('hidden')) {
@@ -6115,7 +6161,7 @@
         '<span class="board-row-name" spellcheck="false"></span>' +
         '<span class="board-badge"></span>' +
         '<button class="board-rename icon-btn" title="Rename"><span class="icon icon-edit"></span></button>' +
-        '<button class="board-remove icon-btn" title="Remove board"><span class="icon icon-delete"></span></button>';
+        '<button class="board-remove icon-btn" title="Delete board"><span class="icon icon-delete"></span></button>';
       const nameEl = row.querySelector('.board-row-name');
       nameEl.textContent = entry.name;
       row.querySelector('.board-badge').textContent = entry.mode === 'drive' ? 'Drive' : 'Device';
@@ -6145,12 +6191,9 @@
         renameBoard(entry.id, nameEl.textContent);
       });
       row.querySelector('.board-rename').addEventListener('click', (e) => { e.stopPropagation(); beginRename(nameEl); });
-      const rm = row.querySelector('.board-remove');
-      rm.addEventListener('click', (e) => {
+      row.querySelector('.board-remove').addEventListener('click', (e) => {
         e.stopPropagation();
-        if (rm.dataset.armed) { removeBoard(entry.id); return; }
-        rm.dataset.armed = '1'; rm.classList.add('armed'); rm.title = 'Click again to delete';
-        setTimeout(() => { rm.removeAttribute('data-armed'); rm.classList.remove('armed'); rm.title = 'Remove board'; }, 2500);
+        openDeleteBoardModal(entry.id);
       });
       boardList.appendChild(row);
     }

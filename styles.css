@@ -1045,7 +1045,6 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
 .board-row:hover .board-rename, .board-row:hover .board-remove { opacity: 0.6; }
 .board-rename:hover { opacity: 1; }
 .board-remove:hover { opacity: 1; background: rgba(255,138,122,0.14); color: var(--danger); border-color: rgba(255,138,122,0.4); }
-.board-remove.armed { opacity: 1; background: rgba(255,138,122,0.2); color: var(--danger); border-color: var(--danger); }
 .board-menu-actions {
   display: flex;
   gap: 0.4rem;

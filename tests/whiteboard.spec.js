@@ -719,6 +719,42 @@ test('board picker: rename persists and shows in the toolbar', async ({ page }) 
   await expect(page.locator('#board-name')).toHaveText('Planning');
 });
 
+// Deleting a board is strictly bigger than clearing one, so it demands the
+// same typed confirmation — and nothing short of it (Escape, a wrong word)
+// touches the board.
+test('board picker: deleting a board demands typed confirmation', async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'Keep me' });
+  await page.keyboard.press('Escape');
+  await page.click('#boardMenuBtn');
+  await page.click('#newBoardBtn');                       // "Board 2" opens, empty and current
+  await expect(page.locator('.node.card')).toHaveCount(0);
+
+  const modal = page.locator('#delete-board-modal');
+  await page.click('#boardMenuBtn');
+  await page.locator('.board-row.current .board-remove').click();
+  await expect(modal).toBeVisible();
+  await expect(page.locator('#delete-board-name')).toHaveText('Board 2');
+
+  // a wrong word arms nothing — Enter and the button both refuse
+  await page.keyboard.type('DELET');
+  await expect(page.locator('#delete-board-btn')).toBeDisabled();
+  await page.keyboard.press('Enter');
+  await expect(modal).toBeVisible();
+  // Escape backs out without touching the library
+  await page.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
+  await expect(page.locator('.board-row')).toHaveCount(2);
+
+  // the typed word deletes: the board vanishes and its neighbor opens
+  await page.locator('.board-row.current .board-remove').click();
+  await page.keyboard.type('DELETE');
+  await page.keyboard.press('Enter');
+  await expect(modal).toBeHidden();
+  await expect(page.locator('.card-title')).toHaveText('Keep me');
+  await page.click('#boardMenuBtn');
+  await expect(page.locator('.board-row')).toHaveCount(1);
+});
+
 test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });

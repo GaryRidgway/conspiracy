@@ -228,6 +228,22 @@
     </div>
   </div>
 
+  <!-- Board deletion confirmation: requires typing DELETE (a whole board is
+       strictly bigger than a Clear, which already demands typing) -->
+  <div id="delete-board-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-board-title">
+      <h2 id="delete-board-title">Delete “<span id="delete-board-name">this board</span>”?</h2>
+      <p class="modal-note" id="delete-board-note">This permanently deletes the board and everything on it.</p>
+      <label class="modal-label" for="delete-board-confirm">Type <strong>DELETE</strong> to confirm</label>
+      <input id="delete-board-confirm" type="text" placeholder="DELETE"
+             autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="modal-actions">
+        <button class="btn" id="delete-board-cancel">Cancel</button>
+        <button class="btn danger" id="delete-board-btn" disabled>Delete board</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Button link picker: a URL, or a board item to fly to -->
   <div id="button-link-modal" class="modal-overlay hidden">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="button-link-title">
