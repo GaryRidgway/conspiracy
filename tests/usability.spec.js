@@ -180,64 +180,72 @@ test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', 
   await expect(card.locator('.card-body')).toHaveText('?');
 });
 
-test('settings: cog opens the panel and the fly-to preference persists', async ({ page }) => {
-  await page.click('#settingsBtn');
-  await expect(page.locator('#settings-panel')).toBeVisible();
-  // the two dropdowns share the corner — opening one closes the other
-  await page.click('#helpBtn');
-  await expect(page.locator('#help-panel')).toBeVisible();
-  await expect(page.locator('#settings-panel')).toBeHidden();
-  await page.click('#settingsBtn');
-  await expect(page.locator('#settings-panel')).toBeVisible();
-  await expect(page.locator('#help-panel')).toBeHidden();
+// The suite's storageState pre-seeds fly-to OFF (see playwright.config.js);
+// these tests are about the setting itself, so they start from a clean
+// profile where the app's own default (ON) shows.
+test.describe('settings and fly-to', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
 
-  await expect(page.locator('#setFlyTo')).not.toBeChecked();
-  await page.check('#setFlyTo');
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#settings-panel')).toBeHidden();
+  test('settings: cog opens the panel and the fly-to preference persists', async ({ page }) => {
+    await page.click('#settingsBtn');
+    await expect(page.locator('#settings-panel')).toBeVisible();
+    // the two dropdowns share the corner — opening one closes the other
+    await page.click('#helpBtn');
+    await expect(page.locator('#help-panel')).toBeVisible();
+    await expect(page.locator('#settings-panel')).toBeHidden();
+    await page.click('#settingsBtn');
+    await expect(page.locator('#settings-panel')).toBeVisible();
+    await expect(page.locator('#help-panel')).toBeHidden();
 
-  await page.reload();
-  await page.click('#settingsBtn');
-  await expect(page.locator('#setFlyTo')).toBeChecked();
-});
+    await expect(page.locator('#setFlyTo')).toBeChecked();   // on by default
+    await page.uncheck('#setFlyTo');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#settings-panel')).toBeHidden();
 
-// The fly-to preference: navigation cuts instantly by default; with the
-// setting on the camera glides through in-between frames to the SAME spot.
-test('fly-to setting: deep-link navigation glides to the same destination', async ({ page }) => {
-  const aid = await (await addCardAt(page, 260, 300)).getAttribute('data-id');
-  const bid = await (await addCardAt(page, 950, 550)).getAttribute('data-id');
+    await page.reload();
+    await page.click('#settingsBtn');
+    await expect(page.locator('#setFlyTo')).not.toBeChecked();
+  });
 
-  // jump via deep link, sampling the world transform each frame for 900ms of
-  // wall time (past the longest flight) — headless rAF can run unthrottled,
-  // so a frame COUNT can elapse before the animation does
-  const flight = (id) => page.evaluate((nid) => new Promise((res) => {
-    const el = document.getElementById('world');
-    const seen = [];
-    const start = performance.now();
-    const tick = () => {
-      seen.push(el.style.transform);
-      if (performance.now() - start < 900) requestAnimationFrame(tick); else res(seen);
-    };
-    location.hash = '#node=' + nid;
-    requestAnimationFrame(tick);
-  }), id);
-  const nums = (t) => t.match(/-?[\d.]+/g).map(Number);
-  const near = (a, b) => nums(a).every((v, i) => Math.abs(v - nums(b)[i]) < 1);
+  test('fly-to setting: deep-link navigation glides to the same destination', async ({ page }) => {
+    const aid = await (await addCardAt(page, 260, 300)).getAttribute('data-id');
+    const bid = await (await addCardAt(page, 950, 550)).getAttribute('data-id');
 
-  // default: a cut — the camera is at B within a frame or two
-  const cut = await flight(bid);
-  const finalB = cut[cut.length - 1];
-  expect(new Set(cut).size).toBeLessThanOrEqual(3);
+    // jump via deep link, sampling the world transform each frame for 900ms of
+    // wall time (past the longest flight) — headless rAF can run unthrottled,
+    // so a frame COUNT can elapse before the animation does
+    const flight = (id) => page.evaluate((nid) => new Promise((res) => {
+      const el = document.getElementById('world');
+      const seen = [];
+      const start = performance.now();
+      const tick = () => {
+        seen.push(el.style.transform);
+        if (performance.now() - start < 900) requestAnimationFrame(tick); else res(seen);
+      };
+      location.hash = '#node=' + nid;
+      requestAnimationFrame(tick);
+    }), id);
+    const nums = (t) => t.match(/-?[\d.]+/g).map(Number);
+    const near = (a, b) => nums(a).every((v, i) => Math.abs(v - nums(b)[i]) < 1);
 
-  await flight(aid);                     // reposition at A
-  await page.click('#settingsBtn');
-  await page.check('#setFlyTo');
-  await page.keyboard.press('Escape');
+    // setting off: a cut — the camera is at B within a frame or two
+    await page.click('#settingsBtn');
+    await page.uncheck('#setFlyTo');
+    await page.keyboard.press('Escape');
+    const cut = await flight(bid);
+    const finalB = cut[cut.length - 1];
+    expect(new Set(cut).size).toBeLessThanOrEqual(3);
 
-  const glide = await flight(bid);
-  expect(new Set(glide).size).toBeGreaterThanOrEqual(6);   // eased in-between frames
-  expect(glide[glide.length - 1]).toBe(glide[glide.length - 2]);   // …that settle
-  expect(near(glide[glide.length - 1], finalB)).toBe(true);        // on the same landing spot
+    await flight(aid);                     // reposition at A
+    await page.click('#settingsBtn');
+    await page.check('#setFlyTo');
+    await page.keyboard.press('Escape');
+
+    const glide = await flight(bid);
+    expect(new Set(glide).size).toBeGreaterThanOrEqual(6);   // eased in-between frames
+    expect(glide[glide.length - 1]).toBe(glide[glide.length - 2]);   // …that settle
+    expect(near(glide[glide.length - 1], finalB)).toBe(true);        // on the same landing spot
+  });
 });
 
 // Connection handles reveal only near the cursor's side of the node, so a

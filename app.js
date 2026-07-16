@@ -5452,7 +5452,7 @@
   //  stored under their own local key, never synced or merged.
   // ════════════════════════════════════════════════════════
   const SETTINGS_KEY = 'whiteboard:settings';
-  const settings = { flyTo: false };
+  const settings = { flyTo: true };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* absent/corrupt → defaults */ }
   function saveSettings() {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* quota */ }

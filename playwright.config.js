@@ -14,6 +14,18 @@ module.exports = defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'on-first-retry',
+    // Fly-to navigation defaults ON in the app; the suite pre-seeds it OFF so
+    // every jump stays the instant cut the tests were written against. (Not
+    // via reducedMotion emulation: the app's reduce CSS turns every style
+    // change into a 0.01ms transition, which lags rects by a frame — racy.)
+    // Suites testing the animation itself override with a clean storageState.
+    storageState: {
+      cookies: [],
+      origins: [{
+        origin: `http://localhost:${PORT}`,
+        localStorage: [{ name: 'whiteboard:settings', value: '{"flyTo":false}' }],
+      }],
+    },
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
