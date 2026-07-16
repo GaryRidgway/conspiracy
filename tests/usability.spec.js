@@ -1263,6 +1263,22 @@ const nodePos = (loc) => loc.evaluate((el) => ({
   w: el.offsetWidth, h: el.offsetHeight,
 }));
 
+// A button's name defines its width: a long label grows the pill instead of
+// being clipped at an arbitrary cap — how wide a button gets is the user's call.
+test('a long button name expands the button instead of truncating', async ({ page }) => {
+  const btn = await addFreeButton(page);
+  await btn.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Rename' }).click();
+  const name = 'Take me to the very long and extremely specific place on the board';
+  await page.keyboard.type(name);
+  await page.keyboard.press('Enter');
+  await expect(btn).toHaveText(name);
+  // the full label is visible — nothing scrolled out of the clip
+  expect(await btn.locator('.btn-node-label').evaluate(
+    (el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  expect((await btn.boundingBox()).width).toBeGreaterThan(320);   // the old cap
+});
+
 test('a button docks to a card bottom, rides its drags, and detaches via right-click', async ({ page }) => {
   const card = await addCardAt(page, 500, 280);
   const btn = await addFreeButton(page);

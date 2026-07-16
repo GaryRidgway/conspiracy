@@ -252,7 +252,9 @@ body.space-pan #viewport.panning,
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  max-width: 320px;
+  /* no width cap: a free button sizes to its full label — the name the user
+     typed IS the width they chose. Tray tabs are the exception (explicit
+     equal widths from layoutAttachments, ellipsis picks up the slack). */
   padding: 0.35rem 1.5rem 0.35rem 0.4rem;
   --btn-ring: transparent;           /* selection ring slot */
   /* flat face, but card-level shadow: a control must sit at least as
@@ -321,7 +323,6 @@ body.space-pan #viewport.panning,
    Frame title rows and button chains: a segmented run growing rightward —
    every chip flattens its left (touching) side, only the last rounds off. */
 .btn-node.attached-bottom {
-  max-width: none;                     /* tray tabs span, chips don't */
   padding: 0.35rem 0.75rem 0.35rem 0.5rem;   /* left-aligned, like list rows */
   border-radius: 0;
 }
