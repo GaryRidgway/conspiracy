@@ -673,6 +673,18 @@ test('pasting an image on the canvas creates an image card that persists', async
   await expect(page.locator('.node.card .card-body img')).toHaveCount(1);
 });
 
+// A pasted screenshot lands under the cursor (not the viewport centre) — the
+// node's client-space top-left should match where the mouse last was.
+test('pasted image lands under the cursor', async ({ page }) => {
+  await page.mouse.move(210, 460);
+  await pasteImage(page);
+  const node = page.locator('.node.card');
+  await expect(node.locator('.card-body img')).toHaveCount(1);
+  const box = await node.boundingBox();
+  expect(Math.abs(box.x - 210)).toBeLessThan(3);
+  expect(Math.abs(box.y - 460)).toBeLessThan(3);
+});
+
 // Pasting while editing a card drops the image inline; remote <img> tags are
 // stripped by the sanitizer (data URIs only — no tracking pixels).
 test('image pastes inline into a card being edited; remote images are stripped', async ({ page }) => {

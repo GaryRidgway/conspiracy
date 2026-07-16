@@ -3172,6 +3172,11 @@
   const MAX_IMG_DIM = 1600;                 // px, longest edge after downscale
   const MAX_IMG_CHARS = 1.5 * 1024 * 1024;  // ~data-URI budget per image
 
+  // Last known cursor position — a pasted screenshot lands under the cursor
+  // (which may be outside the current viewport centre, or over the panel).
+  let lastClient = null;
+  document.addEventListener('pointermove', (e) => { lastClient = { x: e.clientX, y: e.clientY }; }, { passive: true });
+
   function imageFileToDataUri(file) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
@@ -3219,6 +3224,17 @@
     const sel = window.getSelection();
     const range = inCardBody && sel && sel.rangeCount && ae.contains(sel.anchorNode)
       ? sel.getRangeAt(0) : null;
+    // Drop point too — the mouse may move during the encode. Only trust the
+    // cursor when it's actually over a board surface; over chrome (or never
+    // moved), fall back to the viewport centre.
+    let drop = null;
+    if (!inCardBody && lastClient) {
+      const under = document.elementFromPoint(lastClient.x, lastClient.y);
+      if (under && under.closest('#viewport, #dock-viewport')) {
+        const ctx = pointerCtx(lastClient.x, lastClient.y);
+        drop = { ...ctxToWorld(ctx, lastClient.x, lastClient.y), intoDock: ctx === 'dock' };
+      }
+    }
 
     imageFileToDataUri(file).then((uri) => {
       if (inCardBody) {
@@ -3233,10 +3249,12 @@
         const r = visibleRect();
         const id = newId('c_');
         board.cards[id] = {
-          x: Math.round(r.x + r.w / 2 - 130), y: Math.round(r.y + r.h / 2 - 90),
+          x: drop ? Math.round(drop.x) : Math.round(r.x + r.w / 2 - 130),
+          y: drop ? Math.round(drop.y) : Math.round(r.y + r.h / 2 - 90),
           title: '', body: '<img src="' + uri + '">',
         };
         renderCard(id);
+        if (drop && drop.intoDock) addToDockTab([id]);
         selectNode(id);
         commit();
       }
