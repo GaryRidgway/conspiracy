@@ -602,12 +602,57 @@ body.space-pan #viewport.panning,
 }
 #dock-tab:hover { background: var(--border); }
 #dock-tab.hidden { display: none; }
-/* the docked frame's canvas presence collapses to its tab: the region lives
-   in the panel now, and moving/resizing it from here is disabled */
-.frame-node.frame-docked { border-style: dashed; opacity: 0.6; }
-.frame-node.frame-docked .frame-edge,
-.frame-node.frame-docked .frame-resize { display: none; }
-.frame-node.frame-docked .frame-tab { cursor: default; }
+/* a docked frame leaves the canvas entirely — visibility (not display) so
+   layout code can still measure its rect/tab for docked-button geometry */
+.frame-node.frame-docked { visibility: hidden; pointer-events: none; }
+/* members of an INACTIVE dock tab: parked in the panel, invisible but
+   measurable, waiting for their tab */
+.dock-stowed { visibility: hidden !important; pointer-events: none !important; }
+/* tab strip: one pill per docked frame */
+#dock-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dock-tab-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 160px;
+  padding: 0.25rem 0.45rem 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dock-tab-btn:hover { color: var(--text); border-color: var(--border2); }
+.dock-tab-btn.active {
+  color: var(--text);
+  background: var(--surface2);
+  border-color: var(--accent-soft);
+}
+.dock-tab-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-tab-close {
+  flex: none;
+  padding: 0 0.15rem;
+  color: var(--text-3);
+  border-radius: 4px;
+  line-height: 1;
+}
+.dock-tab-close:hover { color: var(--danger); background: var(--surface); }
 /* fixed chrome on the right slides left of the open panel */
 body.docked #zoombar { right: calc(var(--dock-w, 420px) + 1rem); }
 body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
