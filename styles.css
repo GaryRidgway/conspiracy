@@ -1141,7 +1141,14 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   top: 1rem; right: 1rem;
   z-index: 10;
 }
-#helpBtn {
+/* Settings shares the help button's corner (and look), one slot to the left */
+#settings-wrap {
+  position: fixed;
+  top: 1rem; right: calc(1rem + 46px);
+  z-index: 10;
+}
+body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
+#helpBtn, #settingsBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1155,9 +1162,9 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   box-shadow: 0 6px 22px rgba(0,0,0,0.35);
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-#helpBtn:hover { background: var(--surface2); border-color: var(--border2); color: var(--text); }
-#helpBtn[aria-expanded="true"] { color: var(--accent); border-color: var(--border2); }
-#helpBtn .icon { width: 20px; height: 20px; }
+#helpBtn:hover, #settingsBtn:hover { background: var(--surface2); border-color: var(--border2); color: var(--text); }
+#helpBtn[aria-expanded="true"], #settingsBtn[aria-expanded="true"] { color: var(--accent); border-color: var(--border2); }
+#helpBtn .icon, #settingsBtn .icon { width: 20px; height: 20px; }
 #help-panel {
   position: absolute;
   top: calc(100% + 8px); right: 0;
@@ -1200,6 +1207,36 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   border-radius: 4px;
   padding: 0.05em 0.35em;
 }
+
+/* Settings panel — same dropdown language as help, single column */
+#settings-panel {
+  position: absolute;
+  top: calc(100% + 8px); right: 0;
+  z-index: 50;
+  width: min(340px, calc(100vw - 2rem));
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  box-shadow: 0 8px 26px rgba(0,0,0,0.5);
+  padding: 1rem 1.15rem;
+  display: grid;
+  gap: 1rem;
+}
+#settings-panel.hidden { display: none; }
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+.setting-row input[type="checkbox"] {
+  margin-top: 0.15rem;
+  accent-color: var(--accent);
+  flex: none;
+}
+.setting-text { display: grid; gap: 0.15rem; }
+.setting-name { font-size: 0.8rem; color: var(--text); }
+.setting-desc { font-size: 0.72rem; color: var(--text-3); line-height: 1.45; }
 
 /* ── Zoom widget (bottom-right) — always controls the canvas ── */
 #zoombar {
@@ -1765,6 +1802,7 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .icon-card                 { --icon: url("icons/card.svg"); }
 .icon-button               { --icon: url("icons/button.svg"); }
 .icon-help                 { --icon: url("icons/help.svg"); }
+.icon-settings             { --icon: url("icons/settings.svg"); }
 .icon-tag                  { --icon: url("icons/tag.svg"); }
 .icon-edit                 { --icon: url("icons/edit.svg"); }
 .icon-center_focus_strong  { --icon: url("icons/center_focus_strong.svg"); }

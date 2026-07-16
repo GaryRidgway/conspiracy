@@ -180,6 +180,66 @@ test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', 
   await expect(card.locator('.card-body')).toHaveText('?');
 });
 
+test('settings: cog opens the panel and the fly-to preference persists', async ({ page }) => {
+  await page.click('#settingsBtn');
+  await expect(page.locator('#settings-panel')).toBeVisible();
+  // the two dropdowns share the corner — opening one closes the other
+  await page.click('#helpBtn');
+  await expect(page.locator('#help-panel')).toBeVisible();
+  await expect(page.locator('#settings-panel')).toBeHidden();
+  await page.click('#settingsBtn');
+  await expect(page.locator('#settings-panel')).toBeVisible();
+  await expect(page.locator('#help-panel')).toBeHidden();
+
+  await expect(page.locator('#setFlyTo')).not.toBeChecked();
+  await page.check('#setFlyTo');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#settings-panel')).toBeHidden();
+
+  await page.reload();
+  await page.click('#settingsBtn');
+  await expect(page.locator('#setFlyTo')).toBeChecked();
+});
+
+// The fly-to preference: navigation cuts instantly by default; with the
+// setting on the camera glides through in-between frames to the SAME spot.
+test('fly-to setting: deep-link navigation glides to the same destination', async ({ page }) => {
+  const aid = await (await addCardAt(page, 260, 300)).getAttribute('data-id');
+  const bid = await (await addCardAt(page, 950, 550)).getAttribute('data-id');
+
+  // jump via deep link, sampling the world transform each frame for 900ms of
+  // wall time (past the longest flight) — headless rAF can run unthrottled,
+  // so a frame COUNT can elapse before the animation does
+  const flight = (id) => page.evaluate((nid) => new Promise((res) => {
+    const el = document.getElementById('world');
+    const seen = [];
+    const start = performance.now();
+    const tick = () => {
+      seen.push(el.style.transform);
+      if (performance.now() - start < 900) requestAnimationFrame(tick); else res(seen);
+    };
+    location.hash = '#node=' + nid;
+    requestAnimationFrame(tick);
+  }), id);
+  const nums = (t) => t.match(/-?[\d.]+/g).map(Number);
+  const near = (a, b) => nums(a).every((v, i) => Math.abs(v - nums(b)[i]) < 1);
+
+  // default: a cut — the camera is at B within a frame or two
+  const cut = await flight(bid);
+  const finalB = cut[cut.length - 1];
+  expect(new Set(cut).size).toBeLessThanOrEqual(3);
+
+  await flight(aid);                     // reposition at A
+  await page.click('#settingsBtn');
+  await page.check('#setFlyTo');
+  await page.keyboard.press('Escape');
+
+  const glide = await flight(bid);
+  expect(new Set(glide).size).toBeGreaterThanOrEqual(6);   // eased in-between frames
+  expect(glide[glide.length - 1]).toBe(glide[glide.length - 2]);   // …that settle
+  expect(near(glide[glide.length - 1], finalB)).toBe(true);        // on the same landing spot
+});
+
 // ── 5. Accidental deletion + weak undo (Microsoft Whiteboard: "can't undo a
 //      deleted sticky", "lost months"). Deletion must be recoverable. ──
 test('a deleted node is recoverable via undo', async ({ page }) => {

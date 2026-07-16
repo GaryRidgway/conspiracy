@@ -102,6 +102,23 @@
     <span class="save" id="saveState">saved</span>
   </div>
 
+  <!-- Settings: cog button (left of Help) opening board preferences -->
+  <div id="settings-wrap">
+    <button id="settingsBtn" title="Settings" aria-haspopup="true" aria-expanded="false"><span class="icon icon-settings"></span></button>
+    <div id="settings-panel" class="hidden" role="dialog" aria-label="Board settings">
+      <div class="help-group">
+        <h3>Navigation</h3>
+        <label class="setting-row">
+          <input type="checkbox" id="setFlyTo">
+          <span class="setting-text">
+            <span class="setting-name">Fly to destinations</span>
+            <span class="setting-desc">Buttons, links and search glide the view to their target with an eased zoom instead of jumping there.</span>
+          </span>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <!-- Help: ? button (top right) opening the shortcuts panel -->
   <div id="help-wrap">
     <button id="helpBtn" title="Help &amp; shortcuts (?)" aria-haspopup="true" aria-expanded="false"><span class="icon icon-help"></span></button>

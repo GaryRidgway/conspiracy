@@ -4035,6 +4035,51 @@
     return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
   }
 
+  // ── Fly-to ──
+  // Navigation jumps (frameNode, fit-to-content) cut instantly unless the
+  // settings toggle turns them into one eased camera move. The world point
+  // under the view centre and log-zoom are interpolated together so the
+  // flight reads as a single motion, not a pan fighting a zoom.
+  let flyRAF = 0;
+  function cancelFly() {
+    if (!flyRAF) return;
+    cancelAnimationFrame(flyRAF);
+    flyRAF = 0;
+    commit({ viewportOnly: true });   // persist wherever the flight was cut short
+  }
+  // any manual input takes the camera back immediately
+  window.addEventListener('wheel', cancelFly, { capture: true, passive: true });
+  window.addEventListener('pointerdown', cancelFly, { capture: true });
+  function setMainViewport(x, y, zoom) {
+    cancelFly();
+    const v = board.viewport;
+    const land = () => { v.x = x; v.y = y; v.zoom = zoom; applyViewport(); commit({ viewportOnly: true }); };
+    if (!settings.flyTo || document.hidden ||
+        (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) { land(); return; }
+    const r = visibleRect();
+    const px = r.x + r.w / 2, py = r.y + r.h / 2;            // screen anchor
+    const z0 = v.zoom, z1 = zoom;
+    const c0 = { x: (px - v.x) / z0, y: (py - v.y) / z0 };   // world pt at the anchor now
+    const c1 = { x: (px - x) / z1, y: (py - y) / z1 };       // …and once landed
+    const dist = Math.hypot(c1.x - c0.x, c1.y - c0.y) * Math.max(z0, z1);
+    if (dist < 1 && Math.abs(z1 - z0) < 0.001) { land(); return; }
+    const ms = Math.min(650, 350 + dist / 12);               // longer hops get more air time
+    let t0 = 0;
+    const step = (now) => {
+      if (!t0) t0 = now;
+      const t = Math.min(1, (now - t0) / ms);
+      if (t >= 1) { flyRAF = 0; land(); return; }
+      const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;   // easeInOutCubic
+      const z = z0 * Math.pow(z1 / z0, e);
+      v.x = px - (c0.x + (c1.x - c0.x) * e) * z;
+      v.y = py - (c0.y + (c1.y - c0.y) * e) * z;
+      v.zoom = z;
+      applyViewport();
+      flyRAF = requestAnimationFrame(step);
+    };
+    flyRAF = requestAnimationFrame(step);
+  }
+
   // Frame a single node: zoom the canvas so it (nearly) fills the visible area,
   // centered. With the 1440px logical-width iframes, this reads as a crisp
   // full-window view of the embed.
@@ -4069,11 +4114,10 @@
     const pad = 24;
     const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
       Math.min(r.w / (g.w + pad * 2), r.h / (g.h + pad * 2))));
-    board.viewport.zoom = zoom;
-    board.viewport.x = r.x + r.w / 2 - (g.x + g.w / 2) * zoom;
-    board.viewport.y = r.y + r.h / 2 - (g.y + g.h / 2) * zoom;
-    applyViewport();
-    commit({ viewportOnly: true });
+    setMainViewport(
+      r.x + r.w / 2 - (g.x + g.w / 2) * zoom,
+      r.y + r.h / 2 - (g.y + g.h / 2) * zoom,
+      zoom);
   }
 
   // ── Linking to nodes ──
@@ -4152,11 +4196,10 @@
     const bw = (maxX - minX) + pad * 2;
     const bh = (maxY - minY) + pad * 2;
     const zoom = Math.min(1, r.w / bw, r.h / bh);
-    board.viewport.zoom = zoom;
-    board.viewport.x = r.x + (r.w - bw * zoom) / 2 - (minX - pad) * zoom;
-    board.viewport.y = r.y + (r.h - bh * zoom) / 2 - (minY - pad) * zoom;
-    applyViewport();
-    commit({ viewportOnly: true });
+    setMainViewport(
+      r.x + (r.w - bw * zoom) / 2 - (minX - pad) * zoom,
+      r.y + (r.h - bh * zoom) / 2 - (minY - pad) * zoom,
+      zoom);
   }
 
   // ════════════════════════════════════════════════════════
@@ -4577,6 +4620,11 @@
       setHelpOpen(false);
       return;
     }
+    if (e.key === 'Escape' && settingsOpen()) {
+      e.preventDefault();
+      setSettingsOpen(false);
+      return;
+    }
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
@@ -4785,8 +4833,8 @@
     if (board.iframes[id]) setInteractive(id, true);   // embed → interact mode
   }
 
-  // F6 pane cycling: canvas → toolbar → palette → zoom bar → help → canvas.
-  const FOCUS_REGIONS = ['#toolbar', '#tools', '#zoombar', '#help-wrap'];
+  // F6 pane cycling: canvas → toolbar → palette → zoom bar → settings → help → canvas.
+  const FOCUS_REGIONS = ['#toolbar', '#tools', '#zoombar', '#settings-wrap', '#help-wrap'];
   function cycleFocusRegion(dir) {
     const ae = document.activeElement;
     const cur = FOCUS_REGIONS.findIndex((sel) => ae && ae.closest && ae.closest(sel));
@@ -5382,6 +5430,37 @@
   });
 
   // ════════════════════════════════════════════════════════
+  //  SETTINGS — the cog (top right). Per-device preferences:
+  //  stored under their own local key, never synced or merged.
+  // ════════════════════════════════════════════════════════
+  const SETTINGS_KEY = 'whiteboard:settings';
+  const settings = { flyTo: false };
+  try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* absent/corrupt → defaults */ }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* quota */ }
+  }
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsPanel = document.getElementById('settings-panel');
+  function settingsOpen() { return !!settingsPanel && !settingsPanel.classList.contains('hidden'); }
+  function setSettingsOpen(open) {
+    if (!settingsPanel) return;
+    if (open) setHelpOpen(false);   // the two dropdowns share the corner
+    settingsPanel.classList.toggle('hidden', !open);
+    if (settingsBtn) settingsBtn.setAttribute('aria-expanded', String(open));
+  }
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); setSettingsOpen(!settingsOpen()); });
+    document.addEventListener('click', (e) => {
+      if (settingsOpen() && !e.target.closest('#settings-wrap')) setSettingsOpen(false);
+    });
+  }
+  const flyToCheck = document.getElementById('setFlyTo');
+  if (flyToCheck) {
+    flyToCheck.checked = settings.flyTo;
+    flyToCheck.addEventListener('change', () => { settings.flyTo = flyToCheck.checked; saveSettings(); });
+  }
+
+  // ════════════════════════════════════════════════════════
   //  HELP — the ? button (top right) and its shortcuts panel.
   //  Replaces the old always-on hint strip: complete reference on
   //  demand instead of a partial one permanently on screen.
@@ -5391,6 +5470,7 @@
   function helpOpen() { return !!helpPanel && !helpPanel.classList.contains('hidden'); }
   function setHelpOpen(open) {
     if (!helpPanel) return;
+    if (open) setSettingsOpen(false);   // the two dropdowns share the corner
     helpPanel.classList.toggle('hidden', !open);
     if (helpBtn) helpBtn.setAttribute('aria-expanded', String(open));
   }
