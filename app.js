@@ -3783,7 +3783,9 @@
       const r = dockViewport.getBoundingClientRect();
       if (!g || !r.width) return;
       const pad = 24;
-      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+      // cap at 100%: the panel is a notes/jumplink surface — blowing a small
+      // card up to fill it would hide everything around the target
+      const zoom = Math.max(MIN_ZOOM, Math.min(1,
         Math.min(r.width / (g.w + pad * 2), r.height / (g.h + pad * 2))));
       dock.viewport = {
         x: (r.width - g.w * zoom) / 2 - g.x * zoom,

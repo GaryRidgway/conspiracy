@@ -256,6 +256,51 @@ test('"Add card here" from inside the panel creates the card in the region', asy
   expect(bb.x).toBeGreaterThan(pv.x);              // visible inside the panel
 });
 
+test('buttons navigate across windows: each window pans only for its own targets', async ({ page }) => {
+  await addFrame(page);
+  const note = await addCardAt(page, 480, 260);            // in the region
+  await note.locator('.card-title').dblclick();
+  await page.keyboard.type('Alpha note');
+  await page.keyboard.press('Enter');
+  const far = await addCardAt(page, 200, 640);             // canvas
+  await far.locator('.card-title').dblclick();
+  await page.keyboard.type('Far target');
+  await page.keyboard.press('Enter');
+
+  const addButtonTo = async (filter, x, y) => {
+    await page.click('#addButton');
+    await page.locator('#button-link-modal input').fill(filter);
+    await page.locator('#button-link-modal .np-item').first().click();
+    const id = await page.locator('.btn-node:not(.pin-chip)').last().getAttribute('data-id');
+    const btn = page.locator(`.btn-node[data-id="${id}"]`);
+    const bb = await btn.boundingBox();
+    await drag(page, { x: bb.x + 20, y: bb.y + 14 }, { x: x + 20, y: y + 14 });
+    return btn;
+  };
+  const btnToFar = await addButtonTo('far target', 620, 500);   // lives in the region
+  const btnToNote = await addButtonTo('alpha note', 130, 380);  // lives on the canvas
+  await dockViaMenu(page);
+  expect(await parentWorld(btnToFar)).toBe('dock-world');
+
+  // panel button → canvas target: MAIN pans, panel holds still
+  let m0 = await mainTransform(page), d0 = await dockTransform(page);
+  await btnToFar.click();
+  await expect(far).toHaveClass(/selected/);
+  expect(await mainTransform(page)).not.toBe(m0);
+  expect(await dockTransform(page)).toBe(d0);
+
+  // canvas button → panel target: PANEL pans (capped at 100% so the rest of
+  // the notes area stays in view), main holds still
+  await page.click('#fitContent');
+  m0 = await mainTransform(page); d0 = await dockTransform(page);
+  await btnToNote.click();
+  await expect(note).toHaveClass(/selected/);
+  expect(await dockTransform(page)).not.toBe(d0);
+  expect(await mainTransform(page)).toBe(m0);
+  expect(await dockTransform(page)).not.toMatch(/scale\([1-9]\d*\.\d*[1-9]/); // no >1 zoom blow-up
+  await expect(btnToFar).toBeVisible();                    // context survived the jump
+});
+
 test('jumping to a node in the panel pans the panel, not the canvas', async ({ page }) => {
   await addFrame(page);
   const member = await addCardAt(page, 640, 360);
