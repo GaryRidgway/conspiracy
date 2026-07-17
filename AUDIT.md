@@ -21,7 +21,9 @@ Line numbers were verified at commit `73ebf55` and will drift as items land.
   it on the other.
 - **Fix:** Replace the three hand-rolled lines with `setMainViewport(0, 0, 1);`.
 
-### 2. [ ] Accessibility attribute pass (no behavior change)
+### 2. [x] Accessibility attribute pass (no behavior change) — done, 804dfc4
+(includes the help/settings CSS grouping from "confirmed clean"; the
+Copy-ID announcement reads "ID copied" per user preference)
 One sweep of pure attribute additions; each is independent:
 - [ ] Dock rail: children of `role="tablist"` (`#dock-rail`, built in
   `app.js:2026-2039`) are plain buttons — add `role="tab"` +
