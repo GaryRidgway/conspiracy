@@ -11,33 +11,9 @@
 //  Sourced from real user complaints — see the chat notes / commit message.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { drag, addCardAt, worldScale, nodePos, boardOf, cardRecordAt, merge } from './helpers.js';
 
 const within = (b, w, h) => b && b.x + b.width > 0 && b.y + b.height > 0 && b.x < w && b.y < h;
-const worldScale = (page) => page.evaluate(() => {
-  const m = document.getElementById('world').style.transform.match(/scale\(([^)]+)\)/);
-  return m ? parseFloat(m[1]) : 1;
-});
-async function drag(page, from, to) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
-  await page.mouse.move(to.x, to.y, { steps: 6 });
-  await page.mouse.up();
-}
-async function addCardAt(page, x, y) {
-  const before = await page.locator('.node.card').count();
-  await page.click('#addCard');            // appears at view centre, title editing
-  await expect(page.locator('.node.card')).toHaveCount(before + 1);
-  await page.keyboard.press('Escape');     // leave the auto title-edit
-  const node = page.locator('.node.card').last();
-  // reposition so its centre sits at screen (x, y)
-  const bb = await node.boundingBox();
-  const hb = await node.locator('.card-header').boundingBox();
-  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
-  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
-  return node;
-}
 
 let errors;
 test.beforeEach(async ({ page }) => {
@@ -1264,13 +1240,6 @@ async function addFreeButton(page) {
   const id = await page.locator('.btn-node').last().getAttribute('data-id');
   return page.locator(`.btn-node[data-id="${id}"]`);
 }
-// Model position, not boundingBox: right after a drop the chip can still be
-// mid :active scale, which shifts its client rect by a couple of pixels.
-const nodePos = (loc) => loc.evaluate((el) => ({
-  x: parseFloat(el.style.left), y: parseFloat(el.style.top),
-  w: el.offsetWidth, h: el.offsetHeight,
-}));
-
 // A button's name defines its width: a long label grows the pill instead of
 // being clipped at an arbitrary cap — how wide a button gets is the user's call.
 test('a long button name expands the button instead of truncating', { tag: '@buttons' }, async ({ page }) => {
@@ -1542,16 +1511,11 @@ test('Drive bar is present and loads no Google scripts until Connect', { tag: '@
 
 // ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
 //    Exercised directly via the pure window.__wb_mergeBoards hook (no OAuth). ──
-function card(x, y, title, body) { return { x, y, title: title || '', body: body || '' }; }
-async function merge(page, base, local, remote) {
-  return page.evaluate(([b, l, r]) => window.__wb_mergeBoards(b, l, r), [base, local, remote]);
-}
-const boardOf = (cards) => ({ schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 }, cards, iframes: {}, connections: {} });
 
 test('merge: edits to different nodes both survive', { tag: '@boards' }, async ({ page }) => {
-  const base = boardOf({ a: card(0, 0, 'A'), b: card(10, 10, 'B') });
-  const local = boardOf({ a: card(0, 0, 'A EDITED'), b: card(10, 10, 'B') });   // this device edited A
-  const remote = boardOf({ a: card(0, 0, 'A'), b: card(99, 99, 'B') });          // other device moved B
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A'), b: cardRecordAt(10, 10, 'B') });
+  const local = boardOf({ a: cardRecordAt(0, 0, 'A EDITED'), b: cardRecordAt(10, 10, 'B') });   // this device edited A
+  const remote = boardOf({ a: cardRecordAt(0, 0, 'A'), b: cardRecordAt(99, 99, 'B') });          // other device moved B
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(0);
   expect(merged.cards.a.title).toBe('A EDITED');   // local edit kept
@@ -1559,9 +1523,9 @@ test('merge: edits to different nodes both survive', { tag: '@boards' }, async (
 });
 
 test('merge: same node, different fields — both edits kept', { tag: '@boards' }, async ({ page }) => {
-  const base = boardOf({ a: card(0, 0, 'A', 'body') });
-  const local = boardOf({ a: card(50, 60, 'A', 'body') });          // moved it
-  const remote = boardOf({ a: card(0, 0, 'A', 'new body') });        // edited its body
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A', 'body') });
+  const local = boardOf({ a: cardRecordAt(50, 60, 'A', 'body') });          // moved it
+  const remote = boardOf({ a: cardRecordAt(0, 0, 'A', 'new body') });        // edited its body
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(0);
   expect(merged.cards.a.x).toBe(50);            // local position
@@ -1569,17 +1533,17 @@ test('merge: same node, different fields — both edits kept', { tag: '@boards' 
 });
 
 test('merge: same field on both sides is a conflict, local wins', { tag: '@boards' }, async ({ page }) => {
-  const base = boardOf({ a: card(0, 0, 'A', 'orig') });
-  const local = boardOf({ a: card(0, 0, 'A', 'mine') });
-  const remote = boardOf({ a: card(0, 0, 'A', 'theirs') });
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A', 'orig') });
+  const local = boardOf({ a: cardRecordAt(0, 0, 'A', 'mine') });
+  const remote = boardOf({ a: cardRecordAt(0, 0, 'A', 'theirs') });
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(1);
   expect(merged.cards.a.body).toBe('mine');
 });
 
 test('merge: node added on one side appears; node deleted on one side goes away', { tag: '@boards' }, async ({ page }) => {
-  const base = boardOf({ a: card(0, 0, 'A') });
-  const local = boardOf({ a: card(0, 0, 'A'), c: card(5, 5, 'C') });  // added C
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A') });
+  const local = boardOf({ a: cardRecordAt(0, 0, 'A'), c: cardRecordAt(5, 5, 'C') });  // added C
   const remote = boardOf({});                                          // deleted A
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(0);
@@ -1588,9 +1552,9 @@ test('merge: node added on one side appears; node deleted on one side goes away'
 });
 
 test('merge: delete on one side vs edit on the other keeps the edit', { tag: '@boards' }, async ({ page }) => {
-  const base = boardOf({ a: card(0, 0, 'A', 'orig') });
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A', 'orig') });
   const local = boardOf({});                                  // deleted A
-  const remote = boardOf({ a: card(0, 0, 'A', 'edited') });   // edited A
+  const remote = boardOf({ a: cardRecordAt(0, 0, 'A', 'edited') });   // edited A
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(1);
   expect(merged.cards.a.body).toBe('edited');   // don't lose the edit
@@ -1603,7 +1567,7 @@ test('merge: untouched button with a nested action is not a conflict', { tag: '@
   const btn = () => ({ x: 0, y: 0, title: 'Go', kind: 'button', action: { type: 'url', target: 'https://a.example' } });
   const base = boardOf({ b1: btn() });
   const local = boardOf({ b1: btn() });                      // untouched here
-  const remote = boardOf({ b1: btn(), c: card(5, 5, 'C') }); // other device added a card
+  const remote = boardOf({ b1: btn(), c: cardRecordAt(5, 5, 'C') }); // other device added a card
   const { merged, conflicts } = await merge(page, base, local, remote);
   expect(conflicts).toBe(0);
   expect(merged.cards.b1.action).toEqual({ type: 'url', target: 'https://a.example' });

@@ -7,29 +7,10 @@
 //  back onto the canvas at its original spot.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { drag, addCardAt } from './helpers.js';
 
 const within = (b, w, h) => b && b.x + b.width > 0 && b.y + b.height > 0 && b.x < w && b.y < h;
 
-async function drag(page, from, to) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
-  await page.mouse.move(to.x, to.y, { steps: 6 });
-  await page.mouse.up();
-}
-async function addCardAt(page, x, y) {
-  const before = await page.locator('.node.card').count();
-  await page.click('#addCard');
-  await expect(page.locator('.node.card')).toHaveCount(before + 1);
-  await page.keyboard.press('Escape');
-  const node = page.locator('.node.card').last();
-  const bb = await node.boundingBox();
-  const hb = await node.locator('.card-header').boundingBox();
-  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
-  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
-  return node;
-}
 const panAway = (page) => page.evaluate(() => {
   const v = document.getElementById('viewport');
   for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 500, deltaY: 500, bubbles: true, cancelable: true }));

@@ -42,7 +42,7 @@ reducedMotion, stale counts, board-deletion semantics)
 The finding and the fix are both already written down; the work is
 executing the spec and passing the suite.
 
-### 4. [ ] Shared `tests/helpers.js`
+### 4. [x] Shared `tests/helpers.js` — done
 - **What:** `drag()` is byte-identical in five spec files (whiteboard:19,
   usability:20, dock:13, pin:13, touch:29). `addCardAt()` has four copies and
   three (usability:27, pin:20, touch:36) still use the `.last()` pattern
@@ -56,6 +56,15 @@ executing the spec and passing the suite.
   `addCardAt`. Rename or merge the two `card()` shapes so the collision is
   impossible. Helpers used by a single file stay local.
 - **Verify:** full suite twice (timing-sensitive rule applies).
+- **Correction on landing:** specs actually use ESM `import`/`export`
+  syntax throughout (Playwright transpiles it), not CommonJS — so
+  `helpers.js` uses `export function`/`export const`, matching house style,
+  rather than `module.exports`. `card()` split into `cardRecordAt(x, y,
+  title, body)` (usability's shape) and `cardRecord(title, body)`
+  (merge-review's minimal shape). `nodePos` standardized on usability's
+  `{x, y, w, h}` superset; dock/touch callers only read `x`/`y` so this is
+  compatible. `worldTransform` in touch.spec.js stays local (used directly
+  for translate assertions beyond just scale).
 
 ### 5. [ ] Modal lifecycle registry (`wireModal`) — fixes real conflict-modal bugs
 - **What:** every modal hand-copies a 4-piece protocol (remember focus on

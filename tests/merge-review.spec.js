@@ -8,6 +8,7 @@
 //  Neither needs OAuth/Drive.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { boardOf, cardRecord, merge } from './helpers.js';
 
 let errors;
 test.beforeEach(async ({ page }) => {
@@ -16,11 +17,6 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
-
-const boardOf = (cards) => ({ schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 }, cards, iframes: {}, connections: {} });
-const card = (title, body) => ({ x: 0, y: 0, title, body: body || '' });
-const merge = (page, b, l, r) =>
-  page.evaluate(([b, l, r]) => window.__wb_mergeBoards(b, l, r), [b, l, r]);
 
 // create a titled card and return its data-id
 async function addNamedCard(page, title) {
@@ -42,9 +38,9 @@ const storedCard = (page, id) => page.evaluate((id) => {
 
 test('mergeBoards keeps local on a conflict but carries the other side as alt', { tag: '@boards' }, async ({ page }) => {
   const res = await merge(page,
-    boardOf({ a: card('A', 'orig') }),
-    boardOf({ a: card('A', 'mine') }),
-    boardOf({ a: card('A', 'theirs') }));
+    boardOf({ a: cardRecord('A', 'orig') }),
+    boardOf({ a: cardRecord('A', 'mine') }),
+    boardOf({ a: cardRecord('A', 'theirs') }));
   expect(res.conflicts).toBe(1);
   expect(res.merged.cards.a.body).toBe('mine');           // local wins, as ever
   expect(res.conflictItems[0].alt.body).toBe('theirs');   // …but the loser survives
@@ -53,9 +49,9 @@ test('mergeBoards keeps local on a conflict but carries the other side as alt', 
 
 test('delete-vs-edit: the alt is "apply the delete", and keptSide names the editor', { tag: '@boards' }, async ({ page }) => {
   const res = await merge(page,
-    boardOf({ a: card('A', 'orig') }),
+    boardOf({ a: cardRecord('A', 'orig') }),
     boardOf({}),                            // this device deleted A
-    boardOf({ a: card('A', 'edited') }));   // the other device edited it
+    boardOf({ a: cardRecord('A', 'edited') }));   // the other device edited it
   expect(res.conflicts).toBe(1);
   expect(res.merged.cards.a.body).toBe('edited');   // edit still wins the merge
   expect(res.conflictItems[0].alt).toBeUndefined(); // the alternative is the delete

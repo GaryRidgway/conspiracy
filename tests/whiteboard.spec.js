@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { drag, worldScale } from './helpers.js';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
@@ -13,15 +14,6 @@ const board = (page) => page.evaluate(() => {
 // Wait for the debounced auto-save to flush something into localStorage.
 async function expectSaved(page, substr) {
   await expect.poll(() => board(page), { timeout: 3000 }).toContain(substr);
-}
-
-// Low-level drag using pointer events (the app listens on pointer*).
-async function drag(page, from, to) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
-  await page.mouse.move(to.x, to.y, { steps: 6 });
-  await page.mouse.up();
 }
 
 const center = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
@@ -824,11 +816,6 @@ test('Ctrl+wheel zooms and clamps to 10–400%', { tag: '@canvas' }, async ({ pa
   await wheel(-800, 80);                  // spam in → clamp at MAX
   expect(await scale()).toBeLessThanOrEqual(4 + 1e-9);
   expect(await scale()).toBeGreaterThan(1);
-});
-
-const worldScale = (page) => page.evaluate(() => {
-  const m = document.getElementById('world').style.transform.match(/scale\(([^)]+)\)/);
-  return m ? parseFloat(m[1]) : 1;
 });
 
 test('zoom widget zooms the canvas and resets, with a live % readout', { tag: '@canvas' }, async ({ page }) => {

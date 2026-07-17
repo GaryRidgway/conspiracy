@@ -9,31 +9,8 @@
 //  Dock state is per-device view preference (rides the viewport key).
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { drag, addCardAt, nodePos } from './helpers.js';
 
-async function drag(page, from, to) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
-  await page.mouse.move(to.x, to.y, { steps: 6 });
-  await page.mouse.up();
-}
-// find the NEW card by diffing ids — never .last(): dock members live in
-// #dock-world, which comes after #world in the document, so document-order
-// locators grab a panel member instead of the just-created card
-async function addCardAt(page, x, y) {
-  const ids = () => page.evaluate(() => [...document.querySelectorAll('.node.card')].map((e) => e.dataset.id));
-  const before = await ids();
-  await page.click('#addCard');
-  await page.keyboard.press('Escape');
-  const id = (await ids()).find((i) => !before.includes(i));
-  const node = page.locator(`.node.card[data-id="${id}"]`);
-  const bb = await node.boundingBox();
-  const hb = await node.locator('.card-header').boundingBox();
-  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
-  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
-  return node;
-}
 // default frame: 640×400 at the view centre (≈ screen (320,160)–(960,560))
 async function addFrame(page) {
   await page.click('#addFrameNode');
@@ -48,7 +25,6 @@ async function dockViaMenu(page) {
 const parentWorld = (loc) => loc.evaluate((el) => el.parentElement.id);
 const mainTransform = (page) => page.evaluate(() => document.getElementById('world').style.transform);
 const dockTransform = (page) => page.evaluate(() => document.getElementById('dock-world').style.transform);
-const nodePos = (loc) => loc.evaluate((el) => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top) }));
 
 let errors;
 test.beforeEach(async ({ page }) => {

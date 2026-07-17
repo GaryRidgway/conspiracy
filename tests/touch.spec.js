@@ -7,6 +7,7 @@
 //  lifts go to window, where every drag in the app listens.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { drag, addCardAt, worldScale, nodePos } from './helpers.js';
 
 const touch = (page, type, id, x, y) => page.evaluate(([type, id, x, y]) => {
   const target = type === 'pointerdown' ? document.elementFromPoint(x, y) : window;
@@ -19,33 +20,6 @@ const touch = (page, type, id, x, y) => page.evaluate(([type, id, x, y]) => {
 }, [type, id, x, y]);
 
 const worldTransform = (page) => page.evaluate(() => document.getElementById('world').style.transform);
-const worldScale = async (page) => {
-  const m = (await worldTransform(page)).match(/scale\(([^)]+)\)/);
-  return m ? parseFloat(m[1]) : 1;
-};
-// model position — boundingBox is polluted by the :active scale transition
-const nodePos = (loc) => loc.evaluate((el) => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top) }));
-
-async function drag(page, from, to) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
-  await page.mouse.move(to.x, to.y, { steps: 6 });
-  await page.mouse.up();
-}
-async function addCardAt(page, x, y) {
-  const before = await page.locator('.node.card').count();
-  await page.click('#addCard');
-  await expect(page.locator('.node.card')).toHaveCount(before + 1);
-  await page.keyboard.press('Escape');
-  const node = page.locator('.node.card').last();
-  const bb = await node.boundingBox();
-  const hb = await node.locator('.card-header').boundingBox();
-  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
-  await drag(page, { x: gx, y: gy }, { x: gx + (x - cx), y: gy + (y - cy) });
-  return node;
-}
 
 let errors;
 test.beforeEach(async ({ page }) => {
