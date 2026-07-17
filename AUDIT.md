@@ -49,7 +49,7 @@ One sweep of pure attribute additions; each is independent:
 - [ ] Copy-ID feedback (`app.js:4155-4161`): icon swap is visual-only; add
   `announce('Link copied')`.
 
-### 3. [ ] ARCHITECTURE.md — record the invariants learned this cycle
+### 3. [x] ARCHITECTURE.md — record the invariants learned this cycle — done
 - [ ] **Persistence table (~line 220):** add the `whiteboard:settings` row —
   per-device preferences (`flyTo`, …), never synced, never merged, never a
   board field (or `mergeBoards` on deployed clients drops/churns it). The

@@ -2,7 +2,7 @@
 
 An infinite-canvas whiteboard: vanilla JS, no build step, no runtime
 dependencies. Three files are the whole app — `index.html` (static shell,
-modals, toolbars), `styles.css`, and `app.js` (~4,000 lines, one IIFE, all
+modals, toolbars), `styles.css`, and `app.js` (~6,000 lines, one IIFE, all
 logic). `config.js` holds the Google OAuth client id + Picker API key
 (origin-restricted, safe to commit — see SETUP-google-drive.md).
 
@@ -205,6 +205,11 @@ the outgoing board's last ≤400ms of edits are lost: the pending `scheduleSave`
 timer fires after `currentBoardId`/`board` have already switched, so it saves
 the *new* board and the old edits evaporate.
 
+Deleting a board (`removeBoard`, behind the typed-DELETE modal) removes it
+from this device only: a Drive-mode board's file survives in Google Drive
+and can be re-opened; a device board is gone with no undo. The modal's note
+text states whichever applies.
+
 ### Viewport is per-device, never content
 
 Pan/zoom lives under `whiteboard:viewport:<id>`, is stripped by
@@ -215,6 +220,12 @@ and yanks one device's view to another's. One deliberate exception:
 `exportBoard()` serializes the live `board` *including* viewport — a JSON
 backup restores the exact view on import.
 
+The same rule covers preferences: `whiteboard:settings` (the cog panel —
+`flyTo`, …) is per-device, loaded once at boot, and never synced or merged.
+A new preference must be a field on the `settings` object, **never** a board
+field — deployed clients' `mergeBoards` would drop it or churn `version` on
+every toggle.
+
 ## Persistence (localStorage)
 
 | Key | Contents |
@@ -223,6 +234,7 @@ backup restores the exact view on import.
 | `whiteboard:current` | id of the open board |
 | `whiteboard:board:<id>` | board content (viewport stripped) |
 | `whiteboard:viewport:<id>` | this device's pan/zoom for that board |
+| `whiteboard:settings` | per-device preferences (`flyTo`, …) — never synced, never merged, never board content |
 | `whiteboard:base:<id>` | merge base: content as of the last successful sync |
 | `whiteboard:drive:opted` | '1' after a real Drive connect (gates silent reconnect) |
 | `whiteboard` | legacy single-board key; migrated by `ensureLibrary()` |
@@ -367,6 +379,13 @@ both versions instead of guessing.
   Framing measures `nodeVisualGeom` (border box ∪ overflowing visible
   children), not `nodeGeom` — a frame's title tab rides above its box and
   would otherwise tuck under the top toolbar at high zoom.
+- Main-canvas jumps land through `setMainViewport(x, y, zoom)`, which glides
+  when `settings.flyTo` is on (eased camera flight; any wheel/pointerdown
+  cancels it; `prefers-reduced-motion` and hidden tabs cut instantly). A
+  flight mutates only `board.viewport` and both landing and cancelling end
+  in `commit({viewportOnly:true})` — it must **never** bump `version`.
+  Don't assign `board.viewport` directly for a jump; that reintroduces the
+  hard-cut inconsistency `resetView` once had.
 - Cross-file constant couplings: `GRID_INSET` (app.js) must equal
   `#grid { inset: -160px }` in styles.css (the grid phase math folds it in),
   and `visibleRect()` hard-codes the bottom chrome height (52px).
@@ -461,10 +480,13 @@ both versions instead of guessing.
 ## Tests
 
 `npm test` → Playwright, Chromium only, 4 workers, against
-`python3 -m http.server 8123` (real localStorage needs http). Two suites:
+`python3 -m http.server 8123` (real localStorage needs http). Suites:
 `tests/whiteboard.spec.js` (behavior) and `tests/usability.spec.js`
 (encodes known complaints about Miro/FigJam/etc. plus keyboard/a11y and the
-merge unit tests). Conventions that prevent flakes:
+merge unit tests), plus feature suites `dock`, `pin`, `touch`, `loading`,
+and `merge-review`. Every test carries a feature-area tag (`@canvas`,
+`@connections`, …) — `npm run test:<bucket>` runs one area while iterating;
+the full suite still gates every commit. Conventions that prevent flakes:
 
 - Wait for `#saveState` to read `saved` before asserting on stored content
   (the 400ms debounce races you otherwise).
@@ -474,6 +496,13 @@ merge unit tests). Conventions that prevent flakes:
   interacting with something that may now be off-screen.
 - No Google script may load before the user clicks Connect (asserted).
 - Merge logic is tested through `window.__wb_mergeBoards` — no OAuth needed.
+- **Never emulate `reducedMotion` in Playwright.** The app's reduce CSS turns
+  every style change into a 0.01ms transition (default
+  `transition-property: all`), so `getBoundingClientRect` lags style writes
+  by one frame and position assertions go racy. The suite instead pre-seeds
+  `whiteboard:settings` to `{"flyTo":false}` via `storageState` in
+  playwright.config.js so navigation stays an instant cut; suites testing
+  the fly animation itself override with a clean `storageState`.
 - `test.fixme()` entries are specs for known gaps, not broken tests.
 
 ## Conventions
