@@ -1165,21 +1165,25 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
 #helpBtn:hover, #settingsBtn:hover { background: var(--surface2); border-color: var(--border2); color: var(--text); }
 #helpBtn[aria-expanded="true"], #settingsBtn[aria-expanded="true"] { color: var(--accent); border-color: var(--border2); }
 #helpBtn .icon, #settingsBtn .icon { width: 20px; height: 20px; }
-#help-panel {
+/* Shared dropdown surface for the two corner panels; each sets its own
+   width and column count below. */
+#help-panel, #settings-panel {
   position: absolute;
   top: calc(100% + 8px); right: 0;
   z-index: 50;
-  width: min(600px, calc(100vw - 2rem));
   background: var(--surface);
   border: 1px solid var(--border2);
   border-radius: 12px;
   box-shadow: 0 8px 26px rgba(0,0,0,0.5);
   padding: 1rem 1.15rem;
   display: grid;
+}
+#help-panel.hidden, #settings-panel.hidden { display: none; }
+#help-panel {
+  width: min(600px, calc(100vw - 2rem));
   grid-template-columns: 1fr 1fr;
   gap: 1rem 1.5rem;
 }
-#help-panel.hidden { display: none; }
 .help-group h3 {
   font-family: var(--font-mono);
   font-size: 0.62rem;
@@ -1208,21 +1212,12 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   padding: 0.05em 0.35em;
 }
 
-/* Settings panel — same dropdown language as help, single column */
+/* Settings panel — same dropdown surface as help (shared rule above),
+   single column */
 #settings-panel {
-  position: absolute;
-  top: calc(100% + 8px); right: 0;
-  z-index: 50;
   width: min(340px, calc(100vw - 2rem));
-  background: var(--surface);
-  border: 1px solid var(--border2);
-  border-radius: 12px;
-  box-shadow: 0 8px 26px rgba(0,0,0,0.5);
-  padding: 1rem 1.15rem;
-  display: grid;
   gap: 1rem;
 }
-#settings-panel.hidden { display: none; }
 .setting-row {
   display: flex;
   align-items: flex-start;

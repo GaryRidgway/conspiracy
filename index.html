@@ -22,8 +22,8 @@
            or menu), right-click for the frame menu. Switching frames lives on
            the EDGE RAIL (#dock-rail), one vertical tab per docked frame. -->
       <span id="dock-active-name" spellcheck="false" title="Right-click for frame options"></span>
-      <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
-      <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen"><span class="icon icon-remove"></span></button>
+      <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region" aria-label="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
+      <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen" aria-label="Minimize the docked frame"><span class="icon icon-remove"></span></button>
       <button class="btn" id="dockUndockBtn" title="Return the frame to the canvas">Undock</button>
     </div>
     <div id="dock-viewport">
@@ -45,7 +45,7 @@
 
   <div id="toolbar" role="toolbar" aria-label="Board tools">
     <div id="board-menu-wrap">
-      <button class="btn" id="boardMenuBtn" title="Switch boards" aria-haspopup="true" aria-expanded="false"><span id="board-name">Board</span><span class="caret">▾</span></button>
+      <button class="btn" id="boardMenuBtn" title="Switch boards" aria-haspopup="true" aria-expanded="false" aria-controls="board-menu"><span id="board-name">Board</span><span class="caret">▾</span></button>
       <div id="board-menu" class="hidden">
         <div id="board-list"></div>
         <div class="board-menu-actions">
@@ -62,8 +62,8 @@
         </div>
       </div>
     </div>
-    <button class="btn btn-icon" id="undoBtn" title="Undo (⌘/Ctrl+Z)" disabled><span class="icon icon-undo"></span></button>
-    <button class="btn btn-icon" id="redoBtn" title="Redo (⌘/Ctrl+Shift+Z)" disabled><span class="icon icon-redo"></span></button>
+    <button class="btn btn-icon" id="undoBtn" title="Undo (⌘/Ctrl+Z)" aria-label="Undo" disabled><span class="icon icon-undo"></span></button>
+    <button class="btn btn-icon" id="redoBtn" title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo" disabled><span class="icon icon-redo"></span></button>
     <button class="btn" id="fitContent">Fit</button>
     <button class="btn" id="findBtn" title="Find on this board (⌘K)">Find</button>
     <button class="btn" id="exportBtn">Export</button>
@@ -104,7 +104,7 @@
 
   <!-- Settings: cog button (left of Help) opening board preferences -->
   <div id="settings-wrap">
-    <button id="settingsBtn" title="Settings" aria-haspopup="true" aria-expanded="false"><span class="icon icon-settings"></span></button>
+    <button id="settingsBtn" title="Settings" aria-label="Settings" aria-haspopup="true" aria-expanded="false" aria-controls="settings-panel"><span class="icon icon-settings"></span></button>
     <div id="settings-panel" class="hidden" role="dialog" aria-label="Board settings">
       <div class="help-group">
         <h3>Navigation</h3>
@@ -121,7 +121,7 @@
 
   <!-- Help: ? button (top right) opening the shortcuts panel -->
   <div id="help-wrap">
-    <button id="helpBtn" title="Help &amp; shortcuts (?)" aria-haspopup="true" aria-expanded="false"><span class="icon icon-help"></span></button>
+    <button id="helpBtn" title="Help &amp; shortcuts (?)" aria-label="Help and shortcuts" aria-haspopup="true" aria-expanded="false" aria-controls="help-panel"><span class="icon icon-help"></span></button>
     <div id="help-panel" class="hidden" role="dialog" aria-label="Help and keyboard shortcuts">
       <div class="help-group">
         <h3>Canvas</h3>
@@ -171,19 +171,19 @@
   </div>
 
   <div id="zoombar" role="toolbar" aria-label="Zoom">
-    <button class="zoom-btn" id="zoomOut" title="Zoom out"><span class="icon icon-remove"></span></button>
-    <button class="zoom-val" id="zoomReset" title="Reset to 100%">100%</button>
-    <button class="zoom-btn" id="zoomIn" title="Zoom in"><span class="icon icon-add"></span></button>
-    <button class="zoom-btn" id="zoomFit" title="Fit to content"><span class="icon icon-fit_screen"></span></button>
+    <button class="zoom-btn" id="zoomOut" title="Zoom out" aria-label="Zoom out"><span class="icon icon-remove"></span></button>
+    <button class="zoom-val" id="zoomReset" title="Reset to 100%" aria-label="Reset zoom to 100%">100%</button>
+    <button class="zoom-btn" id="zoomIn" title="Zoom in" aria-label="Zoom in"><span class="icon icon-add"></span></button>
+    <button class="zoom-btn" id="zoomFit" title="Fit to content" aria-label="Fit to content"><span class="icon icon-fit_screen"></span></button>
   </div>
 
   <!-- Floating rich-text toolbar (positioned above the focused card) -->
   <div id="text-toolbar" class="hidden">
-    <button type="button" class="tt-btn" data-cmd="bold" title="Bold"><span class="icon icon-format_bold"></span></button>
-    <button type="button" class="tt-btn" data-cmd="italic" title="Italic"><span class="icon icon-format_italic"></span></button>
-    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list"><span class="icon icon-format_list_bulleted"></span></button>
-    <button type="button" class="tt-btn" data-cmd="insertOrderedList" title="Numbered list"><span class="icon icon-format_list_numbered"></span></button>
-    <button type="button" class="tt-btn" id="tt-link" title="Link to a node"><span class="icon icon-link"></span></button>
+    <button type="button" class="tt-btn" data-cmd="bold" title="Bold" aria-label="Bold"><span class="icon icon-format_bold"></span></button>
+    <button type="button" class="tt-btn" data-cmd="italic" title="Italic" aria-label="Italic"><span class="icon icon-format_italic"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list" aria-label="Bulleted list"><span class="icon icon-format_list_bulleted"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertOrderedList" title="Numbered list" aria-label="Numbered list"><span class="icon icon-format_list_numbered"></span></button>
+    <button type="button" class="tt-btn" id="tt-link" title="Link to a node" aria-label="Link to a node"><span class="icon icon-link"></span></button>
   </div>
 
   <!-- Node picker popup (for inserting an inline link) -->
@@ -200,12 +200,12 @@
 
   <!-- Themed iframe-creation modal (replaces the native prompt) -->
   <div id="frame-modal" class="modal-overlay hidden">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="frame-modal-title">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="frame-modal-title" aria-describedby="frame-modal-note">
       <h2 id="frame-modal-title">Embed a web page</h2>
       <label class="modal-label" for="frame-url">URL</label>
       <input id="frame-url" type="text" placeholder="https://example.com"
              autocomplete="off" autocapitalize="off" spellcheck="false">
-      <p class="modal-note">Many sites block embedding (X-Frame-Options / CSP) and will show blank.</p>
+      <p class="modal-note" id="frame-modal-note">Many sites block embedding (X-Frame-Options / CSP) and will show blank.</p>
       <div class="modal-actions">
         <button class="btn" id="frame-cancel">Cancel</button>
         <button class="btn primary" id="frame-add">Add embed</button>
@@ -215,9 +215,9 @@
 
   <!-- Clear-board confirmation: requires typing CLEAR -->
   <div id="clear-modal" class="modal-overlay hidden">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clear-modal-title">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clear-modal-title" aria-describedby="clear-modal-note">
       <h2 id="clear-modal-title">Clear the board?</h2>
-      <p class="modal-note">This permanently deletes every card, frame, and connection.</p>
+      <p class="modal-note" id="clear-modal-note">This permanently deletes every card, frame, and connection.</p>
       <label class="modal-label" for="clear-confirm">Type <strong>CLEAR</strong> to confirm</label>
       <input id="clear-confirm" type="text" placeholder="CLEAR"
              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -231,7 +231,7 @@
   <!-- Board deletion confirmation: requires typing DELETE (a whole board is
        strictly bigger than a Clear, which already demands typing) -->
   <div id="delete-board-modal" class="modal-overlay hidden">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-board-title">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-board-title" aria-describedby="delete-board-note">
       <h2 id="delete-board-title">Delete “<span id="delete-board-name">this board</span>”?</h2>
       <p class="modal-note" id="delete-board-note">This permanently deletes the board and everything on it.</p>
       <label class="modal-label" for="delete-board-confirm">Type <strong>DELETE</strong> to confirm</label>
@@ -261,9 +261,9 @@
 
   <!-- Drive sync conflict: board changed on this device AND in Drive -->
   <div id="conflict-modal" class="modal-overlay hidden">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-note">
       <h2 id="conflict-title">This board changed in two places</h2>
-      <p class="modal-note">“<span id="conflict-name">this board</span>” has unsynced edits on this device <em>and</em> a newer version in Google Drive. Keep one — the other copy will be overwritten.</p>
+      <p class="modal-note" id="conflict-note">“<span id="conflict-name">this board</span>” has unsynced edits on this device <em>and</em> a newer version in Google Drive. Keep one — the other copy will be overwritten.</p>
       <div class="modal-actions">
         <button class="btn" id="conflict-cancel">Decide later</button>
         <button class="btn" id="conflict-keep-drive">Keep Drive’s version</button>

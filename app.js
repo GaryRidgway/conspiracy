@@ -710,6 +710,9 @@
   }
 
   function setSaveState(state) {
+    // only announce entering the error state — dirty/saved churn on every
+    // commit would spam the live region
+    if (state === 'error' && !saveStateEl.classList.contains('error')) announce('Save failed');
     saveStateEl.className = 'save ' + state;
     saveStateEl.textContent =
       state === 'dirty' ? 'saving…' :
@@ -1184,6 +1187,9 @@
       dot.type = 'button';
       dot.className = 'cf-dot' + (colorFilter.has(c.key) ? ' active' : '');
       dot.title = colorFilter.has(c.key) ? `Stop filtering ${c.label}` : `Show only ${c.label}`;
+      dot.setAttribute('aria-label', dot.title);
+      // the legend is rebuilt on every toggle, so this stays in sync with .active
+      dot.setAttribute('aria-pressed', colorFilter.has(c.key) ? 'true' : 'false');
       dot.style.setProperty('--sw', c.hex);
       dot.addEventListener('click', () => {
         if (colorFilter.has(c.key)) colorFilter.delete(c.key); else colorFilter.add(c.key);
@@ -1196,6 +1202,7 @@
       clear.type = 'button';
       clear.className = 'cf-clear';
       clear.title = 'Clear color filter';
+      clear.setAttribute('aria-label', 'Clear color filter');
       clear.textContent = '×';
       clear.addEventListener('click', () => { colorFilter.clear(); refreshColorFilter(); });
       colorFilterEl.appendChild(clear);
@@ -1220,8 +1227,8 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" title="Double-click to rename" spellcheck="false"></div>
-          <button class="copy-link icon-btn" title="Copy link to this card"><span class="icon icon-tag"></span></button>
-          <button class="card-delete icon-btn" title="Delete card"><span class="icon icon-delete"></span></button>
+          <button class="copy-link icon-btn" title="Copy link to this card" aria-label="Copy link to this card"><span class="icon icon-tag"></span></button>
+          <button class="card-delete icon-btn" title="Delete card" aria-label="Delete card"><span class="icon icon-delete"></span></button>
         </div>
         <div class="card-body" contenteditable="true" spellcheck="false"></div>`;
       worldFor(id).appendChild(el);
@@ -2025,9 +2032,14 @@
     for (const t of dock.tabs) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'dock-rail-tab' + (t.frameId === dock.active && !dock.minimized ? ' active' : '');
+      const active = t.frameId === dock.active && !dock.minimized;
+      b.className = 'dock-rail-tab' + (active ? ' active' : '');
       b.textContent = name(t.frameId);
       b.title = name(t.frameId);
+      // the rail is rebuilt on every dock change, so setting these at creation
+      // keeps them in sync with .active for free
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
       applyNodeColor(b, board.cards[t.frameId] && board.cards[t.frameId].color);
       b.addEventListener('click', () => {
         if (dock.minimized) { setDockMinimized(false); setActiveDockTab(t.frameId); }
@@ -3813,6 +3825,7 @@
         none.type = 'button';
         none.className = 'ctx-swatch ctx-swatch-none' + (it.current ? '' : ' active');
         none.title = 'No color';
+        none.setAttribute('aria-label', 'No color');
         none.addEventListener('click', () => { closeContextMenu(); it.onPick(null); });
         row.appendChild(none);
         for (const c of NODE_COLORS) {
@@ -3820,6 +3833,7 @@
           sw.type = 'button';
           sw.className = 'ctx-swatch' + (it.current === c.key ? ' active' : '');
           sw.title = c.label;
+          sw.setAttribute('aria-label', c.label);
           sw.style.setProperty('--sw', c.hex);
           sw.addEventListener('click', () => { closeContextMenu(); it.onPick(c.key); });
           row.appendChild(sw);
@@ -4154,6 +4168,7 @@
   }
   function copyNodeLink(id, btn) {
     const flash = () => {
+      announce('ID copied');
       const icon = btn && btn.querySelector('.icon');
       if (!icon) return;
       icon.classList.replace('icon-tag', 'icon-check');
@@ -6158,8 +6173,8 @@
       row.innerHTML =
         '<span class="board-row-name" spellcheck="false"></span>' +
         '<span class="board-badge"></span>' +
-        '<button class="board-rename icon-btn" title="Rename"><span class="icon icon-edit"></span></button>' +
-        '<button class="board-remove icon-btn" title="Delete board"><span class="icon icon-delete"></span></button>';
+        '<button class="board-rename icon-btn" title="Rename" aria-label="Rename board"><span class="icon icon-edit"></span></button>' +
+        '<button class="board-remove icon-btn" title="Delete board" aria-label="Delete board"><span class="icon icon-delete"></span></button>';
       const nameEl = row.querySelector('.board-row-name');
       nameEl.textContent = entry.name;
       row.querySelector('.board-badge').textContent = entry.mode === 'drive' ? 'Drive' : 'Device';
