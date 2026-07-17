@@ -12,7 +12,7 @@ Line numbers were verified at commit `73ebf55` and will drift as items land.
 
 ## Phase 1 — quick correctness wins
 
-### 1. [ ] `resetView` ignores the fly-to setting on its no-home branch
+### 1. [x] `resetView` ignores the fly-to setting on its no-home branch — done, 8cb806b
 - **Where:** `app.js:4418-4426`
 - **What:** With a home frame set, the button routes through `frameNode` →
   `setMainViewport` and glides. Without one, it hand-copies `land()`
