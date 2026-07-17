@@ -4,7 +4,20 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:a11y": "playwright test --grep @a11y",
+    "test:boards": "playwright test --grep @boards",
+    "test:buttons": "playwright test --grep @buttons",
+    "test:canvas": "playwright test --grep @canvas",
+    "test:cards": "playwright test --grep @cards",
+    "test:chrome": "playwright test --grep @chrome",
+    "test:connections": "playwright test --grep @connections",
+    "test:dock": "playwright test --grep @dock",
+    "test:frames": "playwright test --grep @frames",
+    "test:nav": "playwright test --grep @nav",
+    "test:select": "playwright test --grep @select",
+    "test:touch": "playwright test --grep @touch",
+    "test:undo": "playwright test --grep @undo"
   },
   "keywords": [],
   "author": "",

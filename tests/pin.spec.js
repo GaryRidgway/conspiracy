@@ -61,7 +61,7 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 
-test('pin a button: it leaves the canvas, the chip navigates, and it all survives reload', async ({ page }) => {
+test('pin a button: it leaves the canvas, the chip navigates, and it all survives reload', { tag: '@buttons' }, async ({ page }) => {
   // a target card, and a button linked to it
   const card = await addCardAt(page, 450, 350);
   await page.click('#addButton');
@@ -105,7 +105,7 @@ test('pin a button: it leaves the canvas, the chip navigates, and it all survive
   expect(within(await btn.boundingBox(), vp.width, vp.height)).toBe(true);
 });
 
-test('arrows to a pinned button hide, and return on unpin', async ({ page }) => {
+test('arrows to a pinned button hide, and return on unpin', { tag: ['@buttons', '@connections'] }, async ({ page }) => {
   await addCardAt(page, 400, 300);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   await seedBoard(page, `
@@ -127,7 +127,7 @@ test('arrows to a pinned button hide, and return on unpin', async ({ page }) => 
   await expect(page.locator('#connections .conn')).toBeVisible();  // both ends exist again
 });
 
-test('a pinned record whose kind is not pinnable heals: canvas at original x/y, flag stripped', async ({ page }) => {
+test('a pinned record whose kind is not pinnable heals: canvas at original x/y, flag stripped', { tag: '@buttons' }, async ({ page }) => {
   // frames are not in PINNABLE_KINDS — this stands in for "the allowlist
   // shrank after something was pinned"
   await addCardAt(page, 400, 300);
@@ -152,7 +152,7 @@ test('a pinned record whose kind is not pinnable heals: canvas at original x/y, 
   })).toBe(true);
 });
 
-test('a chip is a real button: rename, color, and duplicate from its context menu', async ({ page }) => {
+test('a chip is a real button: rename, color, and duplicate from its context menu', { tag: '@buttons' }, async ({ page }) => {
   await addCardAt(page, 450, 350);
   await page.click('#addButton');
   await page.locator('#button-link-modal .np-item').first().click();
@@ -188,7 +188,7 @@ test('a chip is a real button: rename, color, and duplicate from its context men
   await expect(page.locator('#pin-dock .pin-chip').first()).toHaveClass(/colored/);
 });
 
-test('zoom-to-node keeps a frame\'s title tab clear of the top toolbar', async ({ page }) => {
+test('zoom-to-node keeps a frame\'s title tab clear of the top toolbar', { tag: '@nav' }, async ({ page }) => {
   // small frame → fit zoom ≈ 3×: the tab (which rides ABOVE the frame's box)
   // used to land under the toolbar because framing measured the box alone
   await addCardAt(page, 400, 300);
@@ -209,7 +209,7 @@ test('zoom-to-node keeps a frame\'s title tab clear of the top toolbar', async (
   expect(tb.y).toBeGreaterThan(toolbar.y + toolbar.height);   // fully below the bar
 });
 
-test('the canvas context menu offers every palette node type', async ({ page }) => {
+test('the canvas context menu offers every palette node type', { tag: '@chrome' }, async ({ page }) => {
   await page.mouse.click(600, 400, { button: 'right' });
   const menu = page.locator('#context-menu');
   await expect(menu).toBeVisible();

@@ -49,7 +49,7 @@ test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 
 // ── 1. Getting lost on the infinite canvas (Miro/Excalidraw: "easily get
 //      lost", "no way to show all elements") — Fit must recover. ──
-test('recover from getting lost: Fit brings off-screen content into view', async ({ page }) => {
+test('recover from getting lost: Fit brings off-screen content into view', { tag: '@nav' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   // scroll far away so the card leaves the viewport
   await page.evaluate(() => {
@@ -64,7 +64,7 @@ test('recover from getting lost: Fit brings off-screen content into view', async
 
 // ── 2. Accidental zoom (Zoom Whiteboard backlash: scroll-wheel hijacked to
 //      zoom). Plain scroll must PAN, never change zoom. ──
-test('plain scroll/trackpad pans and never changes zoom', async ({ page }) => {
+test('plain scroll/trackpad pans and never changes zoom', { tag: '@canvas' }, async ({ page }) => {
   const before = await worldScale(page);
   await page.evaluate(() => {
     document.getElementById('viewport').dispatchEvent(new WheelEvent('wheel', {
@@ -82,7 +82,7 @@ test('plain scroll/trackpad pans and never changes zoom', async ({ page }) => {
 //      cross-origin iframes reposition a frame behind the transform (they
 //      render out-of-process), so during an active pan we blank the live doc
 //      to its node box and restore it once motion settles. ──
-test('panning promotes #world to a GPU layer and never blanks the live doc', async ({ page }) => {
+test('panning promotes #world to a GPU layer and never blanks the live doc', { tag: '@canvas' }, async ({ page }) => {
   await page.click('#addFrame');
   await page.fill('#frame-url', 'http://localhost:8123/tests/fixtures/embed.html');
   await page.click('#frame-add');
@@ -101,7 +101,7 @@ test('panning promotes #world to a GPU layer and never blanks the live doc', asy
 
 // ── 2c. The dotted grid must track the world transform under zoom (same
 //      spacing + cursor anchoring as the cards), not drift on its own. ──
-test('the dot grid stays phase-aligned with the world under zoom', async ({ page }) => {
+test('the dot grid stays phase-aligned with the world under zoom', { tag: '@canvas' }, async ({ page }) => {
   const phaseGap = () => page.evaluate(() => {
     const wm = document.getElementById('world').style.transform
       .match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)\s*scale\(([-\d.]+)\)/);
@@ -124,7 +124,7 @@ test('the dot grid stays phase-aligned with the world under zoom', async ({ page
 
 // ── 2d. The floating edit toolbar is fixed-positioned; it must re-anchor to
 //      its card as the board pans, not stay stuck on screen. ──
-test('the edit toolbar stays anchored to its card when the board is panned', async ({ page }) => {
+test('the edit toolbar stays anchored to its card when the board is panned', { tag: '@canvas' }, async ({ page }) => {
   await addCardAt(page, 500, 350);
   await page.locator('.node.card .card-body').first().click();   // focus body → toolbar
   const bar = page.locator('#text-toolbar');
@@ -138,7 +138,7 @@ test('the edit toolbar stays anchored to its card when the board is panned', asy
 
 // ── 3. Zoom should stay sane (Miro "400% isn't infinite", "everything
 //      blurred"). Clamp, and always offer a way back to 100%. ──
-test('zoom stays within a sane range and Reset returns home', async ({ page }) => {
+test('zoom stays within a sane range and Reset returns home', { tag: '@canvas' }, async ({ page }) => {
   await page.evaluate(() => {
     const v = document.getElementById('viewport');
     for (let i = 0; i < 60; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaY: -600, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
@@ -152,7 +152,7 @@ test('zoom stays within a sane range and Reset returns home', async ({ page }) =
 
 // ── 4. Discoverability of "how do I add something" (empty-state "what do I
 //      do"). The always-visible tool palette is the single obvious entry. ──
-test('creating a node is discoverable (tool palette button)', async ({ page }) => {
+test('creating a node is discoverable (tool palette button)', { tag: '@chrome' }, async ({ page }) => {
   await expect(page.locator('#tools #addCard')).toBeVisible();
   await expect(page.locator('#helpBtn')).toBeVisible();    // guidance one click away
   await page.click('#addCard');
@@ -161,7 +161,7 @@ test('creating a node is discoverable (tool palette button)', async ({ page }) =
 
 // The old always-on hint strip became a ? panel: ? toggles it, Escape and
 // clicking elsewhere close it, and it never opens while typing in a field.
-test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', async ({ page }) => {
+test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', { tag: '@chrome' }, async ({ page }) => {
   await page.keyboard.press('?');
   await expect(page.locator('#help-panel')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -183,7 +183,7 @@ test('help: ? toggles the shortcuts panel; Escape and outside clicks close it', 
 // The suite's storageState pre-seeds fly-to OFF (see playwright.config.js);
 // these tests are about the setting itself, so they start from a clean
 // profile where the app's own default (ON) shows.
-test.describe('settings and fly-to', () => {
+test.describe('settings and fly-to', { tag: ['@nav', '@chrome'] }, () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('settings: cog opens the panel and the fly-to preference persists', async ({ page }) => {
@@ -250,7 +250,7 @@ test.describe('settings and fly-to', () => {
 
 // Connection handles reveal only near the cursor's side of the node, so a
 // hover doesn't light all four dots up as permanent-looking chrome.
-test('connection dots reveal only near their side of the node', async ({ page }) => {
+test('connection dots reveal only near their side of the node', { tag: '@connections' }, async ({ page }) => {
   const id = await (await addCardAt(page, 450, 320)).getAttribute('data-id');
   const node = page.locator(`.node.card[data-id="${id}"]`);
   const bb = await node.boundingBox();
@@ -273,7 +273,7 @@ test('connection dots reveal only near their side of the node', async ({ page })
 
 // ── 5. Accidental deletion + weak undo (Microsoft Whiteboard: "can't undo a
 //      deleted sticky", "lost months"). Deletion must be recoverable. ──
-test('a deleted node is recoverable via undo', async ({ page }) => {
+test('a deleted node is recoverable via undo', { tag: '@undo' }, async ({ page }) => {
   await addCardAt(page, 450, 350);
   await page.mouse.click(60, 200);                          // deselect
   const hb = await page.locator('.card-header').boundingBox();
@@ -286,7 +286,7 @@ test('a deleted node is recoverable via undo', async ({ page }) => {
 
 // ── 6. "Why is it rocket science to select/move an object" (Miro). Selection
 //      must give clear visual feedback. ──
-test('selection is visually obvious', async ({ page }) => {
+test('selection is visually obvious', { tag: '@select' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await page.mouse.click(60, 200);                          // deselect
   await expect(page.locator('.node.card.selected')).toHaveCount(0);
@@ -296,7 +296,7 @@ test('selection is visually obvious', async ({ page }) => {
 });
 
 // ── 7. Escape is a safe, predictable "get me out" — never destructive. ──
-test('Escape clears selection without deleting anything', async ({ page }) => {
+test('Escape clears selection without deleting anything', { tag: '@select' }, async ({ page }) => {
   await addCardAt(page, 450, 350);
   const hb = await page.locator('.card-header').boundingBox();
   await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);
@@ -308,7 +308,7 @@ test('Escape clears selection without deleting anything', async ({ page }) => {
 
 // ── 8. "Menus that don't close properly" (Miro). Menus dismiss on Escape and
 //      on outside-click. ──
-test('open menus dismiss on Escape and outside-click', async ({ page }) => {
+test('open menus dismiss on Escape and outside-click', { tag: '@chrome' }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await expect(page.locator('#board-menu')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -321,7 +321,7 @@ test('open menus dismiss on Escape and outside-click', async ({ page }) => {
 });
 
 // ── 9. Orientation always available (counter to "lost"): a live zoom readout. ──
-test('a live zoom readout is always shown', async ({ page }) => {
+test('a live zoom readout is always shown', { tag: '@chrome' }, async ({ page }) => {
   await expect(page.locator('#zoomReset')).toHaveText('100%');
   await page.evaluate(() => document.getElementById('viewport').dispatchEvent(
     new WheelEvent('wheel', { deltaY: -400, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true })));
@@ -329,7 +329,7 @@ test('a live zoom readout is always shown', async ({ page }) => {
 });
 
 // ── 10. No lost work: a reload restores the board. ──
-test('work is not lost across a reload', async ({ page }) => {
+test('work is not lost across a reload', { tag: '@boards' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   const id = await node.getAttribute('data-id');
   // wait for the debounced save to actually persist this card
@@ -343,7 +343,7 @@ test('work is not lost across a reload', async ({ page }) => {
 
 // ── 10a. Viewport is a per-device preference: it persists locally across a
 //        reload, but is never written into the (synced) board content. ──
-test('viewport persists locally across reload but stays out of board content', async ({ page }) => {
+test('viewport persists locally across reload but stays out of board content', { tag: '@boards' }, async ({ page }) => {
   await addCardAt(page, 400, 300);
   await page.evaluate(() => {
     const v = document.getElementById('viewport');
@@ -369,7 +369,7 @@ test('viewport persists locally across reload but stays out of board content', a
 
 // ── 10b. No lost work when leaving: hiding/closing the tab flushes the pending
 //        debounced save immediately, so a quick edit-then-leave still persists. ──
-test('leaving the tab flushes a pending edit without waiting for the debounce', async ({ page }) => {
+test('leaving the tab flushes a pending edit without waiting for the debounce', { tag: '@boards' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   const id = await node.getAttribute('data-id');
   // Simulate the tab being hidden; the flush must persist synchronously.
@@ -392,7 +392,7 @@ test('leaving the tab flushes a pending edit without waiting for the debounce', 
 
 // Box-select is the #1 "where did this go / why is this hard" complaint
 // (Miro: "select multiple by drawing a box… why has this disappeared").
-test('box-select: dragging on empty canvas rubber-bands a selection', async ({ page }) => {
+test('box-select: dragging on empty canvas rubber-bands a selection', { tag: '@select' }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 560, 320);
   await page.mouse.click(60, 180);                            // deselect
@@ -402,7 +402,7 @@ test('box-select: dragging on empty canvas rubber-bands a selection', async ({ p
 });
 
 // Multi-select + move together (Miro/FigJam standard).
-test('multiple selected nodes move together', async ({ page }) => {
+test('multiple selected nodes move together', { tag: '@select' }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 560, 320);
   await page.mouse.click(60, 180);
@@ -422,7 +422,7 @@ test('multiple selected nodes move together', async ({ page }) => {
 });
 
 // Shift-click adds/removes individual nodes from the selection.
-test('shift-click toggles a node in the selection', async ({ page }) => {
+test('shift-click toggles a node in the selection', { tag: '@select' }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 560, 320);
   await page.mouse.click(60, 180);
@@ -439,7 +439,7 @@ test('shift-click toggles a node in the selection', async ({ page }) => {
 });
 
 // Duplicate (Miro/FigJam: ⌘/Ctrl+D).
-test('duplicate a node with Cmd/Ctrl+D', async ({ page }) => {
+test('duplicate a node with Cmd/Ctrl+D', { tag: '@select' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   const hb = await node.locator('.card-header').boundingBox();
   await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);
@@ -449,7 +449,7 @@ test('duplicate a node with Cmd/Ctrl+D', async ({ page }) => {
   await expect(page.locator('.node.card.selected')).toHaveCount(1);
 });
 
-test('duplicating a multi-selection copies the group and is one undo step', async ({ page }) => {
+test('duplicating a multi-selection copies the group and is one undo step', { tag: ['@select', '@undo'] }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 560, 320);
   await page.mouse.click(60, 180);
@@ -465,7 +465,7 @@ test('duplicating a multi-selection copies the group and is one undo step', asyn
 });
 
 // Copy / paste nodes (universal expectation).
-test('copy and paste a node', async ({ page }) => {
+test('copy and paste a node', { tag: '@select' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   const hb = await node.locator('.card-header').boundingBox();
   await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);   // select
@@ -478,7 +478,7 @@ test('copy and paste a node', async ({ page }) => {
 });
 
 // Right-click context menu (Miro/FigJam: add-here / duplicate / delete).
-test('right-click opens a context menu on the canvas and on a node', async ({ page }) => {
+test('right-click opens a context menu on the canvas and on a node', { tag: '@chrome' }, async ({ page }) => {
   const menu = page.locator('#context-menu');
 
   // On empty canvas: add/select options, no node-specific actions.
@@ -510,7 +510,7 @@ test('right-click opens a context menu on the canvas and on a node', async ({ pa
 
 // Color coding: pick a color from the node context menu → it tints the node
 // (heading + border via .colored / --node-color) and persists across a reload.
-test('color-code a node from the context menu; it tints and persists', async ({ page }) => {
+test('color-code a node from the context menu; it tints and persists', { tag: '@cards' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await page.keyboard.press('Escape');                       // leave the title rename
   await node.click({ button: 'right' });
@@ -532,7 +532,7 @@ test('color-code a node from the context menu; it tints and persists', async ({ 
 });
 
 // Clearing the color ("none") removes the tint.
-test('choosing "no color" clears a node color', async ({ page }) => {
+test('choosing "no color" clears a node color', { tag: '@cards' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await page.keyboard.press('Escape');
   const menu = page.locator('#context-menu');
@@ -546,7 +546,7 @@ test('choosing "no color" clears a node color', async ({ page }) => {
 
 // A connection fades between its two endpoints' colors; the arrowhead takes the
 // destination color.
-test('a connection fades between its two nodes\' colors', async ({ page }) => {
+test('a connection fades between its two nodes\' colors', { tag: '@connections' }, async ({ page }) => {
   const a0 = await addCardAt(page, 300, 300);
   const aid = await a0.getAttribute('data-id');
   const b0 = await addCardAt(page, 760, 320);
@@ -602,7 +602,7 @@ async function connectTwoCards(page) {
 
 // Connections can say WHY two items are linked: double-click the line, type,
 // and the label survives a reload.
-test('a connection can be labeled by double-clicking it, and the label persists', async ({ page }) => {
+test('a connection can be labeled by double-clicking it, and the label persists', { tag: '@connections' }, async ({ page }) => {
   const mid = await connectTwoCards(page);
   await page.mouse.dblclick(mid.x, mid.y);
   const label = page.locator('.conn-label');
@@ -620,7 +620,7 @@ test('a connection can be labeled by double-clicking it, and the label persists'
 });
 
 // Committing an empty label removes it; deleting the connection removes the pill.
-test('an emptied connection label disappears, and deleting the connection removes it', async ({ page }) => {
+test('an emptied connection label disappears, and deleting the connection removes it', { tag: '@connections' }, async ({ page }) => {
   const mid = await connectTwoCards(page);
   await page.mouse.dblclick(mid.x, mid.y);
   await page.keyboard.type('temp');
@@ -648,7 +648,7 @@ test('an emptied connection label disappears, and deleting the connection remove
 // Color coding pays off as a filter: the legend lists only colors in use, and
 // clicking a dot spotlights matching items while dimming the rest (view-only —
 // nothing is written to the board).
-test('clicking a legend dot spotlights that color and dims the rest', async ({ page }) => {
+test('clicking a legend dot spotlights that color and dims the rest', { tag: '@cards' }, async ({ page }) => {
   const legend = page.locator('#color-filter');
   await expect(legend).toBeHidden();                       // no colors in use yet
 
@@ -702,7 +702,7 @@ test('clicking a legend dot spotlights that color and dims the rest', async ({ p
 
 // Quick jump (⌘K): finding an item by its text flies the viewport to it —
 // the other half of "getting lost on the infinite canvas".
-test('quick jump finds a card by its text and flies the viewport to it', async ({ page }) => {
+test('quick jump finds a card by its text and flies the viewport to it', { tag: '@nav' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await node.locator('.card-title').dblclick();
   await page.keyboard.type('smoking gun');
@@ -728,7 +728,7 @@ test('quick jump finds a card by its text and flies the viewport to it', async (
 });
 
 // The Find button opens the same palette, and Escape closes it.
-test('Find button opens quick jump; Escape closes it', async ({ page }) => {
+test('Find button opens quick jump; Escape closes it', { tag: '@nav' }, async ({ page }) => {
   await addCardAt(page, 450, 350);
   await page.click('#findBtn');
   await expect(page.locator('#jump')).toBeVisible();
@@ -752,7 +752,7 @@ async function pasteImage(page) {
   });
 }
 
-test('pasting an image on the canvas creates an image card that persists', async ({ page }) => {
+test('pasting an image on the canvas creates an image card that persists', { tag: '@cards' }, async ({ page }) => {
   await pasteImage(page);
   const img = page.locator('.node.card .card-body img');
   await expect(img).toHaveCount(1);
@@ -766,7 +766,7 @@ test('pasting an image on the canvas creates an image card that persists', async
 
 // A pasted screenshot lands under the cursor (not the viewport centre) — the
 // node's client-space top-left should match where the mouse last was.
-test('pasted image lands under the cursor', async ({ page }) => {
+test('pasted image lands under the cursor', { tag: '@cards' }, async ({ page }) => {
   await page.mouse.move(210, 460);
   await pasteImage(page);
   const node = page.locator('.node.card');
@@ -778,7 +778,7 @@ test('pasted image lands under the cursor', async ({ page }) => {
 
 // Pasting while editing a card drops the image inline; remote <img> tags are
 // stripped by the sanitizer (data URIs only — no tracking pixels).
-test('image pastes inline into a card being edited; remote images are stripped', async ({ page }) => {
+test('image pastes inline into a card being edited; remote images are stripped', { tag: '@cards' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await node.locator('.card-body').click();
   await page.keyboard.type('evidence: ');
@@ -804,7 +804,7 @@ test('image pastes inline into a card being edited; remote images are stripped',
 // A table pasted from GitHub/docs keeps its structure: the sanitizer lets
 // table tags (and cell spans) through, and it survives an edit + save cycle
 // instead of collapsing into a run of text.
-test('pasted table structure survives sanitization and edits', async ({ page }) => {
+test('pasted table structure survives sanitization and edits', { tag: '@cards' }, async ({ page }) => {
   // seed via the legacy key before boot — mutating the live board key races
   // with the app's unload flush, which rewrites the board from memory
   await page.evaluate(() => {
@@ -843,7 +843,7 @@ test('pasted table structure survives sanitization and edits', async ({ page }) 
 // THIS page's origin (the frame has no sandbox), which would be stored XSS
 // with access to every board and the Drive token. Such a src must never reach
 // the element — the frame loads blank instead.
-test('security: a javascript: iframe src from stored content never loads', async ({ page }) => {
+test('security: a javascript: iframe src from stored content never loads', { tag: '@frames' }, async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('whiteboard', JSON.stringify({
       schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
@@ -862,7 +862,7 @@ test('security: a javascript: iframe src from stored content never loads', async
 
 // SECURITY: same untrusted-scheme concern for a button's URL action — a
 // javascript:/data: target must not be handed to window.open().
-test('security: a button with a javascript: URL action does not navigate', async ({ page }) => {
+test('security: a button with a javascript: URL action does not navigate', { tag: '@buttons' }, async ({ page }) => {
   let opened = null;
   await page.exposeFunction('__recordOpen', (u) => { opened = u; });
   await page.addInitScript(() => { window.open = (u) => { window.__recordOpen(u); return null; }; });
@@ -881,7 +881,7 @@ test('security: a button with a javascript: URL action does not navigate', async
 
 // Button nodes: click to fly to a board item — the link is set in the modal
 // that opens on creation (and later via right-click → Change link…).
-test('a button linked to a board item flies the viewport there on click', async ({ page }) => {
+test('a button linked to a board item flies the viewport there on click', { tag: ['@buttons', '@nav'] }, async ({ page }) => {
   const card = await addCardAt(page, 450, 350);
   await card.locator('.card-title').dblclick();
   await page.keyboard.type('Target Dossier');
@@ -923,7 +923,7 @@ test('a button linked to a board item flies the viewport there on click', async 
 });
 
 // A URL button opens the link in a new tab (noopener), like body links do.
-test('a button linked to a URL opens it in a new tab on click', async ({ page }) => {
+test('a button linked to a URL opens it in a new tab on click', { tag: '@buttons' }, async ({ page }) => {
   await page.click('#addButton');
   const modal = page.locator('#button-link-modal');
   await expect(modal).toBeVisible();
@@ -943,7 +943,7 @@ test('a button linked to a URL opens it in a new tab on click', async ({ page })
 // The "Copy ID" button yields a full deep link (https://…/#node=<id>). Pasted
 // back into the app as a link, it names a board item — following it must fly
 // there in place, never open the whole app in a second tab.
-test('a pasted Copy-ID deep link in a card body navigates in place', async ({ page }) => {
+test('a pasted Copy-ID deep link in a card body navigates in place', { tag: '@nav' }, async ({ page }) => {
   const card = await addCardAt(page, 450, 350);
   const id = await card.getAttribute('data-id');
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
@@ -975,7 +975,7 @@ test('a pasted Copy-ID deep link in a card body navigates in place', async ({ pa
 
 // Same link pasted into a button's link modal: it is URL-shaped, but it must
 // resolve to the board item — Enter links the node, and the button flies.
-test('pasting a Copy-ID deep link into the button modal links the board item', async ({ page }) => {
+test('pasting a Copy-ID deep link into the button modal links the board item', { tag: ['@buttons', '@nav'] }, async ({ page }) => {
   const card = await addCardAt(page, 450, 350);
   const id = await card.getAttribute('data-id');
   await page.evaluate(() => { window.open = (u) => { window.__opened = u; return null; }; });
@@ -1004,7 +1004,7 @@ test('pasting a Copy-ID deep link into the button modal links the board item', a
 
 // Frames: a named region of the board, linkable like any node, sitting behind
 // content with a click-through interior.
-test('a frame is a named, linkable region whose interior stays click-through', async ({ page }) => {
+test('a frame is a named, linkable region whose interior stays click-through', { tag: '@frames' }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.type('Evidence wall');
   await page.keyboard.press('Enter');
@@ -1034,7 +1034,7 @@ test('a frame is a named, linkable region whose interior stays click-through', a
 
 // The context-menu toggle: a frame set to "move items with frame" carries
 // everything fully inside it when dragged; toggled off, it moves alone.
-test('the move-items-with-frame toggle carries contents only while enabled', async ({ page }) => {
+test('the move-items-with-frame toggle carries contents only while enabled', { tag: '@frames' }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');                     // keep default name
   const frame = page.locator('.frame-node');
@@ -1067,7 +1067,7 @@ test('the move-items-with-frame toggle carries contents only while enabled', asy
 // Box-select vs frames: a marquee that swallows a frame whole selects it with
 // everything else, but one that merely crosses it leaves it alone — otherwise
 // any sweep across the board would constantly grab room-sized regions.
-test('box-select takes a frame only when the box fully encloses it', async ({ page }) => {
+test('box-select takes a frame only when the box fully encloses it', { tag: ['@select', '@frames'] }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');                     // keep default name
   const frame = page.locator('.frame-node');
@@ -1092,7 +1092,7 @@ test('box-select takes a frame only when the box fully encloses it', async ({ pa
 
 // Right-click → "Use as default view": Reset then frames that frame instead
 // of snapping to the origin; toggling it off restores the origin behavior.
-test('a frame set as default view becomes the Reset target', async ({ page }) => {
+test('a frame set as default view becomes the Reset target', { tag: ['@frames', '@nav'] }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');                     // keep default name
   const frame = page.locator('.frame-node');
@@ -1125,7 +1125,7 @@ test('a frame set as default view becomes the Reset target', async ({ page }) =>
 
 // Frames resize from any edge or corner; a west/north drag keeps the opposite
 // edge pinned, so contents never shift in world space.
-test('a frame resizes from its west edge and NW corner with the far edge pinned', async ({ page }) => {
+test('a frame resizes from its west edge and NW corner with the far edge pinned', { tag: '@frames' }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');                     // keep default name
   const frame = page.locator('.frame-node');
@@ -1149,7 +1149,7 @@ test('a frame resizes from its west edge and NW corner with the far edge pinned'
 
 // Right-click → "Move to top" raises overlapped items, and the stacking
 // persists (z is stored on the record, not just DOM order).
-test('move to top raises an overlapped card and survives a reload', async ({ page }) => {
+test('move to top raises an overlapped card and survives a reload', { tag: '@cards' }, async ({ page }) => {
   const a = await addCardAt(page, 480, 320);
   const idA = await a.getAttribute('data-id');
   const b = await addCardAt(page, 540, 360);               // overlaps a; newer = on top
@@ -1173,7 +1173,7 @@ test('move to top raises an overlapped card and survives a reload', async ({ pag
 
 // "Move to top" raises the whole assembly — a card and its docked buttons
 // must come forward together, not leave the buttons sandwiched underneath.
-test('move to top raises a card together with its docked buttons', async ({ page }) => {
+test('move to top raises a card together with its docked buttons', { tag: ['@cards', '@buttons'] }, async ({ page }) => {
   const card = await addCardAt(page, 480, 280);
   const idA = await card.getAttribute('data-id');
   const cb = await card.boundingBox();
@@ -1203,7 +1203,7 @@ test('move to top raises a card together with its docked buttons', async ({ page
 
 // Nudging a partly off-screen card must not yank the viewport through a full
 // rescue jump — the view follows at nudge speed instead.
-test('arrow-key nudge of a partly off-screen card pans gently, never jumps', async ({ page }) => {
+test('arrow-key nudge of a partly off-screen card pans gently, never jumps', { tag: '@canvas' }, async ({ page }) => {
   const card = await addCardAt(page, 200, 400);
   // push the card halfway off the left edge by panning the view right
   await page.evaluate(() => {
@@ -1223,7 +1223,7 @@ test('arrow-key nudge of a partly off-screen card pans gently, never jumps', asy
 
 // A long title pasted into a narrower card must wrap inside the card while
 // editing — not spill past its right edge.
-test('editing a long title wraps inside the card instead of overflowing', async ({ page }) => {
+test('editing a long title wraps inside the card instead of overflowing', { tag: '@cards' }, async ({ page }) => {
   const card = await addCardAt(page, 500, 300);
   await card.locator('.card-title').dblclick();
   await page.keyboard.type('An extremely long investigation title that would never fit in one card width');
@@ -1236,7 +1236,7 @@ test('editing a long title wraps inside the card instead of overflowing', async 
 
 // Triple-click line selection drags a trailing newline along; pasting a
 // single line into a card body must insert just the line.
-test('pasting a single line with a trailing newline inserts no stray break', async ({ page }) => {
+test('pasting a single line with a trailing newline inserts no stray break', { tag: '@cards' }, async ({ page }) => {
   const card = await addCardAt(page, 500, 300);
   await card.locator('.card-body').click();
   await page.keyboard.type('start');
@@ -1273,7 +1273,7 @@ const nodePos = (loc) => loc.evaluate((el) => ({
 
 // A button's name defines its width: a long label grows the pill instead of
 // being clipped at an arbitrary cap — how wide a button gets is the user's call.
-test('a long button name expands the button instead of truncating', async ({ page }) => {
+test('a long button name expands the button instead of truncating', { tag: '@buttons' }, async ({ page }) => {
   const btn = await addFreeButton(page);
   await btn.click({ button: 'right' });
   await page.locator('#context-menu .ctx-item', { hasText: 'Rename' }).click();
@@ -1287,7 +1287,7 @@ test('a long button name expands the button instead of truncating', async ({ pag
   expect((await btn.boundingBox()).width).toBeGreaterThan(320);   // the old cap
 });
 
-test('a button docks to a card bottom, rides its drags, and detaches via right-click', async ({ page }) => {
+test('a button docks to a card bottom, rides its drags, and detaches via right-click', { tag: '@buttons' }, async ({ page }) => {
   const card = await addCardAt(page, 500, 280);
   const btn = await addFreeButton(page);
   const cb = await card.boundingBox();
@@ -1326,7 +1326,7 @@ test('a button docks to a card bottom, rides its drags, and detaches via right-c
   expect(free2.y - free.y).toBe(0);                               // stayed put
 });
 
-test('a button docks to the right of a frame title and moves with the frame', async ({ page }) => {
+test('a button docks to the right of a frame title and moves with the frame', { tag: '@buttons' }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');                            // keep default name
   const frame = page.locator('.frame-node');
@@ -1370,7 +1370,7 @@ test('a button docks to the right of a frame title and moves with the frame', as
 // toWorld (the model viewport). With a saved pan, measuring under the default
 // transform wrote the docked button to garbage coordinates, invisible until
 // the next layout pass ("button missing until the frame is dragged").
-test('a frame-docked button lays out correctly on load with a panned viewport', async ({ page }) => {
+test('a frame-docked button lays out correctly on load with a panned viewport', { tag: '@buttons' }, async ({ page }) => {
   await page.click('#addFrameNode');
   await page.keyboard.press('Escape');
   const tab = page.locator('.frame-node .frame-tab');
@@ -1406,7 +1406,7 @@ test('a frame-docked button lays out correctly on load with a panned viewport', 
 // won't dock. Chains: a button dropped on a free button's right edge forms
 // a menu row that moves with its root; dropping on a DOCKED button appends
 // to that button's row instead of nesting.
-test('card trays cap at three tabs and buttons chain into menu rows', async ({ page }) => {
+test('card trays cap at three tabs and buttons chain into menu rows', { tag: '@buttons' }, async ({ page }) => {
   const card = await addCardAt(page, 480, 240);
   const cb = await card.boundingBox();
   const dockToCard = async (btn) => {
@@ -1470,7 +1470,7 @@ test('card trays cap at three tabs and buttons chain into menu rows', async ({ p
   expect(after4.y - before4.y).toBe(-40);
 });
 
-test('deleting a card orphans its docked button in place', async ({ page }) => {
+test('deleting a card orphans its docked button in place', { tag: '@buttons' }, async ({ page }) => {
   const card = await addCardAt(page, 500, 280);
   const btn = await addFreeButton(page);
   const cb = await card.boundingBox();
@@ -1491,7 +1491,7 @@ test('deleting a card orphans its docked button in place', async ({ page }) => {
 });
 
 // Empty-state guidance centered on a blank board (NN/g: orient the user).
-test('a blank board shows a centered empty-state prompt that clears once a node exists', async ({ page }) => {
+test('a blank board shows a centered empty-state prompt that clears once a node exists', { tag: '@chrome' }, async ({ page }) => {
   await expect(page.locator('#empty-hint')).toBeVisible();
   await addCardAt(page, 300, 300);
   await expect(page.locator('#empty-hint')).toBeHidden();
@@ -1499,7 +1499,7 @@ test('a blank board shows a centered empty-state prompt that clears once a node 
 
 // A long heading should widen the card (no clipped/ellipsised title), while a
 // long body must NOT — the title alone drives width.
-test('a long heading widens the card; a long body does not', async ({ page }) => {
+test('a long heading widens the card; a long body does not', { tag: '@cards' }, async ({ page }) => {
   const widthOf = (loc) => loc.evaluate((el) => el.getBoundingClientRect().width);
 
   // short title → default width
@@ -1532,7 +1532,7 @@ test('a long heading widens the card; a long body does not', async ({ page }) =>
 
 // Drive opt-in lives in the board menu and must not pull in Google's scripts
 // (or touch the network) until the user actually clicks Connect.
-test('Drive bar is present and loads no Google scripts until Connect', async ({ page }) => {
+test('Drive bar is present and loads no Google scripts until Connect', { tag: '@boards' }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await expect(page.locator('#drive-bar')).toBeVisible();
   await expect(page.locator('#driveConnectBtn')).toBeVisible();
@@ -1548,7 +1548,7 @@ async function merge(page, base, local, remote) {
 }
 const boardOf = (cards) => ({ schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 }, cards, iframes: {}, connections: {} });
 
-test('merge: edits to different nodes both survive', async ({ page }) => {
+test('merge: edits to different nodes both survive', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: card(0, 0, 'A'), b: card(10, 10, 'B') });
   const local = boardOf({ a: card(0, 0, 'A EDITED'), b: card(10, 10, 'B') });   // this device edited A
   const remote = boardOf({ a: card(0, 0, 'A'), b: card(99, 99, 'B') });          // other device moved B
@@ -1558,7 +1558,7 @@ test('merge: edits to different nodes both survive', async ({ page }) => {
   expect(merged.cards.b.x).toBe(99);               // remote edit kept
 });
 
-test('merge: same node, different fields — both edits kept', async ({ page }) => {
+test('merge: same node, different fields — both edits kept', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: card(0, 0, 'A', 'body') });
   const local = boardOf({ a: card(50, 60, 'A', 'body') });          // moved it
   const remote = boardOf({ a: card(0, 0, 'A', 'new body') });        // edited its body
@@ -1568,7 +1568,7 @@ test('merge: same node, different fields — both edits kept', async ({ page }) 
   expect(merged.cards.a.body).toBe('new body'); // remote body
 });
 
-test('merge: same field on both sides is a conflict, local wins', async ({ page }) => {
+test('merge: same field on both sides is a conflict, local wins', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: card(0, 0, 'A', 'orig') });
   const local = boardOf({ a: card(0, 0, 'A', 'mine') });
   const remote = boardOf({ a: card(0, 0, 'A', 'theirs') });
@@ -1577,7 +1577,7 @@ test('merge: same field on both sides is a conflict, local wins', async ({ page 
   expect(merged.cards.a.body).toBe('mine');
 });
 
-test('merge: node added on one side appears; node deleted on one side goes away', async ({ page }) => {
+test('merge: node added on one side appears; node deleted on one side goes away', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: card(0, 0, 'A') });
   const local = boardOf({ a: card(0, 0, 'A'), c: card(5, 5, 'C') });  // added C
   const remote = boardOf({});                                          // deleted A
@@ -1587,7 +1587,7 @@ test('merge: node added on one side appears; node deleted on one side goes away'
   expect(merged.cards.a).toBeFalsy();       // delete survives
 });
 
-test('merge: delete on one side vs edit on the other keeps the edit', async ({ page }) => {
+test('merge: delete on one side vs edit on the other keeps the edit', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: card(0, 0, 'A', 'orig') });
   const local = boardOf({});                                  // deleted A
   const remote = boardOf({ a: card(0, 0, 'A', 'edited') });   // edited A
@@ -1599,7 +1599,7 @@ test('merge: delete on one side vs edit on the other keeps the edit', async ({ p
 // Button nodes nest an object (action: {type, target}) inside a record. Each
 // merge side comes from a separate JSON parse, so equality must be by value —
 // reference compare would flag every configured button as edited on both sides.
-test('merge: untouched button with a nested action is not a conflict', async ({ page }) => {
+test('merge: untouched button with a nested action is not a conflict', { tag: '@boards' }, async ({ page }) => {
   const btn = () => ({ x: 0, y: 0, title: 'Go', kind: 'button', action: { type: 'url', target: 'https://a.example' } });
   const base = boardOf({ b1: btn() });
   const local = boardOf({ b1: btn() });                      // untouched here
@@ -1610,7 +1610,7 @@ test('merge: untouched button with a nested action is not a conflict', async ({ 
   expect(merged.cards.c).toBeTruthy();
 });
 
-test('merge: remote changing a button link wins when this device did not touch it', async ({ page }) => {
+test('merge: remote changing a button link wins when this device did not touch it', { tag: '@boards' }, async ({ page }) => {
   const btn = (target) => ({ x: 0, y: 0, title: 'Go', kind: 'button', action: { type: 'url', target } });
   const base = boardOf({ b1: btn('https://old.example') });
   const local = boardOf({ b1: btn('https://old.example') });   // untouched here
@@ -1622,7 +1622,7 @@ test('merge: remote changing a button link wins when this device did not touch i
 
 // Removing a field (e.g. deleting a connection label, unsetting a button link)
 // must survive a merge as a removal — not resurrect, not leave a phantom key.
-test('merge: a field deleted on one side stays deleted', async ({ page }) => {
+test('merge: a field deleted on one side stays deleted', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({});
   base.connections = { k: { from: 'a', to: 'b', label: 'old' } };
   const local = boardOf({});
@@ -1635,14 +1635,14 @@ test('merge: a field deleted on one side stays deleted', async ({ page }) => {
 });
 
 // The Drive conflict prompt exists but stays hidden for normal (device-board) use.
-test('Drive conflict modal is present and hidden by default', async ({ page }) => {
+test('Drive conflict modal is present and hidden by default', { tag: '@boards' }, async ({ page }) => {
   await expect(page.locator('#conflict-modal')).toBeHidden();
   await expect(page.locator('#conflict-keep-local')).toHaveCount(1);
   await expect(page.locator('#conflict-keep-drive')).toHaveCount(1);
 });
 
 // Select-all to grab/move everything (Miro "quick select all to move").
-test('Cmd/Ctrl+A selects every node', async ({ page }) => {
+test('Cmd/Ctrl+A selects every node', { tag: '@select' }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 520, 320);
   await page.mouse.click(60, 180);                 // deselect + drop any edit focus
@@ -1651,7 +1651,7 @@ test('Cmd/Ctrl+A selects every node', async ({ page }) => {
 });
 
 // Keyboard zoom-to-fit (fast recovery; common shortcut Shift+1).
-test('Shift+1 zooms to fit all content', async ({ page }) => {
+test('Shift+1 zooms to fit all content', { tag: '@nav' }, async ({ page }) => {
   const node = await addCardAt(page, 450, 350);
   await page.mouse.click(60, 180);                 // drop edit focus so the shortcut fires
   await page.evaluate(() => {
@@ -1668,7 +1668,7 @@ test('Shift+1 zooms to fit all content', async ({ page }) => {
 // The canvas must be operable without a mouse: Tab cycles items, arrows move
 // them, Enter opens them, F6 reaches the chrome, and focus is always visible.
 
-test('keyboard: arrow keys nudge the selected node, Shift for fine steps', async ({ page }) => {
+test('keyboard: arrow keys nudge the selected node, Shift for fine steps', { tag: '@a11y' }, async ({ page }) => {
   await addCardAt(page, 400, 300);
   await page.mouse.click(60, 180);            // canvas focus, nothing selected
   await page.keyboard.press('Tab');           // select the card
@@ -1685,7 +1685,7 @@ test('keyboard: arrow keys nudge the selected node, Shift for fine steps', async
 
 // Alt+Arrow hops selection to the nearest node in that direction — spatial
 // navigation that never moves anything (bare arrows keep their nudge meaning).
-test('keyboard: Alt+Arrow jumps selection spatially without nudging', async ({ page }) => {
+test('keyboard: Alt+Arrow jumps selection spatially without nudging', { tag: '@a11y' }, async ({ page }) => {
   const a = await addCardAt(page, 350, 300);
   const idA = await a.getAttribute('data-id');
   const b = await addCardAt(page, 700, 320);
@@ -1702,7 +1702,7 @@ test('keyboard: Alt+Arrow jumps selection spatially without nudging', async ({ p
   expect(await a.evaluate((el) => parseFloat(el.style.left))).toBe(x0);  // hop ≠ nudge
 });
 
-test('keyboard: a burst of nudges undoes as a single step', async ({ page }) => {
+test('keyboard: a burst of nudges undoes as a single step', { tag: ['@a11y', '@undo'] }, async ({ page }) => {
   const node = await addCardAt(page, 400, 300);
   const id = await node.getAttribute('data-id');
   const card = page.locator(`.node[data-id="${id}"]`);
@@ -1715,7 +1715,7 @@ test('keyboard: a burst of nudges undoes as a single step', async ({ page }) => 
   expect(await card.evaluate((el) => parseFloat(el.style.left))).toBe(x0);
 });
 
-test('keyboard: Enter starts editing the selected card', async ({ page }) => {
+test('keyboard: Enter starts editing the selected card', { tag: '@a11y' }, async ({ page }) => {
   await addCardAt(page, 400, 300);
   await page.mouse.click(60, 180);
   await page.keyboard.press('Tab');
@@ -1726,7 +1726,7 @@ test('keyboard: Enter starts editing the selected card', async ({ page }) => {
   await expect(page.locator('.node.card .card-body')).toContainText('typed by keyboard');
 });
 
-test('keyboard: F6 cycles focus through toolbar, palette, and zoom bar', async ({ page }) => {
+test('keyboard: F6 cycles focus through toolbar, palette, and zoom bar', { tag: '@a11y' }, async ({ page }) => {
   await page.keyboard.press('F6');
   expect(await page.evaluate(() => !!document.activeElement.closest('#toolbar'))).toBe(true);
   await page.keyboard.press('F6');
@@ -1738,7 +1738,7 @@ test('keyboard: F6 cycles focus through toolbar, palette, and zoom bar', async (
   expect(await page.evaluate(() => !!document.activeElement.closest('#zoombar'))).toBe(true);
 });
 
-test('keyboard focus is visible on chrome buttons (WCAG 2.4.7)', async ({ page }) => {
+test('keyboard focus is visible on chrome buttons (WCAG 2.4.7)', { tag: '@a11y' }, async ({ page }) => {
   await page.keyboard.press('F6');
   const style = await page.evaluate(() => {
     const s = getComputedStyle(document.activeElement);
@@ -1748,7 +1748,7 @@ test('keyboard focus is visible on chrome buttons (WCAG 2.4.7)', async ({ page }
   expect(parseFloat(style.width)).toBeGreaterThan(0);
 });
 
-test('modal focus management: Escape closes the embed modal, focus returns to its trigger', async ({ page }) => {
+test('modal focus management: Escape closes the embed modal, focus returns to its trigger', { tag: '@a11y' }, async ({ page }) => {
   await page.click('#addFrame');
   await expect(page.locator('#frame-modal')).toBeVisible();
   await expect(page.locator('#frame-url')).toBeFocused();
@@ -1757,21 +1757,21 @@ test('modal focus management: Escape closes the embed modal, focus returns to it
   await expect(page.locator('#addFrame')).toBeFocused();
 });
 
-test('keyboard: Escape closes the button link modal', async ({ page }) => {
+test('keyboard: Escape closes the button link modal', { tag: '@a11y' }, async ({ page }) => {
   await page.click('#addButton');             // new button opens its link modal
   await expect(page.locator('#button-link-modal')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#button-link-modal')).toBeHidden();
 });
 
-test('screen readers: Tab selection is announced via a polite live region', async ({ page }) => {
+test('screen readers: Tab selection is announced via a polite live region', { tag: '@a11y' }, async ({ page }) => {
   await addCardAt(page, 400, 300);
   await page.mouse.click(60, 180);
   await page.keyboard.press('Tab');
   await expect(page.locator('.visually-hidden[aria-live="polite"]')).toContainText('1 of 1');
 });
 
-test('reduced motion: the locate flash is a static ring that still clears', async ({ page }) => {
+test('reduced motion: the locate flash is a static ring that still clears', { tag: '@a11y' }, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await addCardAt(page, 400, 300);
   await page.mouse.click(60, 180);
@@ -1782,7 +1782,7 @@ test('reduced motion: the locate flash is a static ring that still clears', asyn
   await expect(page.locator('.node.flash')).toHaveCount(0, { timeout: 3000 }); // cleared by timer
 });
 
-test('keyboard: C aims a connection at the nearest node and Enter creates it', async ({ page }) => {
+test('keyboard: C aims a connection at the nearest node and Enter creates it', { tag: ['@a11y', '@connections'] }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 760, 320);
   await page.mouse.click(60, 180);
@@ -1795,7 +1795,7 @@ test('keyboard: C aims a connection at the nearest node and Enter creates it', a
   await expect(page.locator('.node.drop-target')).toHaveCount(0);   // aim state cleaned up
 });
 
-test('keyboard: Escape cancels an aimed connection without creating one', async ({ page }) => {
+test('keyboard: Escape cancels an aimed connection without creating one', { tag: ['@a11y', '@connections'] }, async ({ page }) => {
   await addCardAt(page, 300, 300);
   await addCardAt(page, 760, 320);
   await page.mouse.click(60, 180);
@@ -1808,7 +1808,7 @@ test('keyboard: Escape cancels an aimed connection without creating one', async 
   await expect(page.locator('#connections .conn-temp')).toHaveCount(0);
 });
 
-test('keyboard: the board menu list is arrow-navigable and Enter switches boards', async ({ page }) => {
+test('keyboard: the board menu list is arrow-navigable and Enter switches boards', { tag: ['@a11y', '@boards'] }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await page.click('#newBoardBtn');                    // now on "Board 2"
   await expect(page.locator('#board-name')).toHaveText('Board 2');
@@ -1821,7 +1821,7 @@ test('keyboard: the board menu list is arrow-navigable and Enter switches boards
   await expect(page.locator('#board-menu')).toBeHidden();
 });
 
-test('modals trap Tab: focus cycles inside the embed dialog', async ({ page }) => {
+test('modals trap Tab: focus cycles inside the embed dialog', { tag: '@a11y' }, async ({ page }) => {
   await page.click('#addFrame');
   await expect(page.locator('#frame-modal')).toBeVisible();
   for (let i = 0; i < 5; i++) {
@@ -1837,7 +1837,7 @@ test('modals trap Tab: focus cycles inside the embed dialog', async ({ page }) =
 // Re-opening the picker on an existing inline link offers "Remove link",
 // which unwraps the chip back to plain text — previously there was no way
 // out of having a link at all.
-test('the link picker can remove an existing inline link', async ({ page }) => {
+test('the link picker can remove an existing inline link', { tag: '@nav' }, async ({ page }) => {
   const a = await addCardAt(page, 350, 300);
   const idA = await a.getAttribute('data-id');
   const b = await addCardAt(page, 700, 300);
@@ -1870,7 +1870,7 @@ test('the link picker can remove an existing inline link', async ({ page }) => {
   await expect(page.locator(`.node[data-id="${idA}"] .card-body a.node-link`)).toHaveCount(0);
 });
 
-test('the link picker stays anchored to the toolbar when the board is panned', async ({ page }) => {
+test('the link picker stays anchored to the toolbar when the board is panned', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 500, 350);
   await page.locator('.node.card .card-body').first().click();
   await page.click('#tt-link');
@@ -1894,7 +1894,7 @@ test('the link picker stays anchored to the toolbar when the board is panned', a
 // While its card is partly visible the toolbar clamps to stay readable, but
 // once the card is fully off screen it must scroll off WITH the card — not
 // hug the screen edge detached from anything visible. (Both axes.)
-test('the edit toolbar releases the edge and scrolls off once its card leaves the screen', async ({ page }) => {
+test('the edit toolbar releases the edge and scrolls off once its card leaves the screen', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 400, 350);
   await page.locator('.node.card .card-body').first().click();
   const bar = page.locator('#text-toolbar');
@@ -1908,7 +1908,7 @@ test('the edit toolbar releases the edge and scrolls off once its card leaves th
   await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
 });
 
-test('the link picker scrolls off with its card instead of hugging the edge', async ({ page }) => {
+test('the link picker scrolls off with its card instead of hugging the edge', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 400, 350);
   await page.locator('.node.card .card-body').first().click();
   await page.click('#tt-link');
@@ -1925,7 +1925,7 @@ test('the link picker scrolls off with its card instead of hugging the edge', as
 // The off-screen glide (0.3s ease) is enabled via a .gliding class only while
 // the card is released off screen — never during on-screen tracking, where a
 // transition would lag the toolbar behind its card. Assert the toggle.
-test('the toolbar glides only when released off screen, tracks instantly on screen', async ({ page }) => {
+test('the toolbar glides only when released off screen, tracks instantly on screen', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 400, 350);
   await page.locator('.node.card .card-body').first().click();
   const bar = page.locator('#text-toolbar');
@@ -1950,7 +1950,7 @@ test('the toolbar glides only when released off screen, tracks instantly on scre
 // After gliding off, the toolbar/picker must glide BACK to their tracked spot
 // when the card returns — not stay frozen off screen (the "doesn't go back"
 // bug). And the picker must land fully off, never half-on hugging the edge.
-test('the toolbar and picker glide back on screen when their card returns', async ({ page }) => {
+test('the toolbar and picker glide back on screen when their card returns', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 400, 350);
   await page.locator('.node.card .card-body').first().click();
   await page.click('#tt-link');
@@ -1978,7 +1978,7 @@ test('the toolbar and picker glide back on screen when their card returns', asyn
 // Clicking away with the link picker open must dismiss the whole editing UI —
 // the picker's filter input holds focus, so only ITS blur can signal it. And
 // Escape must rescue a stranded toolbar/picker from the canvas.
-test('clicking away (or Escape) closes the edit toolbar and link picker', async ({ page }) => {
+test('clicking away (or Escape) closes the edit toolbar and link picker', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 420, 320);
   const bar = page.locator('#text-toolbar');
   const picker = page.locator('#node-picker');

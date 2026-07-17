@@ -44,7 +44,7 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 
-test('visible frame loads immediately; a far frame stays an unloaded placeholder', async ({ page }) => {
+test('visible frame loads immediately; a far frame stays an unloaded placeholder', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL);   // visible → loads
@@ -60,7 +60,7 @@ test('visible frame loads immediately; a far frame stays an unloaded placeholder
   await expect(page.locator('.frame-placeholder')).toHaveText(/click to load/);
 });
 
-test('panning a far frame into view loads it', async ({ page }) => {
+test('panning a far frame into view loads it', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const bb = await page.locator('.node.iframe-node').boundingBox();
   const away = bb.x + bb.width + 1280 * 2 + 200;
@@ -74,7 +74,7 @@ test('panning a far frame into view loads it', async ({ page }) => {
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
 });
 
-test('near-ring frame prefetches in idle time while still off screen', async ({ page }) => {
+test('near-ring frame prefetches in idle time while still off screen', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const bb = await page.locator('.node.iframe-node').boundingBox();
   // park it just past the left edge: off screen, inside the one-viewport ring
@@ -123,7 +123,7 @@ async function injectFarCard(page, fromId) {
   await page.reload();
 }
 
-test('far-off-screen card hydrates in idle time; its arrow draws once both ends exist', async ({ page }) => {
+test('far-off-screen card hydrates in idle time; its arrow draws once both ends exist', { tag: '@frames' }, async ({ page }) => {
   const nearId = await addCard(page);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
   await injectFarCard(page, nearId);
@@ -139,7 +139,7 @@ test('far-off-screen card hydrates in idle time; its arrow draws once both ends 
   })).toMatch(/^M/);
 });
 
-test('pending nodes stay reachable: Tab and fit-to-content flush hydration', async ({ page }) => {
+test('pending nodes stay reachable: Tab and fit-to-content flush hydration', { tag: '@frames' }, async ({ page }) => {
   // stub out idle callbacks so background hydration NEVER runs — deferral
   // becomes observable, and only the explicit flush paths can materialize
   await page.addInitScript(() => { window.requestIdleCallback = () => 0; });
@@ -166,7 +166,7 @@ test('pending nodes stay reachable: Tab and fit-to-content flush hydration', asy
   expect(bb.x + bb.width > 0 && bb.x < vp.width && bb.y + bb.height > 0 && bb.y < vp.height).toBe(true);
 });
 
-test('frames shrunk to a dot do not load even on screen; zooming in loads them', async ({ page }) => {
+test('frames shrunk to a dot do not load even on screen; zooming in loads them', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   // zoom far out around the frame so it drops under the min on-screen width
   await page.evaluate(() => {

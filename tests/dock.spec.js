@@ -58,7 +58,7 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 
-test('docking a frame moves its contents into the panel; undocking returns them', async ({ page }) => {
+test('docking a frame moves its contents into the panel; undocking returns them', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const inside = await addCardAt(page, 640, 360);            // inside the region
   const outside = await addCardAt(page, 150, 640);           // canvas-only
@@ -82,7 +82,7 @@ test('docking a frame moves its contents into the panel; undocking returns them'
   await expect(page.locator('.frame-node')).toBeVisible();   // ghost restored
 });
 
-test('the panel pans and zooms independently of the main canvas', async ({ page }) => {
+test('the panel pans and zooms independently of the main canvas', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   await addCardAt(page, 640, 360);
   await dockViaMenu(page);
@@ -108,7 +108,7 @@ test('the panel pans and zooms independently of the main canvas', async ({ page 
   expect(await dockTransform(page)).toBe(dock1);
 });
 
-test('dragging a card from the canvas into the panel re-homes it into the region', async ({ page }) => {
+test('dragging a card from the canvas into the panel re-homes it into the region', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 170, 620);              // well outside the region
   await dockViaMenu(page);
@@ -142,7 +142,7 @@ test('dragging a card from the canvas into the panel re-homes it into the region
   expect(await parentWorld(card)).toBe('world');
 });
 
-test('arrows: inside the panel they draw in its own layer; spanning arrows hide until undock', async ({ page }) => {
+test('arrows: inside the panel they draw in its own layer; spanning arrows hide until undock', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const a = await addCardAt(page, 560, 300);                 // both inside the region
   const b = await addCardAt(page, 760, 430);
@@ -173,7 +173,7 @@ test('arrows: inside the panel they draw in its own layer; spanning arrows hide 
   await expect(page.locator('#connections .conn').first()).toBeVisible();
 });
 
-test('multiple frames dock as tabs: switching stows one region and shows the other', async ({ page }) => {
+test('multiple frames dock as tabs: switching stows one region and shows the other', { tag: '@dock' }, async ({ page }) => {
   // frame A with a card, then a second frame elsewhere with its own card
   await addFrame(page);                                       // 640×400 at view centre
   await page.locator('.frame-node .frame-name').dblclick();
@@ -219,7 +219,7 @@ test('multiple frames dock as tabs: switching stows one region and shows the oth
   await expect(page.locator('#dock-rail .dock-rail-tab')).toHaveCount(2);
 });
 
-test('a member dropped in the panel\'s top third stays exactly where dropped (no snap-away)', async ({ page }) => {
+test('a member dropped in the panel\'s top third stays exactly where dropped (no snap-away)', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 300);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
@@ -257,7 +257,7 @@ test('a member dropped in the panel\'s top third stays exactly where dropped (no
   expect(await parentWorld(page.locator('.node.card'))).toBe('dock-world');
 });
 
-test('minimize flies the region off screen to an edge tab; restore brings it back', async ({ page }) => {
+test('minimize flies the region off screen to an edge tab; restore brings it back', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
   await dockViaMenu(page);
@@ -280,7 +280,7 @@ test('minimize flies the region off screen to an edge tab; restore brings it bac
   await expect(page.locator('#dock-panel')).toBeVisible();
 });
 
-test('rail tabs open the frame menu: color them like frames, rename via the pill', async ({ page }) => {
+test('rail tabs open the frame menu: color them like frames, rename via the pill', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   await dockViaMenu(page);
   const railTab = page.locator('#dock-rail .dock-rail-tab');
@@ -311,7 +311,7 @@ test('rail tabs open the frame menu: color them like frames, rename via the pill
   await expect(page.locator('.frame-node .frame-name')).toHaveText('War room');
 });
 
-test('undocking grows the frame to fully contain members placed outside its rect', async ({ page }) => {
+test('undocking grows the frame to fully contain members placed outside its rect', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 300);
   const id = await card.getAttribute('data-id');
@@ -341,7 +341,7 @@ test('undocking grows the frame to fully contain members placed outside its rect
   expect(rec.card.y + rec.card.h).toBeLessThanOrEqual(rec.fr.y + rec.fr.h);
 });
 
-test('docking and undocking ride the undo history', async ({ page }) => {
+test('docking and undocking ride the undo history', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
   await dockViaMenu(page);
@@ -366,7 +366,7 @@ test('docking and undocking ride the undo history', async ({ page }) => {
   expect(await parentWorld(card)).toBe('dock-world');
 });
 
-test('editing chrome scales with the panel zoom', async ({ page }) => {
+test('editing chrome scales with the panel zoom', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
   await dockViaMenu(page);                        // fit zoom ≈ 0.6 → clamped scale 0.7
@@ -376,7 +376,7 @@ test('editing chrome scales with the panel zoom', async ({ page }) => {
   expect(tf).toMatch(/scale\(0\.7/);
 });
 
-test('the docked window survives a reload (per-device view state)', async ({ page }) => {
+test('the docked window survives a reload (per-device view state)', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
   const id = await card.getAttribute('data-id');
@@ -390,7 +390,7 @@ test('the docked window survives a reload (per-device view state)', async ({ pag
   await expect(page.locator('.frame-node')).toHaveClass(/frame-docked/);
 });
 
-test('canvas tools ignore the panel: marquee and Fit act on canvas nodes only', async ({ page }) => {
+test('canvas tools ignore the panel: marquee and Fit act on canvas nodes only', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const member = await addCardAt(page, 640, 360);
   const canvasCard = await addCardAt(page, 200, 620);
@@ -421,7 +421,7 @@ test('canvas tools ignore the panel: marquee and Fit act on canvas nodes only', 
   expect(cb.x + cb.width).toBeLessThan(vp.width);
 });
 
-test('"Add card here" from inside the panel creates the card in the region', async ({ page }) => {
+test('"Add card here" from inside the panel creates the card in the region', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   await dockViaMenu(page);
 
@@ -441,7 +441,7 @@ test('"Add card here" from inside the panel creates the card in the region', asy
   expect(bb.x).toBeGreaterThan(pv.x);              // visible inside the panel
 });
 
-test('buttons navigate across windows: each window pans only for its own targets', async ({ page }) => {
+test('buttons navigate across windows: each window pans only for its own targets', { tag: ['@dock', '@nav'] }, async ({ page }) => {
   await addFrame(page);
   const note = await addCardAt(page, 480, 260);            // in the region
   await note.locator('.card-title').dblclick();
@@ -486,7 +486,7 @@ test('buttons navigate across windows: each window pans only for its own targets
   await expect(btnToFar).toBeVisible();                    // context survived the jump
 });
 
-test('jumping to a node in the panel pans the panel, not the canvas', async ({ page }) => {
+test('jumping to a node in the panel pans the panel, not the canvas', { tag: ['@dock', '@nav'] }, async ({ page }) => {
   await addFrame(page);
   const member = await addCardAt(page, 640, 360);
   await member.locator('.card-title').dblclick();

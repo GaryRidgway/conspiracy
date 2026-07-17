@@ -75,14 +75,14 @@ test.afterEach(() => {
 });
 
 // ════════════════════════════════════════════════════════
-test('boots with an empty board and a toolbar', async ({ page }) => {
+test('boots with an empty board and a toolbar', { tag: '@chrome' }, async ({ page }) => {
   for (const id of ['#addCard', '#addFrame', '#fitContent', '#resetView', '#clearBoard']) {
     await expect(page.locator(id)).toBeVisible();
   }
   await expect(page.locator('.node')).toHaveCount(0);
 });
 
-test('+ Card creates a card; title/body persist across reload', async ({ page }) => {
+test('+ Card creates a card; title/body persist across reload', { tag: '@cards' }, async ({ page }) => {
   await page.click('#addCard');
   await page.keyboard.type('My Title');
   await page.keyboard.press('Enter');
@@ -97,13 +97,13 @@ test('+ Card creates a card; title/body persist across reload', async ({ page })
   await expect(page.locator('.card-body')).toHaveText('My Body');
 });
 
-test('double-click empty canvas creates a card', async ({ page }) => {
+test('double-click empty canvas creates a card', { tag: '@cards' }, async ({ page }) => {
   await makeCardAt(page, 400, 300, { title: 'DblClick' });
   await expect(page.locator('.node.card')).toHaveCount(1);
   await expectSaved(page, 'DblClick');
 });
 
-test('dragging a card moves it and the new position persists', async ({ page }) => {
+test('dragging a card moves it and the new position persists', { tag: '@cards' }, async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'Movable' });
   const node = page.locator('.node.card');
   const before = await node.boundingBox();
@@ -125,7 +125,7 @@ test('dragging a card moves it and the new position persists', async ({ page }) 
   expect(await page.locator('.node.card').evaluate((el) => el.style.left)).toBe(left);
 });
 
-test('rich text: bold formatting is applied and saved as HTML', async ({ page }) => {
+test('rich text: bold formatting is applied and saved as HTML', { tag: '@cards' }, async ({ page }) => {
   const node = await makeCardAt(page, 350, 300, { title: 'Rich' });
   await node.locator('.card-body').click();
   await page.keyboard.type('hello');
@@ -135,7 +135,7 @@ test('rich text: bold formatting is applied and saved as HTML', async ({ page })
   await expectSaved(page, '<b>hello</b>');
 });
 
-test('rich text: bulleted and numbered lists', async ({ page }) => {
+test('rich text: bulleted and numbered lists', { tag: '@cards' }, async ({ page }) => {
   const node = await makeCardAt(page, 350, 300, { title: 'Lists' });
   await node.locator('.card-body').click();
   await page.keyboard.type('item');
@@ -149,7 +149,7 @@ test('rich text: bulleted and numbered lists', async ({ page }) => {
   await expectSaved(page, '<ul>');
 });
 
-test('rich text: insert a node link and ⌘/Ctrl-click to jump', async ({ page }) => {
+test('rich text: insert a node link and ⌘/Ctrl-click to jump', { tag: '@nav' }, async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Source' });
   const target = await makeCardAt(page, 700, 600, { title: 'Target' });
   const targetId = await target.getAttribute('data-id');
@@ -170,7 +170,7 @@ test('rich text: insert a node link and ⌘/Ctrl-click to jump', async ({ page }
   await expect(page.locator(`.node.card[data-id="${targetId}"]`)).toHaveClass(/selected/);
 });
 
-test('node picker lists cards and matches by ID', async ({ page }) => {
+test('node picker lists cards and matches by ID', { tag: '@nav' }, async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Src' });
   const target = await makeCardAt(page, 700, 560, { title: 'Tgt' });
   const targetId = await target.getAttribute('data-id');
@@ -187,7 +187,7 @@ test('node picker lists cards and matches by ID', async ({ page }) => {
   await expect(source.locator('.card-body a.node-link')).toHaveAttribute('data-node', targetId);
 });
 
-test('rich text: clicking the link icon on an existing link re-targets it', async ({ page }) => {
+test('rich text: clicking the link icon on an existing link re-targets it', { tag: '@nav' }, async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Src' });
   await makeCardAt(page, 700, 300, { title: 'First' });
   await makeCardAt(page, 700, 600, { title: 'Second' });
@@ -225,7 +225,7 @@ test('rich text: clicking the link icon on an existing link re-targets it', asyn
   await expect(source.locator('.card-body a.node-link')).toHaveCount(1);   // re-targeted, not duplicated
 });
 
-test('plain-clicking a card link follows it when not editing', async ({ page }) => {
+test('plain-clicking a card link follows it when not editing', { tag: '@nav' }, async ({ page }) => {
   await makeCardAt(page, 250, 280, { title: 'Src' });
   const target = await makeCardAt(page, 800, 600, { title: 'Tgt' });
   const targetId = await target.getAttribute('data-id');
@@ -241,7 +241,7 @@ test('plain-clicking a card link follows it when not editing', async ({ page }) 
   await expect(page.locator(`.node.card[data-id="${targetId}"]`)).toHaveClass(/selected/);
 });
 
-test('iframes get default "Webpage N" titles and are renamable', async ({ page }) => {
+test('iframes get default "Webpage N" titles and are renamable', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   await addFrame(page, EMBED_URL);
   const frames = page.locator('.node.iframe-node');
@@ -257,14 +257,14 @@ test('iframes get default "Webpage N" titles and are renamable', async ({ page }
   await expectSaved(page, 'My Frame');
 });
 
-test('delete a card via the × button', async ({ page }) => {
+test('delete a card via the × button', { tag: '@cards' }, async ({ page }) => {
   await makeCardAt(page, 350, 350, { title: 'ToDelete' });
   await page.locator('.node.card').hover();
   await page.click('.card-delete');
   await expect(page.locator('.node.card')).toHaveCount(0);
 });
 
-test('delete a selected card via the Delete key', async ({ page }) => {
+test('delete a selected card via the Delete key', { tag: '@cards' }, async ({ page }) => {
   await makeCardAt(page, 350, 350, { title: 'KeyDelete' });
   // select by clicking the header (not the editable title)
   const hb = await page.locator('.card-header').boundingBox();
@@ -273,7 +273,7 @@ test('delete a selected card via the Delete key', async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(0);
 });
 
-test('+ Frame embeds a URL with sandbox; label + src persist', async ({ page }) => {
+test('+ Frame embeds a URL with sandbox; label + src persist', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
 
   const frame = page.locator('.node.iframe-node');
@@ -288,7 +288,7 @@ test('+ Frame embeds a URL with sandbox; label + src persist', async ({ page }) 
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
 });
 
-test('edit a frame URL in place from its header', async ({ page }) => {
+test('edit a frame URL in place from its header', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL);
@@ -310,7 +310,7 @@ test('edit a frame URL in place from its header', async ({ page }) => {
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', 'https://example.org/');
 });
 
-test('iframe interact mode toggles on double-click and off on Escape', async ({ page }) => {
+test('iframe interact mode toggles on double-click and off on Escape', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   await expect(frame).toHaveCount(1);
@@ -323,7 +323,7 @@ test('iframe interact mode toggles on double-click and off on Escape', async ({ 
   await expect(frame).not.toHaveClass(/interactive/);
 });
 
-test('resizing a frame changes its size and persists', async ({ page }) => {
+test('resizing a frame changes its size and persists', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   await expect(frame).toHaveCount(1);
@@ -342,7 +342,7 @@ test('resizing a frame changes its size and persists', async ({ page }) => {
   expect(Math.round(restored.width)).toBe(Math.round(after.width));
 });
 
-test('drag a port to another node to create a connection; it persists', async ({ page }) => {
+test('drag a port to another node to create a connection; it persists', { tag: '@connections' }, async ({ page }) => {
   await makeCardAt(page, 250, 300, { title: 'A' });
   await makeCardAt(page, 700, 320, { title: 'B' });
   const cards = page.locator('.node.card');
@@ -364,7 +364,7 @@ test('drag a port to another node to create a connection; it persists', async ({
   await expect(page.locator('#connections g.conn')).toHaveCount(1);
 });
 
-test('a connection re-routes when a connected node moves', async ({ page }) => {
+test('a connection re-routes when a connected node moves', { tag: '@connections' }, async ({ page }) => {
   await makeCardAt(page, 250, 300, { title: 'A' });
   await makeCardAt(page, 700, 320, { title: 'B' });
   const a = page.locator('.node.card').nth(0);
@@ -384,7 +384,7 @@ test('a connection re-routes when a connected node moves', async ({ page }) => {
   expect(after).not.toBe(before);
 });
 
-test('select a connection and delete it with the Delete key', async ({ page }) => {
+test('select a connection and delete it with the Delete key', { tag: '@connections' }, async ({ page }) => {
   await makeCardAt(page, 200, 250, { title: 'A' });
   await makeCardAt(page, 750, 250, { title: 'B' });
   const a = page.locator('.node.card').nth(0);
@@ -402,7 +402,7 @@ test('select a connection and delete it with the Delete key', async ({ page }) =
   await expect(page.locator('#connections g.conn')).toHaveCount(0);
 });
 
-test('deleting a node removes its connections', async ({ page }) => {
+test('deleting a node removes its connections', { tag: '@connections' }, async ({ page }) => {
   await makeCardAt(page, 250, 300, { title: 'A' });
   await makeCardAt(page, 700, 320, { title: 'B' });
   const a = page.locator('.node.card').nth(0);
@@ -417,7 +417,7 @@ test('deleting a node removes its connections', async ({ page }) => {
   await expect(page.locator('#connections g.conn')).toHaveCount(0);
 });
 
-test('Clear requires typing CLEAR, then empties the whole board', async ({ page }) => {
+test('Clear requires typing CLEAR, then empties the whole board', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'A' });
   await makeCardAt(page, 500, 400, { title: 'B' });
   await expect(page.locator('.node.card')).toHaveCount(2);
@@ -437,7 +437,7 @@ test('Clear requires typing CLEAR, then empties the whole board', async ({ page 
   await expectSaved(page, '"cards":{}');
 });
 
-test('Clear modal can be cancelled without clearing', async ({ page }) => {
+test('Clear modal can be cancelled without clearing', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'Keep' });
   await page.click('#clearBoard');
   await page.fill('#clear-confirm', 'CLEAR');
@@ -446,7 +446,7 @@ test('Clear modal can be cancelled without clearing', async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
-test('Export downloads the board as JSON', async ({ page }) => {
+test('Export downloads the board as JSON', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 350, 300, { title: 'ExportMe' });
   await expectSaved(page, 'ExportMe');
 
@@ -459,7 +459,7 @@ test('Export downloads the board as JSON', async ({ page }) => {
   expect(Object.values(data.cards).map((c) => c.title)).toContain('ExportMe');
 });
 
-test('Import replaces the board and restores the viewport', async ({ page }) => {
+test('Import replaces the board and restores the viewport', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'Original' });
 
   const imported = {
@@ -481,7 +481,7 @@ test('Import replaces the board and restores the viewport', async ({ page }) => 
   expect(t).toContain('translate(-150px, 75px)');
 });
 
-test('Import rejects invalid JSON and leaves the board untouched', async ({ page }) => {
+test('Import rejects invalid JSON and leaves the board untouched', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 300, 300, { title: 'Keep' });
 
   const [dialog] = await Promise.all([
@@ -497,7 +497,7 @@ test('Import rejects invalid JSON and leaves the board untouched', async ({ page
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
-test('copy-link puts a #node=<id> deep link on the clipboard', async ({ page, context }) => {
+test('copy-link puts a #node=<id> deep link on the clipboard', { tag: '@nav' }, async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const node = await makeCardAt(page, 350, 300, { title: 'Linkable' });
   const id = await node.getAttribute('data-id');
@@ -509,7 +509,7 @@ test('copy-link puts a #node=<id> deep link on the clipboard', async ({ page, co
   expect(clip).toContain('#node=' + id);
 });
 
-test('opening #node=<id> frames and selects that node', async ({ page }) => {
+test('opening #node=<id> frames and selects that node', { tag: '@nav' }, async ({ page }) => {
   // make a node far from origin so framing visibly changes the viewport
   const node = await makeCardAt(page, 1100, 650, { title: 'Target' });
   const id = await node.getAttribute('data-id');
@@ -525,7 +525,7 @@ test('opening #node=<id> frames and selects that node', async ({ page }) => {
   expect(scale).toBeGreaterThan(1);
 });
 
-test('Tab and Shift+Tab cycle selection between nodes', async ({ page }) => {
+test('Tab and Shift+Tab cycle selection between nodes', { tag: '@select' }, async ({ page }) => {
   await makeCardAt(page, 250, 300, { title: 'A' });
   await makeCardAt(page, 620, 300, { title: 'B' });
   await page.keyboard.press('Escape');   // clear the post-create selection
@@ -542,7 +542,7 @@ test('Tab and Shift+Tab cycle selection between nodes', async ({ page }) => {
   expect(await page.locator('.node.selected').getAttribute('data-id')).toBe(first);
 });
 
-test('off-screen iframes are not loaded until brought into view', async ({ page }) => {
+test('off-screen iframes are not loaded until brought into view', { tag: '@frames' }, async ({ page }) => {
   await page.evaluate((url) => {
     localStorage.setItem('whiteboard', JSON.stringify({
       schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 1 },
@@ -561,7 +561,7 @@ test('off-screen iframes are not loaded until brought into view', async ({ page 
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
 });
 
-test('iframes too small on screen stay unloaded until fit/zoomed', async ({ page }) => {
+test('iframes too small on screen stay unloaded until fit/zoomed', { tag: '@frames' }, async ({ page }) => {
   await page.evaluate((url) => {
     localStorage.setItem('whiteboard', JSON.stringify({
       schema: 1, version: 1, viewport: { x: 0, y: 0, zoom: 0.1 },
@@ -576,7 +576,7 @@ test('iframes too small on screen stay unloaded until fit/zoomed', async ({ page
   await expect(page.locator('.node.iframe-node')).toHaveClass(/loaded/);
 });
 
-test('toolbar Undo/Redo buttons work and reflect availability', async ({ page }) => {
+test('toolbar Undo/Redo buttons work and reflect availability', { tag: '@undo' }, async ({ page }) => {
   await expect(page.locator('#undoBtn')).toBeDisabled();
   await expect(page.locator('#redoBtn')).toBeDisabled();
 
@@ -592,7 +592,7 @@ test('toolbar Undo/Redo buttons work and reflect availability', async ({ page })
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
-test('⌘/Ctrl+Z undoes an iframe move even when the frame had focus', async ({ page }) => {
+test('⌘/Ctrl+Z undoes an iframe move even when the frame had focus', { tag: '@undo' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
   await expect(node).toHaveClass(/loaded/);
@@ -611,7 +611,7 @@ test('⌘/Ctrl+Z undoes an iframe move even when the frame had focus', async ({ 
   expect(await node.evaluate((el) => el.style.left)).toBe(before);
 });
 
-test('undoing a move keeps the same iframe element (no reload)', async ({ page }) => {
+test('undoing a move keeps the same iframe element (no reload)', { tag: '@undo' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
   await expect(node).toHaveClass(/loaded/);
@@ -628,7 +628,7 @@ test('undoing a move keeps the same iframe element (no reload)', async ({ page }
   expect(await node.locator('iframe').evaluate((f) => f.dataset.marker)).toBe('KEEP');  // same element → not reloaded
 });
 
-test('undo/redo a card creation', async ({ page }) => {
+test('undo/redo a card creation', { tag: '@undo' }, async ({ page }) => {
   await page.click('#addCard');            // single create step (no reposition)
   await page.keyboard.press('Escape');     // stop editing the empty title
   await expect(page.locator('.node.card')).toHaveCount(1);
@@ -640,7 +640,7 @@ test('undo/redo a card creation', async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(1);
 });
 
-test('undo restores a moved card to its position', async ({ page }) => {
+test('undo restores a moved card to its position', { tag: '@undo' }, async ({ page }) => {
   const node = await makeCardAt(page, 320, 320, { title: 'M' });
   await page.keyboard.press('Escape');
   const before = await node.evaluate((el) => el.style.left);
@@ -654,7 +654,7 @@ test('undo restores a moved card to its position', async ({ page }) => {
   expect(await page.locator('.node.card').evaluate((el) => el.style.left)).toBe(before);
 });
 
-test('undo works right after dragging a card whose body was focused', async ({ page }) => {
+test('undo works right after dragging a card whose body was focused', { tag: '@undo' }, async ({ page }) => {
   await makeCardAt(page, 320, 320);
   await page.locator('.card-body').click();       // focus the body (editing)
   await page.keyboard.type('note');
@@ -670,7 +670,7 @@ test('undo works right after dragging a card whose body was focused', async ({ p
   expect(await node.evaluate((el) => el.style.left)).toBe(before);
 });
 
-test('undo restores a deleted card', async ({ page }) => {
+test('undo restores a deleted card', { tag: '@undo' }, async ({ page }) => {
   await makeCardAt(page, 320, 320, { title: 'Restore me' });
   await page.keyboard.press('Escape');
   const hb = await page.locator('.card-header').boundingBox();
@@ -683,7 +683,7 @@ test('undo restores a deleted card', async ({ page }) => {
   await expect(page.locator('.card-title')).toHaveText('Restore me');
 });
 
-test('board picker: create, switch, and isolate content between boards', async ({ page }) => {
+test('board picker: create, switch, and isolate content between boards', { tag: '@boards' }, async ({ page }) => {
   // start with one board; put a card on it
   await makeCardAt(page, 350, 300, { title: 'On board one' });
   await page.keyboard.press('Escape');
@@ -707,7 +707,7 @@ test('board picker: create, switch, and isolate content between boards', async (
   await expect(page.locator('.card-title')).toHaveText('On board one');
 });
 
-test('board picker: rename persists and shows in the toolbar', async ({ page }) => {
+test('board picker: rename persists and shows in the toolbar', { tag: '@boards' }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await page.locator('.board-row').first().locator('.board-rename').click();
   await page.keyboard.press('ControlOrMeta+A');
@@ -722,7 +722,7 @@ test('board picker: rename persists and shows in the toolbar', async ({ page }) 
 // Deleting a board is strictly bigger than clearing one, so it demands the
 // same typed confirmation — and nothing short of it (Escape, a wrong word)
 // touches the board.
-test('board picker: deleting a board demands typed confirmation', async ({ page }) => {
+test('board picker: deleting a board demands typed confirmation', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 350, 300, { title: 'Keep me' });
   await page.keyboard.press('Escape');
   await page.click('#boardMenuBtn');
@@ -755,7 +755,7 @@ test('board picker: deleting a board demands typed confirmation', async ({ page 
   await expect(page.locator('.board-row')).toHaveCount(1);
 });
 
-test('Reset view returns viewport to origin and 100%', async ({ page }) => {
+test('Reset view returns viewport to origin and 100%', { tag: ['@canvas', '@nav'] }, async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });
   await page.click('#resetView');
@@ -778,7 +778,7 @@ test('Reset view returns viewport to origin and 100%', async ({ page }) => {
   expect(content).not.toContain('"viewport"');
 });
 
-test('themed modal: Cancel and Escape dismiss without creating; Enter submits', async ({ page }) => {
+test('themed modal: Cancel and Escape dismiss without creating; Enter submits', { tag: '@chrome' }, async ({ page }) => {
   // Cancel button
   await page.click('#addFrame');
   await expect(page.locator('#frame-modal')).toBeVisible();
@@ -801,7 +801,7 @@ test('themed modal: Cancel and Escape dismiss without creating; Enter submits', 
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', 'https://example.org');
 });
 
-test('Ctrl+wheel zooms and clamps to 10–400%', async ({ page }) => {
+test('Ctrl+wheel zooms and clamps to 10–400%', { tag: '@canvas' }, async ({ page }) => {
   const scale = () => page.evaluate(() => {
     const m = document.getElementById('world').style.transform.match(/scale\(([^)]+)\)/);
     return m ? parseFloat(m[1]) : 1;
@@ -831,7 +831,7 @@ const worldScale = (page) => page.evaluate(() => {
   return m ? parseFloat(m[1]) : 1;
 });
 
-test('zoom widget zooms the canvas and resets, with a live % readout', async ({ page }) => {
+test('zoom widget zooms the canvas and resets, with a live % readout', { tag: '@canvas' }, async ({ page }) => {
   await expect(page.locator('#zoomReset')).toHaveText('100%');
 
   await page.click('#zoomIn');
@@ -846,7 +846,7 @@ test('zoom widget zooms the canvas and resets, with a live % readout', async ({ 
   expect(await worldScale(page)).toBeLessThan(1);
 });
 
-test('using a canvas zoom control exits iframe interact mode', async ({ page }) => {
+test('using a canvas zoom control exits iframe interact mode', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   const wrap = await frame.locator('.iframe-wrap').boundingBox();
@@ -857,7 +857,7 @@ test('using a canvas zoom control exits iframe interact mode', async ({ page }) 
   await expect(frame).not.toHaveClass(/interactive/);
 });
 
-test('panning the canvas exits iframe interact mode', async ({ page }) => {
+test('panning the canvas exits iframe interact mode', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node');
   const wrap = await frame.locator('.iframe-wrap').boundingBox();
@@ -869,7 +869,7 @@ test('panning the canvas exits iframe interact mode', async ({ page }) => {
   await expect(frame).not.toHaveClass(/interactive/);
 });
 
-test('zoom keeps the world point under the cursor fixed', async ({ page }) => {
+test('zoom keeps the world point under the cursor fixed', { tag: '@canvas' }, async ({ page }) => {
   const node = await makeCardAt(page, 500, 350, { title: 'Anchor' });
   const before = await node.boundingBox();
   const cx = before.x, cy = before.y;     // cursor at the card's top-left corner
@@ -887,7 +887,7 @@ test('zoom keeps the world point under the cursor fixed', async ({ page }) => {
 const frameScale = (page) => page.locator('.node.iframe-node iframe')
   .evaluate((f) => parseFloat((f.style.transform.match(/scale\(([^)]+)\)/) || [])[1]));
 
-test('iframe renders at a fixed 1440px logical width, scaled to fit', async ({ page }) => {
+test('iframe renders at a fixed 1440px logical width, scaled to fit', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const frame = page.locator('.node.iframe-node iframe');
   expect(await frame.evaluate((f) => f.style.width)).toBe('1440px');
@@ -896,7 +896,7 @@ test('iframe renders at a fixed 1440px logical width, scaled to fit', async ({ p
   expect(s).toBeLessThan(1);              // default 480-wide box < 1440
 });
 
-test('resizing a frame keeps 1440 logical width but increases the scale', async ({ page }) => {
+test('resizing a frame keeps 1440 logical width but increases the scale', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
   const s1 = await frameScale(page);
@@ -908,7 +908,7 @@ test('resizing a frame keeps 1440 logical width but increases the scale', async 
   expect(await frameScale(page)).toBeGreaterThan(s1);
 });
 
-test('per-iframe content zoom: + enlarges, % resets, and it persists', async ({ page }) => {
+test('per-iframe content zoom: + enlarges, % resets, and it persists', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
   const s0 = await frameScale(page);
@@ -931,7 +931,7 @@ test('per-iframe content zoom: + enlarges, % resets, and it persists', async ({ 
   expect(await frameScale(page)).toBeCloseTo(s0, 5);
 });
 
-test('zoom-to-frame button centers the iframe and zooms in', async ({ page }) => {
+test('zoom-to-frame button centers the iframe and zooms in', { tag: ['@frames', '@nav'] }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
   const node = page.locator('.node.iframe-node');
   await node.locator('.iframe-zoom').click();

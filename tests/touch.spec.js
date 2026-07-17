@@ -57,7 +57,7 @@ test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
 
 // ── One finger on empty canvas pans; it never draws the marquee, never
 //    zooms, and a motionless tap deselects (the mouse's box-select roles). ──
-test('one-finger drag pans the canvas; a bare tap deselects', async ({ page }) => {
+test('one-finger drag pans the canvas; a bare tap deselects', { tag: '@touch' }, async ({ page }) => {
   const node = await addCardAt(page, 500, 300);
   await expect(node).toHaveClass(/selected/);
   const zoomBefore = await worldScale(page);
@@ -78,7 +78,7 @@ test('one-finger drag pans the canvas; a bare tap deselects', async ({ page }) =
 });
 
 // ── Two fingers pinch-zoom about their midpoint, anywhere on the board. ──
-test('two-finger pinch zooms about the midpoint; survivor finger keeps panning', async ({ page }) => {
+test('two-finger pinch zooms about the midpoint; survivor finger keeps panning', { tag: '@touch' }, async ({ page }) => {
   await addCardAt(page, 600, 400);
   expect(await worldScale(page)).toBeCloseTo(1, 5);
 
@@ -106,7 +106,7 @@ test('two-finger pinch zooms about the midpoint; survivor finger keeps panning',
 
 // ── A second finger takes the view over cleanly: the one-finger card drag
 //    ends where it was (no jitter between fingers), then the pinch zooms. ──
-test('second finger during a card drag hands off to pinch without jitter', async ({ page }) => {
+test('second finger during a card drag hands off to pinch without jitter', { tag: '@touch' }, async ({ page }) => {
   const node = await addCardAt(page, 400, 300);
   const hb = await node.locator('.card-header').boundingBox();
   const start = await nodePos(node);
@@ -133,7 +133,7 @@ test('second finger during a card drag hands off to pinch without jitter', async
 
 // ── Long-press replaces right-click: on a node it opens that node's menu,
 //    and the finger lift must not click-through to whatever is under it. ──
-test('long-press on a card opens its context menu', async ({ page }) => {
+test('long-press on a card opens its context menu', { tag: '@touch' }, async ({ page }) => {
   const node = await addCardAt(page, 500, 300);
   const hb = await node.locator('.card-header').boundingBox();
 
@@ -153,7 +153,7 @@ test('long-press on a card opens its context menu', async ({ page }) => {
 
 // ── Long-press on empty canvas: drag = marquee (box-select), release in
 //    place = the canvas menu. Both roles the mouse gets for free. ──
-test('long-press on canvas arms the marquee; releasing in place opens the canvas menu', async ({ page }) => {
+test('long-press on canvas arms the marquee; releasing in place opens the canvas menu', { tag: '@touch' }, async ({ page }) => {
   const a = await addCardAt(page, 450, 250);
   const b = await addCardAt(page, 650, 380);
 
@@ -178,7 +178,7 @@ test('long-press on canvas arms the marquee; releasing in place opens the canvas
 });
 
 // ── Touch drives the existing node drag: position sticks and persists. ──
-test('one-finger card drag moves the card and commits', async ({ page }) => {
+test('one-finger card drag moves the card and commits', { tag: '@touch' }, async ({ page }) => {
   const node = await addCardAt(page, 400, 300);
   const id = await node.getAttribute('data-id');
   const hb = await node.locator('.card-header').boundingBox();

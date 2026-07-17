@@ -40,7 +40,7 @@ const storedCard = (page, id) => page.evaluate((id) => {
   return b.cards[id];
 }, id);
 
-test('mergeBoards keeps local on a conflict but carries the other side as alt', async ({ page }) => {
+test('mergeBoards keeps local on a conflict but carries the other side as alt', { tag: '@boards' }, async ({ page }) => {
   const res = await merge(page,
     boardOf({ a: card('A', 'orig') }),
     boardOf({ a: card('A', 'mine') }),
@@ -51,7 +51,7 @@ test('mergeBoards keeps local on a conflict but carries the other side as alt', 
   expect(res.conflictItems[0].keptSide).toBe('local');
 });
 
-test('delete-vs-edit: the alt is "apply the delete", and keptSide names the editor', async ({ page }) => {
+test('delete-vs-edit: the alt is "apply the delete", and keptSide names the editor', { tag: '@boards' }, async ({ page }) => {
   const res = await merge(page,
     boardOf({ a: card('A', 'orig') }),
     boardOf({}),                            // this device deleted A
@@ -62,7 +62,7 @@ test('delete-vs-edit: the alt is "apply the delete", and keptSide names the edit
   expect(res.conflictItems[0].keptSide).toBe('remote');
 });
 
-test('the panel flips a record to the other device and back, undoably', async ({ page }) => {
+test('the panel flips a record to the other device and back, undoably', { tag: '@boards' }, async ({ page }) => {
   const id = await addNamedCard(page, 'Alpha');
   const rec = await storedCard(page, id);
   await openReview(page, [{ coll: 'cards', id, label: 'Alpha', alt: { ...rec, title: 'Beta' }, keptSide: 'local' }]);
@@ -87,7 +87,7 @@ test('the panel flips a record to the other device and back, undoably', async ({
   await expect(title).toHaveText('Alpha');
 });
 
-test('"use other device for all" applies every alt, deletes included — and deletes can be flipped back', async ({ page }) => {
+test('"use other device for all" applies every alt, deletes included — and deletes can be flipped back', { tag: '@boards' }, async ({ page }) => {
   const idA = await addNamedCard(page, 'Alpha');
   const idB = await addNamedCard(page, 'Gamma');
   const recA = await storedCard(page, idA);

@@ -13,6 +13,11 @@ from real data-loss bugs and are invisible from any single code site.
 - `npm test` — full Playwright suite (spins up `python3 -m http.server 8123`
   itself). Run it twice after changes to timing-sensitive areas; flakes are
   treated as failures.
+- `npm run test:<bucket>` — one feature area while iterating (~4s vs ~33s).
+  Buckets: `canvas` `cards` `connections` `frames` `buttons` `boards` `nav`
+  `select` `undo` `chrome` `a11y` `dock` `touch`. Every test carries a
+  Playwright `tag:`; tag new tests (cross-cutting tests take two tags).
+  Buckets are for iteration only — the FULL suite still gates every commit.
 - No build/lint step. The app runs by serving the repo root.
 
 ## Hard rules
