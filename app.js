@@ -4420,9 +4420,7 @@
     // a frame marked "Use as default view" is home; otherwise the origin is
     const home = homeFrameId();
     if (home) { frameNode(home); return; }
-    board.viewport.x = 0; board.viewport.y = 0; board.viewport.zoom = 1;
-    applyViewport();
-    commit({ viewportOnly: true });
+    setMainViewport(0, 0, 1);
   });
 
   // ── Clear board (typed-CLEAR confirmation modal) ──
