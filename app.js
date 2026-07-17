@@ -4287,6 +4287,19 @@
     if (el && el.isConnected && el.focus && el !== document.body) el.focus();
   }
 
+  // Registry for the global Escape chain (below) and backdrop-click dismiss.
+  // open()/close() still own their own focus save/restore — this only
+  // centralizes the two bits every overlay repeated identically.
+  const MODALS = [];
+  function wireModal(el, close) {
+    // 'click', not 'pointerdown': the backdrop isn't focusable, so mousedown's
+    // default focus-shift (to <body>) fires between the two — closing on
+    // pointerdown would have restoreModalFocus() win the race and then get
+    // silently clobbered by that default action right after.
+    el.addEventListener('click', (e) => { if (e.target === el) close(); });
+    MODALS.push({ el, close });
+  }
+
   function openButtonLinkModal(id) {
     blButtonId = id;
     rememberModalFocus();
@@ -4351,7 +4364,7 @@
   }
   blInput.addEventListener('input', () => renderBlList(blInput.value));
   blInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); closeButtonLinkModal(); }
+    // Escape is handled by the global MODALS chain below.
     if (e.key === 'Enter') {
       e.preventDefault();
       // a deep link that resolves on this board beats the "Link to URL" path
@@ -4364,7 +4377,7 @@
   });
   blUseUrl.addEventListener('click', submitBlUrl);
   document.getElementById('bl-cancel').addEventListener('click', closeButtonLinkModal);
-  blModal.addEventListener('pointerdown', (e) => { if (e.target === blModal) closeButtonLinkModal(); });
+  wireModal(blModal, closeButtonLinkModal);
 
   // ── Themed modal — creates a new frame, or edits an existing frame's URL ──
   const frameModal = document.getElementById('frame-modal');
@@ -4416,10 +4429,7 @@
   frameUrl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitFrameModal(); }
   });
-  // click the backdrop (not the dialog) to dismiss
-  frameModal.addEventListener('pointerdown', (e) => {
-    if (e.target === frameModal) closeFrameModal();
-  });
+  wireModal(frameModal, closeFrameModal);
 
   document.getElementById('fitContent').addEventListener('click', fitToContent);
 
@@ -4472,7 +4482,7 @@
   });
   clearConfirmBtn.addEventListener('click', confirmClear);
   document.getElementById('clear-cancel').addEventListener('click', closeClearModal);
-  clearModal.addEventListener('pointerdown', (e) => { if (e.target === clearModal) closeClearModal(); });
+  wireModal(clearModal, closeClearModal);
 
   // ── Delete board (typed-DELETE confirmation modal) ──
   // Clearing a board demands typed confirmation; deleting a whole board is
@@ -4513,7 +4523,7 @@
   });
   deleteBoardBtn.addEventListener('click', confirmDeleteBoard);
   document.getElementById('delete-board-cancel').addEventListener('click', closeDeleteBoardModal);
-  deleteBoardModal.addEventListener('pointerdown', (e) => { if (e.target === deleteBoardModal) closeDeleteBoardModal(); });
+  wireModal(deleteBoardModal, closeDeleteBoardModal);
 
   // ── JSON export / import — a portable backup, same shape as the cloud doc ──
   function boardIsEmpty() {
@@ -4667,30 +4677,9 @@
 
   document.addEventListener('keydown', (e) => {
     // close any open modal first, whatever else is going on
-    if (e.key === 'Escape' && !frameModal.classList.contains('hidden')) {
-      e.preventDefault();
-      closeFrameModal();
-      return;
-    }
-    if (e.key === 'Escape' && !clearModal.classList.contains('hidden')) {
-      e.preventDefault();
-      closeClearModal();
-      return;
-    }
-    if (e.key === 'Escape' && !deleteBoardModal.classList.contains('hidden')) {
-      e.preventDefault();
-      closeDeleteBoardModal();
-      return;
-    }
-    if (e.key === 'Escape' && blModal && !blModal.classList.contains('hidden')) {
-      e.preventDefault();
-      closeButtonLinkModal();
-      return;
-    }
-    if (e.key === 'Escape' && boardMenu && !boardMenu.classList.contains('hidden')) {
-      e.preventDefault();
-      closeBoardMenu();
-      return;
+    if (e.key === 'Escape') {
+      const open = MODALS.find((m) => !m.el.classList.contains('hidden'));
+      if (open) { e.preventDefault(); open.close(); return; }
     }
     if (e.key === 'Escape' && helpOpen()) {
       e.preventDefault();
@@ -5848,6 +5837,11 @@
   }
 
   const conflictModal = document.getElementById('conflict-modal');
+  // openConflictModal resolves a fresh Promise per call, so it has no fixed
+  // close function to hand wireModal — this mutable indirection lets the
+  // shared backdrop/Escape chain reach whichever invocation is current.
+  let conflictClose = null;
+  if (conflictModal) wireModal(conflictModal, () => conflictClose && conflictClose());
   function openConflictModal(name) {
     return new Promise((resolve) => {
       if (!conflictModal) { resolve('cancel'); return; }
@@ -5856,29 +5850,29 @@
       const keepDrive = document.getElementById('conflict-keep-drive');
       const cancelBtn = document.getElementById('conflict-cancel');
       if (nameEl) nameEl.textContent = name || 'this board';
+      rememberModalFocus();
       conflictModal.classList.remove('hidden');
       const done = (choice) => {
         conflictModal.classList.add('hidden');
         keepLocal.removeEventListener('click', onLocal);
         keepDrive.removeEventListener('click', onDrive);
         cancelBtn.removeEventListener('click', onCancel);
-        document.removeEventListener('keydown', onEsc, true);
+        conflictClose = null;
+        restoreModalFocus();
         resolve(choice);
       };
+      conflictClose = () => done('cancel');   // same as "Decide later"
       const onLocal = () => done('local');
       const onDrive = () => done('drive');
       const onCancel = () => done('cancel');
-      const onEsc = (e) => {
-        if (e.key !== 'Escape') return;
-        e.preventDefault(); e.stopPropagation();
-        done('cancel');                    // same as "Decide later"
-      };
       keepLocal.addEventListener('click', onLocal);
       keepDrive.addEventListener('click', onDrive);
       cancelBtn.addEventListener('click', onCancel);
-      document.addEventListener('keydown', onEsc, true);
     });
   }
+  // Test hook: only reachable live via the Drive reconciliation round-trip,
+  // which the suite keeps network-clean of — this exercises the same open().
+  window.__wb_openConflictModal = openConflictModal;
 
   // Bring one Drive board into agreement with its Drive file. Pulls when only
   // Drive changed, pushes when only this device changed, and prompts when both
@@ -6163,6 +6157,10 @@
     boardMenu.classList.add('hidden');
     if (boardMenuBtn) boardMenuBtn.setAttribute('aria-expanded', 'false');
   }
+  // Escape-dedup only: the board menu is an anchored popover, not an overlay,
+  // so its outside-click dismiss (below) stays separate from wireModal's
+  // e.target === el backdrop check.
+  if (boardMenu) MODALS.push({ el: boardMenu, close: closeBoardMenu });
   function renderBoardMenu() {
     if (!boardList) return;
     boardList.innerHTML = '';

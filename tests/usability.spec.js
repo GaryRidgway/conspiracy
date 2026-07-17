@@ -1323,6 +1323,12 @@ test('a button docks to the right of a frame title and moves with the frame', { 
   await tab.click();
   await expect(frame).toHaveClass(/selected/);
   await expect(btn).toHaveClass(/co-selected/);
+  // addFreeButton's Escape (to skip linking) correctly restores real DOM
+  // focus to #addButton (WCAG focus-restore) — clicking the frame tab is a
+  // virtual-selection action and doesn't steal it back. The first Escape
+  // here is spent stepping out of that lingering chrome focus; the second
+  // clears the (virtual) selection, same two-step Escape as everywhere else.
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await expect(btn).not.toHaveClass(/co-selected/);
 

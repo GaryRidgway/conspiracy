@@ -101,3 +101,37 @@ test('"use other device for all" applies every alt, deletes included — and del
   await expect(page.locator(`.node.card[data-id="${idB}"]`)).toHaveCount(1);
   await expect(page.locator(`.node.card[data-id="${idB}"] .card-title`)).toHaveText('Gamma');
 });
+
+// The Drive conflict prompt only opens live from a sync round-trip (no OAuth
+// in this suite), so __wb_openConflictModal exercises the same open() a real
+// conflict would — covering the wireModal focus-restore fix directly.
+test('conflict modal: Escape cancels and restores focus to the trigger', { tag: '@boards' }, async ({ page }) => {
+  // the real prompt opens from a background sync, not a click — whatever had
+  // focus beforehand is "the trigger" for restoreModalFocus's purposes
+  await page.locator('#boardMenuBtn').focus();
+  const result = page.evaluate(() => window.__wb_openConflictModal('Test Board'));
+  await expect(page.locator('#conflict-modal')).toBeVisible();
+
+  // a keyboard user engages the modal via the generic Tab trap — this is
+  // what makes the bug reproduce: closing while focus is INSIDE the modal
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#conflict-cancel')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  expect(await result).toBe('cancel');
+  await expect(page.locator('#conflict-modal')).toBeHidden();
+  await expect(page.locator('#boardMenuBtn')).toBeFocused();   // not dumped on <body>
+});
+
+test('conflict modal: clicking the backdrop cancels and restores focus', { tag: '@boards' }, async ({ page }) => {
+  await page.locator('#boardMenuBtn').focus();
+  const result = page.evaluate(() => window.__wb_openConflictModal('Test Board'));
+  await expect(page.locator('#conflict-modal')).toBeVisible();
+
+  // the overlay is full-viewport with the dialog centered — a corner click
+  // always lands on the backdrop, never the dialog itself
+  await page.locator('#conflict-modal').click({ position: { x: 5, y: 5 } });
+  expect(await result).toBe('cancel');
+  await expect(page.locator('#conflict-modal')).toBeHidden();
+  await expect(page.locator('#boardMenuBtn')).toBeFocused();
+});

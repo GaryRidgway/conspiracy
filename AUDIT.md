@@ -66,7 +66,7 @@ executing the spec and passing the suite.
   compatible. `worldTransform` in touch.spec.js stays local (used directly
   for translate assertions beyond just scale).
 
-### 5. [ ] Modal lifecycle registry (`wireModal`) — fixes real conflict-modal bugs
+### 5. [x] Modal lifecycle registry (`wireModal`) — fixes real conflict-modal bugs — done
 - **What:** every modal hand-copies a 4-piece protocol (remember focus on
   open, restore on close, backdrop `e.target === modal` dismiss, Escape
   branch in the global keydown chain). Frame (4361-4407), button-link
@@ -89,6 +89,39 @@ executing the spec and passing the suite.
   popover mirroring also stays as-is, but their Escape branches (4682/4687)
   and the board menu's (4677) can ride the same registry if it's cheap
   (a popover is just `{el, close}` too).
+- **Landed as planned**, plus two things found during verification:
+  1. **Conflict modal doesn't fit the open()/close() shape** — it resolves a
+     fresh Promise per call, so there's no fixed `close` to hand `wireModal`.
+     Fixed with a mutable indirection (`conflictClose`, set/cleared per
+     invocation) so the shared chain can still reach whichever call is live.
+     Added `window.__wb_openConflictModal` (mirrors `__wb_openMergeReview`)
+     since the real modal is only reachable via a live Drive round-trip the
+     suite keeps network-clean of — two new tests in merge-review.spec.js
+     cover Escape-restore and backdrop-click-restore directly.
+  2. **Backdrop dismiss moved from `pointerdown` to `click`.** Closing on
+     `pointerdown` and calling `restoreModalFocus()` synchronously loses a
+     race with the browser's own mousedown default action (shift focus away
+     from the non-focusable backdrop) — the restore would win, then get
+     silently clobbered a moment later. `click` fires after that default
+     action settles, so the restore is what the user actually sees. Applies
+     to all five modals now on `wireModal`, not just the conflict modal.
+  3. **Board menu rides the Escape loop only, not the backdrop.** It's an
+     anchored popover (dismissed by `!e.target.closest('#board-menu-wrap')`),
+     not a full-page overlay — pushed into `MODALS` directly rather than via
+     `wireModal`, so its existing outside-click behavior is untouched.
+  4. **Surfaced, not introduced:** removing `blInput`'s redundant local
+     Escape handler exposed that button-link-modal's Escape-dismiss now
+     correctly restores focus to its trigger (`#addButton`) — previously
+     the redundant handler and the global chain fired on the same keydown,
+     and the second (no-op) pass fell through into the bare-canvas Escape
+     branch, which blurred `#addButton` back to `<body>` as an accidental
+     side effect. Frame-modal already had this same restore-to-trigger
+     property (openFrameModal is also toolbar-triggered) and was simply
+     never exercised with a chained bare Escape afterward. One usability
+     spec test relied on the accidental blur; updated it to send Escape
+     twice, matching the app's existing "first Escape steps out of chrome,
+     second clears canvas selection" design (documented in the code at
+     app.js's Escape handler) rather than weakening the assertion.
 
 ### 6. [ ] Help/settings popovers: fix the focus drop (and the `role`)
 - **Where:** `index.html:108,125`; `app.js:5508-5546`; Escape at 4682-4690.
