@@ -123,14 +123,16 @@ executing the spec and passing the suite.
      second clears canvas selection" design (documented in the code at
      app.js's Escape handler) rather than weakening the assertion.
 
-### 6. [ ] Help/settings popovers: fix the focus drop (and the `role`)
-- **Where:** `index.html:108,125`; `app.js:5508-5546`; Escape at 4682-4690.
-- **What:** both declare `role="dialog"` but are non-modal popovers — no
-  focus-in on open, no trap, and closing while focus is inside (e.g. on the
-  `#setFlyTo` checkbox) drops focus to `<body>` with no restore.
-- **Fix:** on close, return focus to the trigger when focus was inside the
-  panel; either manage focus like the real modals or demote to a plain
-  labelled region (recommendation: demote — they're popovers, not dialogs).
+### 6. [x] Help/settings popovers: fix the focus drop (and the `role`) — done
+- **Landed:** `role="dialog"` → `role="region"` on both. Settings gets
+  remember/restore, gated on `settingsPanel.contains(document.activeElement)`
+  at close time — an outside click is a deliberate navigation and shouldn't
+  yank focus back to the trigger, only an Escape-while-tabbed-in should.
+  Help gets no remember/restore at all: it's pure reference text with zero
+  focusable elements, so focus can never legitimately land inside it.
+  Both now ride the item-5 `MODALS` Escape loop (registered the same way as
+  the board menu — Escape-dedup only, their existing outside-click dismiss
+  stays separate), removing the two remaining standalone Escape branches.
 
 ### 9. [ ] Get the whole-board `JSON.stringify` out of the per-keystroke path
 - **Where:** `commit({coalesce:true})` per input event (5000-5006, titles

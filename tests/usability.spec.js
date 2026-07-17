@@ -174,9 +174,10 @@ test.describe('settings and fly-to', { tag: ['@nav', '@chrome'] }, () => {
     await expect(page.locator('#help-panel')).toBeHidden();
 
     await expect(page.locator('#setFlyTo')).toBeChecked();   // on by default
-    await page.uncheck('#setFlyTo');
+    await page.uncheck('#setFlyTo');                          // focuses the checkbox
     await page.keyboard.press('Escape');
     await expect(page.locator('#settings-panel')).toBeHidden();
+    await expect(page.locator('#settingsBtn')).toBeFocused();   // not dumped on <body>
 
     await page.reload();
     await page.click('#settingsBtn');

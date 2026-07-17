@@ -4681,16 +4681,6 @@
       const open = MODALS.find((m) => !m.el.classList.contains('hidden'));
       if (open) { e.preventDefault(); open.close(); return; }
     }
-    if (e.key === 'Escape' && helpOpen()) {
-      e.preventDefault();
-      setHelpOpen(false);
-      return;
-    }
-    if (e.key === 'Escape' && settingsOpen()) {
-      e.preventDefault();
-      setSettingsOpen(false);
-      return;
-    }
     const ae = document.activeElement;
     const editing = ae && (ae.isContentEditable ||
       ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
@@ -5510,7 +5500,10 @@
   function settingsOpen() { return !!settingsPanel && !settingsPanel.classList.contains('hidden'); }
   function setSettingsOpen(open) {
     if (!settingsPanel) return;
-    if (open) setHelpOpen(false);   // the two dropdowns share the corner
+    if (open) { setHelpOpen(false); rememberModalFocus(); }   // the two dropdowns share the corner
+    // only restore if focus is still inside (e.g. Escape from #setFlyTo) — an
+    // outside click is a deliberate navigation, and shouldn't be undone here
+    else if (settingsPanel.contains(document.activeElement)) restoreModalFocus();
     settingsPanel.classList.toggle('hidden', !open);
     if (settingsBtn) settingsBtn.setAttribute('aria-expanded', String(open));
   }
@@ -5519,6 +5512,7 @@
     document.addEventListener('click', (e) => {
       if (settingsOpen() && !e.target.closest('#settings-wrap')) setSettingsOpen(false);
     });
+    MODALS.push({ el: settingsPanel, close: () => setSettingsOpen(false) });
   }
   const flyToCheck = document.getElementById('setFlyTo');
   if (flyToCheck) {
@@ -5534,6 +5528,8 @@
   const helpBtn = document.getElementById('helpBtn');
   const helpPanel = document.getElementById('help-panel');
   function helpOpen() { return !!helpPanel && !helpPanel.classList.contains('hidden'); }
+  // No rememberModalFocus/restoreModalFocus here: the panel is reference text
+  // with no focusable content, so focus can never end up inside it.
   function setHelpOpen(open) {
     if (!helpPanel) return;
     if (open) setSettingsOpen(false);   // the two dropdowns share the corner
@@ -5545,6 +5541,7 @@
     document.addEventListener('click', (e) => {
       if (helpOpen() && !e.target.closest('#help-wrap')) setHelpOpen(false);
     });
+    MODALS.push({ el: helpPanel, close: () => setHelpOpen(false) });
   }
 
   // ════════════════════════════════════════════════════════
