@@ -134,20 +134,76 @@ executing the spec and passing the suite.
   the board menu — Escape-dedup only, their existing outside-click dismiss
   stays separate), removing the two remaining standalone Escape branches.
 
-### 9. [ ] Get the whole-board `JSON.stringify` out of the per-keystroke path
+### 17. [ ] Gate `refreshColorFilter`/`layoutAttachments`/re-sanitization on mutation type
+- **Split off from item 9** (see below) after item 9 itself was investigated
+  and declined — this half doesn't touch `recordUndo`/undo history at all,
+  so it doesn't inherit that item's risk.
+- **Where:** `commit()` (app.js ~530-550) unconditionally runs
+  `layoutAttachments()`, `refreshColorFilter()` (full legend DOM rebuild),
+  and — for body edits specifically — `saveCardBody` re-sanitizes the
+  card's whole innerHTML (~4995), on every commit including every keystroke
+  of a title/body edit.
+- **What:** a title or body edit can't change which nodes are docked
+  (`attachedTo` is a separate field only touched by dock/undock actions)
+  and can't change any node's `color` (only the context-menu color picker
+  touches that) — so `layoutAttachments()`'s full `Object.entries(board.cards)`
+  scan + DOM query, and `refreshColorFilter()`'s full legend rebuild, are
+  100% wasted work on every keystroke of a text edit.
+- **Fix:** thread a cheap mutation-kind hint through `commit(opts)` (e.g.
+  `opts.affects = {dock: false, color: false}` from the coalesce call
+  sites) and skip `layoutAttachments()`/`refreshColorFilter()` when the
+  caller asserts they can't apply. Arrow nudges are the one coalesced
+  caller that's NOT safe to skip `layoutAttachments()` for — a nudged node
+  can carry docked buttons that must re-derive position. Re-sanitizing in
+  `saveCardBody` stays as-is (correctness-critical: it's the XSS boundary
+  from CLAUDE.md's `sanitizeHtml()` rule, not a place to cut corners).
+- **Verify:** full suite twice; this is a targeted skip, not a timing
+  change, so lower risk than item 9 — but still touches the shared
+  `commit()` chokepoint, so treat call-site coverage carefully (every
+  `commit({coalesce:true})` site needs its hint set correctly, not just
+  the common ones).
+
+### 9. [x] Get the whole-board `JSON.stringify` out of the per-keystroke path — investigated, declined
 - **Where:** `commit({coalesce:true})` per input event (5000-5006, titles
   1260/1380/2244/2592, arrow nudges 4880) → `recordUndo` →
   `contentSnapshot()` stringifies all cards/iframes/connections (580-637)
   plus an O(size) string compare. Pasted images are ~1.5MB data URIs inside
   card bodies (3184-3222) — several MB stringified per keystroke on a board
-  with screenshots. Also per keystroke: `layoutAttachments()`,
-  `refreshColorFilter()` (full legend DOM rebuild, 1145-1205), and
-  `saveCardBody` re-sanitizing the card's whole innerHTML (5003).
-- **Fix (cheapest first):** defer `contentSnapshot` into the existing 600ms
-  coalesce window (snapshot once per burst, not per keystroke); or snapshot
-  per-collection and reuse unchanged collections' strings. Gate
-  `refreshColorFilter`/`layoutAttachments` on mutation types that can
-  affect them. The 400ms localStorage debounce (509-526) is already fine.
+  with screenshots.
+- **Tried #1 — snapshot once per burst, not per keystroke:** `recordUndo`
+  skips `contentSnapshot()` during an active coalesce burst, catching up
+  `lastContent` only when the burst settles or is interrupted. Caught by a
+  new test before it landed: a burst interrupted by an unrelated edit
+  (e.g. nudge card A, then immediately drag card B before the 600ms timer
+  fires) silently merged BOTH edits into one undo step instead of two —
+  because by the time the interrupting commit's `recordUndo` runs, its own
+  mutation is already applied to `board.cards`, so there's no clean way
+  left to snapshot "burst end, before the interrupt." Confirmed against
+  the pre-fix code that the original two-step behavior is real and
+  expected, not incidental.
+- **Tried #2 — same synchronous logic, only its scheduling deferred**
+  (`setTimeout(fn, 0)` instead of an inline call, with an explicit
+  `drainPendingRecordUndo()` for `undo()`/`redo()`/board-switch so nothing
+  reads stale state): this was meant to preserve exact undo granularity
+  while moving the stringify off the keystroke's own call stack. Fuzz-ran
+  the **existing, already-passing** "a burst of nudges undoes as a single
+  step" test in a loop — failed on the 9th of 10 runs. Root cause: an
+  unrelated, already-finished commit's deferred bookkeeping was still
+  queued when a new burst started; both got drained in the same batch,
+  and `contentSnapshot()` (always reading the live board) contaminated the
+  older entry with the newer burst's changes. `setTimeout(0)` does not
+  reliably fire between consecutive `commit()` calls — real timer
+  throttling (~4ms in Chromium) can be slower than back-to-back commits.
+- **Declined:** every version tried either changes undo granularity in a
+  disclosed way or has a genuine, reproducible race. The whole-board
+  JSON-string-diffing undo model doesn't support deferring or reducing the
+  per-commit snapshot without one of those two costs. Not worth the risk
+  for a jank-reduction; the per-keystroke cost stays. Revisit only as part
+  of a real redesign of the undo mechanism (e.g. structural diffs instead
+  of whole-board string comparison) — out of scope for an audit item.
+- **Split off:** the *other* half of this item — gating `layoutAttachments`/
+  `refreshColorFilter`/re-sanitization, which doesn't touch `recordUndo` at
+  all — is safe on its own and moved to item 17.
 
 ### 10. [ ] `findSnapTarget`: precompute candidates at drag start
 - **Where:** `app.js:1559-1608`.
