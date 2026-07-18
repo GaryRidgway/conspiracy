@@ -195,12 +195,24 @@ executing the spec and passing the suite.
   reliably fire between consecutive `commit()` calls — real timer
   throttling (~4ms in Chromium) can be slower than back-to-back commits.
 - **Declined:** every version tried either changes undo granularity in a
-  disclosed way or has a genuine, reproducible race. The whole-board
-  JSON-string-diffing undo model doesn't support deferring or reducing the
-  per-commit snapshot without one of those two costs. Not worth the risk
-  for a jank-reduction; the per-keystroke cost stays. Revisit only as part
-  of a real redesign of the undo mechanism (e.g. structural diffs instead
-  of whole-board string comparison) — out of scope for an audit item.
+  disclosed way or has a genuine, reproducible race. And the failure is
+  structural, not bad luck: `commit()` is a *post-hoc* chokepoint (call
+  sites mutate `board` first, then notify), so the state "just before edit
+  N+1" exists at exactly one moment — commit N — and `contentSnapshot()`
+  can only read the live board. Accurate undo boundaries therefore
+  REQUIRE synchronous work at every commit; any flavor of deferral merges
+  boundaries. The per-keystroke cost stays.
+- **The one door still open (Fable-tier, only if it ever matters):** make
+  the snapshot **cheaper instead of later** — a per-record string cache
+  (`Map<id, json>`) with dirty hints threaded through `commit(opts)`, so a
+  keystroke re-stringifies one card and concatenates cached strings for
+  the rest. Failure mode is a stale cache producing a wrong undo snapshot
+  (silent history corruption that passes tests); every wholesale-board-
+  replacement path (undo apply, merge, pull, import, board switch) needs
+  correct invalidation. Same risk class as items 7/8. Do NOT build it
+  speculatively — only if typing on a real image-heavy board demonstrably
+  janks, and then with the same fuzz-loop verification standard that
+  caught attempt #2.
 - **Split off:** the *other* half of this item — gating `layoutAttachments`/
   `refreshColorFilter`/re-sanitization, which doesn't touch `recordUndo` at
   all — is safe on its own and moved to item 17.
