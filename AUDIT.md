@@ -217,14 +217,24 @@ executing the spec and passing the suite.
   `refreshColorFilter`/re-sanitization, which doesn't touch `recordUndo` at
   all — is safe on its own and moved to item 17.
 
-### 10. [ ] `findSnapTarget`: precompute candidates at drag start
-- **Where:** `app.js:1559-1608`.
-- **What:** dragging a free button runs two full card loops per move, with
+### 10. [x] `findSnapTarget`: precompute candidates at drag start — done
+- **Where:** `app.js:1566-1614` (was), call site `app.js:958`.
+- **What:** dragging a free button ran two full card loops per move, with
   `countDocked` (itself O(cards)) inside, plus `getBoundingClientRect` per
   frame tab and `nodeGeom` per candidate — right after the drag handler
   dirtied layout. ~O(n²) per pointermove.
-- **Fix:** only the dragged button moves, so target geometry is static —
-  compute the docked-count map and candidate rects once at drag start.
+- **Landed:** `buildSnapCandidates(buttonId)` runs the same scan once, where
+  `snapButton` is established at drag start, producing `{primary, chains}` —
+  `primary` keeps frames and card-trays in original scan order (preserving
+  the existing "frame/card zones win ties" precedence exactly), each with
+  its docked-count or row-end already computed; `chains` holds button-chain
+  targets with their geometry. `findSnapTarget(buttonId, candidates)` now
+  only re-measures the dragged button's own live `nodeGeom` per move and
+  does arithmetic against the static lists — no scans or DOM reads left in
+  the per-move path. Verified safe: `dockMembers` (the window/tab-membership
+  map the candidate filter reads) is only rebuilt by `recomputeDockMembers`
+  on `commit()`, never mid-gesture, and non-dragged nodes don't move during
+  a single free-button drag.
 
 ### 11. [ ] Fly-to: cap hydration and defer iframe loads mid-flight
 - **Where:** fly loop 4086-4098 → `applyViewport` → `scheduleFrameEval`

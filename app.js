@@ -919,9 +919,12 @@
     let dragCtx = pointerCtx(e.clientX, e.clientY);
     movers.forEach((m) => m.el.classList.add('dragging'));
 
-    // a single dragged free button can dock: track the zone under it live
+    // a single dragged free button can dock: track the zone under it live.
+    // Every other node's position is static for the gesture's duration, so
+    // the candidate zones are computed once here rather than per move.
     const snapButton = movers.length === 1 && movers[0].d.kind === 'button' &&
       !movers[0].d.attachedTo ? movers[0].nid : null;
+    const snapCandidates = snapButton ? buildSnapCandidates(snapButton) : null;
     let snapTarget = null;
     const setSnapTarget = (tid) => {
       if (snapTarget === tid) return;
@@ -955,7 +958,7 @@
       if (dx || dy) moved = true;
       layoutAttachments();                         // docked buttons ride along live
       // snap zones only make sense in the window the pointer is actually in
-      if (snapButton) setSnapTarget(pctx === (inDock(snapButton) ? 'dock' : 'main') ? findSnapTarget(snapButton) : null);
+      if (snapButton) setSnapTarget(pctx === (inDock(snapButton) ? 'dock' : 'main') ? findSnapTarget(snapButton, snapCandidates) : null);
       scheduleFrameEval();
     };
     const onUp = (ev) => {
@@ -1562,10 +1565,12 @@
   // Dock zone under the dragged button, if any: a card's bottom band (tray,
   // capped), the end of a frame's title row, or another button's right edge.
   // Cards/frames are checked first so their zones win where a docked chip
-  // overlaps them.
-  function findSnapTarget(buttonId) {
-    const g = nodeGeom(buttonId);
-    if (!g) return null;
+  // overlaps them. Only the dragged button moves during the gesture, so
+  // every candidate's geometry, docked-count, and window membership are
+  // computed once at drag start (buildSnapCandidates) instead of per move —
+  // findSnapTarget just re-measures the dragged button and does arithmetic.
+  function buildSnapCandidates(buttonId) {
+    const group = dockMembers.get(buttonId);
     const countDocked = (tid) => {
       let n = 0;
       for (const c of Object.values(board.cards)) {
@@ -1573,9 +1578,10 @@
       }
       return n;
     };
+    const primary = [];   // frames + card trays, in original scan order
     for (const [tid, c] of Object.entries(board.cards)) {
       if (tid === buttonId || c.kind === 'button') continue;
-      if (dockMembers.get(tid) !== dockMembers.get(buttonId)) continue;   // snap within one window/tab
+      if (dockMembers.get(tid) !== group) continue;   // snap within one window/tab
       const tg = nodeGeom(tid);
       if (!tg) continue;
       if (c.kind === 'frame') {
@@ -1590,24 +1596,41 @@
           const bg = nodeGeom(bid);
           if (bg && bg.x + bg.w > end.x) end = { x: bg.x + bg.w, y: bg.y, h: bg.h };
         }
-        if (Math.abs(g.x - end.x) < 40 &&
-            g.y + g.h > end.y - 10 && g.y < end.y + end.h + 10) return tid;
-      } else if (countDocked(tid) < DOCK_TRAY_MAX &&
-                 Math.abs(g.y - (tg.y + tg.h)) < 24 &&
-                 g.x + g.w > tg.x && g.x < tg.x + tg.w) {
-        return tid;
+        primary.push({ frame: true, tid, end });
+      } else {
+        primary.push({ frame: false, tid, tg, docked: countDocked(tid) });
       }
     }
+    const chains = [];
     for (const [tid, c] of Object.entries(board.cards)) {
       if (tid === buttonId || c.kind !== 'button') continue;
-      if (dockMembers.get(tid) !== dockMembers.get(buttonId)) continue;
+      if (dockMembers.get(tid) !== group) continue;
       const root = dockRoot(tid);
       if (!root || root === buttonId) continue;   // never dock onto your own chain
       const rn = getNode(root);
       if (rn && rn.data.kind !== 'frame' && rn.data.kind !== 'button' &&
           countDocked(root) >= DOCK_TRAY_MAX) continue;
       const tg = nodeGeom(tid);
-      if (tg && Math.abs(g.x - (tg.x + tg.w)) < 30 &&
+      if (tg) chains.push({ tid, tg });
+    }
+    return { primary, chains };
+  }
+
+  function findSnapTarget(buttonId, candidates) {
+    const g = nodeGeom(buttonId);
+    if (!g) return null;
+    for (const cand of candidates.primary) {
+      if (cand.frame) {
+        if (Math.abs(g.x - cand.end.x) < 40 &&
+            g.y + g.h > cand.end.y - 10 && g.y < cand.end.y + cand.end.h + 10) return cand.tid;
+      } else if (cand.docked < DOCK_TRAY_MAX &&
+                 Math.abs(g.y - (cand.tg.y + cand.tg.h)) < 24 &&
+                 g.x + g.w > cand.tg.x && g.x < cand.tg.x + cand.tg.w) {
+        return cand.tid;
+      }
+    }
+    for (const { tid, tg } of candidates.chains) {
+      if (Math.abs(g.x - (tg.x + tg.w)) < 30 &&
           g.y + g.h > tg.y && g.y < tg.y + tg.h) return tid;
     }
     return null;
