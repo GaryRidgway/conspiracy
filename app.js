@@ -2694,7 +2694,7 @@
     czoomVal.addEventListener('click', (e) => {
       e.stopPropagation();
       clearTimeout(czoomClickTimer);
-      czoomClickTimer = setTimeout(() => { czoomClickTimer = null; beginZoomEdit(); }, 250);
+      czoomClickTimer = setTimeout(() => { czoomClickTimer = null; beginZoomEdit(); }, 180);
     });
     czoomVal.addEventListener('dblclick', (e) => {
       e.stopPropagation();

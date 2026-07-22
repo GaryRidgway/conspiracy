@@ -1448,29 +1448,26 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   padding: 0.2rem 0.35rem;
 }
 .czoom-btn .icon { width: 16px; height: 16px; }
-.czoom-val {
+.czoom-val, .czoom-input {
+  box-sizing: border-box;
+  font-family: var(--font-mono);
   font-size: 0.62rem;
-  min-width: 2.6em;
+  width: 2.6em;
   text-align: center;
-  border-left: 1px solid var(--border2);
-  border-right: 1px solid var(--border2);
+  border-style: solid;
+  border-width: 0 1px;
+  border-color: var(--border2);
   padding: 0 0.1rem;
 }
 .czoom-btn:hover, .czoom-val:hover { color: var(--text); background: var(--border); }
 .czoom-val.hidden, .czoom-input.hidden { display: none; }
 .czoom-input {
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  width: 2.6em;
-  text-align: center;
+  appearance: none;
+  margin: 0;
   color: var(--text);
   background: var(--surface);
-  border: 0;
-  border-left: 1px solid var(--border2);
-  border-right: 1px solid var(--border2);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-  padding: 0 0.1rem;
 }
 
 .iframe-wrap {
