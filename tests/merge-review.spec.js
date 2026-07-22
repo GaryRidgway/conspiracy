@@ -135,3 +135,46 @@ test('conflict modal: clicking the backdrop cancels and restores focus', { tag: 
   await expect(page.locator('#conflict-modal')).toBeHidden();
   await expect(page.locator('#boardMenuBtn')).toBeFocused();
 });
+
+// ════════════════════════════════════════════════════════════════════════
+//  DOCKED-FRAME MEMBERSHIP IS SYNCED CONTENT
+//  dockMembers is a plain field on a frame card, so it rides the existing
+//  per-record/per-field merge with no special-casing: non-overlapping dock
+//  changes on two devices both survive; the same frame docked differently
+//  on both sides is an ordinary field conflict.
+// ════════════════════════════════════════════════════════════════════════
+function frameRecord(dockMembers) {
+  const rec = { x: 0, y: 0, w: 400, h: 300, kind: 'frame', title: 'Frame' };
+  if (dockMembers) rec.dockMembers = dockMembers;
+  return rec;
+}
+
+test('docking two different frames on two devices both survive a merge', { tag: '@boards' }, async ({ page }) => {
+  const res = await merge(page,
+    boardOf({ fa: frameRecord(), fb: frameRecord() }),
+    boardOf({ fa: frameRecord(['c1']), fb: frameRecord() }),      // this device docked A
+    boardOf({ fa: frameRecord(), fb: frameRecord(['c2']) }));     // the other docked B
+  expect(res.conflicts).toBe(0);
+  expect(res.merged.cards.fa.dockMembers).toEqual(['c1']);
+  expect(res.merged.cards.fb.dockMembers).toEqual(['c2']);
+});
+
+test('the same frame docked with different membership on both sides is a conflict', { tag: '@boards' }, async ({ page }) => {
+  const res = await merge(page,
+    boardOf({ fa: frameRecord() }),
+    boardOf({ fa: frameRecord(['mine']) }),
+    boardOf({ fa: frameRecord(['theirs']) }));
+  expect(res.conflicts).toBe(1);
+  expect(res.merged.cards.fa.dockMembers).toEqual(['mine']);       // local wins, as ever
+  expect(res.conflictItems[0].alt.dockMembers).toEqual(['theirs']); // …but the loser survives
+});
+
+test('undocking on one device while the other only changes membership keeps the undock', { tag: '@boards' }, async ({ page }) => {
+  const res = await merge(page,
+    boardOf({ fa: frameRecord(['a']) }),
+    boardOf({ fa: frameRecord() }),              // this device undocked (deleted the field)
+    boardOf({ fa: frameRecord(['a', 'b']) }));   // the other device only added a member
+  expect(res.conflicts).toBe(1);
+  expect(res.merged.cards.fa.dockMembers).toBeUndefined();   // local delete wins the field conflict
+  expect(res.conflictItems[0].alt.dockMembers).toEqual(['a', 'b']);
+});

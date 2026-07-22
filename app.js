@@ -422,16 +422,22 @@
   function saveViewport(id) {
     const v = board.viewport;
     const payload = { x: v.x, y: v.y, zoom: v.zoom };
-    // the docked-frame window is a per-device view preference too — it rides
-    // the same local key and never touches board content
+    // dock CHROME (which tab is active, minimized, panel width, each tab's own
+    // pan/zoom) is a per-device view preference — it rides the same local key
+    // and never touches board content. Which frames are docked, and their
+    // membership, is real content now (see each frame card's `dockMembers`).
     if (dock) {
       payload.dock = { width: dock.width, minimized: dock.minimized, active: dock.active,
-        tabs: dock.tabs.map((t) => ({ frameId: t.frameId, members: t.members,
+        tabs: dock.tabs.map((t) => ({ frameId: t.frameId,
           x: t.viewport.x, y: t.viewport.y, zoom: t.viewport.zoom })) };
     }
     try { localStorage.setItem(viewportKey(id), JSON.stringify(payload)); } catch (e) { /* quota */ }
   }
-  function loadDockState(id) {
+  // Per-device dock CHROME only — width/minimized/active tab, and each tab's
+  // own pan/zoom. Does NOT decide which frames are docked; that comes from
+  // content (deriveDockTabs). Shaped as { width, minimized, active, tabs:
+  // [{frameId, viewport}] } so deriveDockTabs can treat it like a previous dock.
+  function loadDockChrome(id) {
     try {
       const raw = localStorage.getItem(viewportKey(id));
       const d = raw && JSON.parse(raw).dock;
@@ -439,23 +445,53 @@
       // accept the single-frame shape from before tabs existed
       const rawTabs = d.tabs || (d.frameId ? [{ frameId: d.frameId, x: d.x, y: d.y, zoom: d.zoom }] : []);
       const tabs = rawTabs.filter((t) => t && t.frameId)
-        .map((t) => ({ frameId: t.frameId,
-          members: Array.isArray(t.members) ? t.members.filter((m) => typeof m === 'string') : [],
-          viewport: { x: +t.x || 0, y: +t.y || 0, zoom: +t.zoom || 1 } }));
+        .map((t) => ({ frameId: t.frameId, viewport: { x: +t.x || 0, y: +t.y || 0, zoom: +t.zoom || 1 } }));
       if (!tabs.length) return null;
-      const active = tabs.some((t) => t.frameId === d.active) ? d.active : tabs[0].frameId;
-      return { width: +d.width || 420, minimized: !!d.minimized, active, tabs };
+      return { width: +d.width || 420, minimized: !!d.minimized, active: d.active, tabs };
     } catch (e) { /* ignore */ }
     return null;
   }
-  // Validate a loaded dock state against the (freshly loaded) board content.
-  function restoreDockState(id) {
-    const ds = loadDockState(id);
-    if (!ds) return null;
-    ds.tabs = ds.tabs.filter((t) => board.cards[t.frameId] && board.cards[t.frameId].kind === 'frame');
-    if (!ds.tabs.length) return null;
-    if (!ds.tabs.some((t) => t.frameId === ds.active)) ds.active = ds.tabs[0].frameId;
-    return ds;
+  // Build/refresh dock from whichever frames currently carry `dockMembers`
+  // (real, synced content) — a frame with no docked-frame ancestry in the
+  // data just doesn't get a tab, regardless of any stale per-device chrome.
+  // prevDock supplies chrome continuity (existing tab order/viewport/width/
+  // minimized/active); brand-new tabs get a fresh default viewport.
+  function deriveDockTabs(prevDock) {
+    const remaining = new Set(Object.keys(board.cards).filter((id) => {
+      const c = board.cards[id];
+      return c.kind === 'frame' && Array.isArray(c.dockMembers);
+    }));
+    if (!remaining.size) return null;
+    const tabs = [];
+    if (prevDock) for (const t of prevDock.tabs) {
+      if (remaining.has(t.frameId)) { tabs.push(t); remaining.delete(t.frameId); }
+    }
+    for (const frameId of remaining) tabs.push({ frameId, viewport: { x: 0, y: 0, zoom: 1 } });
+    const width = prevDock ? prevDock.width : Math.min(innerWidth * 0.6, 420);
+    const minimized = prevDock ? prevDock.minimized : false;
+    const active = tabs.some((t) => t.frameId === (prevDock && prevDock.active)) ? prevDock.active : tabs[0].frameId;
+    return { width, minimized, active, tabs };
+  }
+  // One-time migration: docked-frame membership used to live only in the
+  // per-device chrome key; it's now real, synced content. Adopt this device's
+  // local copy for any frame that no other device has migrated yet (once any
+  // device's copy lands in `dockMembers`, this is a no-op for that frame).
+  function migrateLegacyDockMembers(id) {
+    try {
+      const raw = localStorage.getItem(viewportKey(id));
+      const d = raw && JSON.parse(raw).dock;
+      const rawTabs = d && (d.tabs || (d.frameId ? [d] : []));
+      if (!rawTabs) return false;
+      let migrated = false;
+      for (const t of rawTabs) {
+        const c = t && t.frameId && board.cards[t.frameId];
+        if (c && c.kind === 'frame' && !Array.isArray(c.dockMembers) && Array.isArray(t.members)) {
+          c.dockMembers = t.members.filter((m) => typeof m === 'string');
+          migrated = true;
+        }
+      }
+      return migrated;
+    } catch (e) { return false; }
   }
   let vpTimer = null;
   function scheduleViewportSave() {
@@ -567,7 +603,6 @@
   const undoStack = [];
   const redoStack = [];
   let lastContent = null;     // last recorded content snapshot (string)
-  let lastDock = null;        // last recorded dock-structure snapshot (string)
   let coalesceBase = null;    // pre-burst snapshot while a text edit is in flight
   let coalesceTimer = null;
   const undoBtn = document.getElementById('undoBtn');
@@ -577,35 +612,13 @@
     if (undoBtn) undoBtn.disabled = undoStack.length === 0 && !coalesceTimer;
     if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
+  // Docked-frame MEMBERSHIP (which frames, which members) lives on the frame
+  // cards themselves now, so it rides this snapshot for free — docking,
+  // undocking, and membership changes undo like any other content edit.
+  // Active tab, minimized state, widths and per-tab viewports are ephemeral
+  // per-device arrangement (see deriveDockTabs) and never part of history.
   function contentSnapshot() {
     return JSON.stringify({ cards: board.cards, iframes: board.iframes, connections: board.connections });
-  }
-  // Dock STRUCTURE rides the undo history alongside content, so docking,
-  // undocking, and membership changes undo like anything else. Only the
-  // structure (which frames, which members) — active tab, minimized state,
-  // widths and viewports are ephemeral arrangement, and restoring those on
-  // every ⌘Z would make unrelated undos yank the panel around.
-  function dockStructureSnapshot() {
-    return JSON.stringify(dock ? dock.tabs.map((t) => ({ frameId: t.frameId, members: t.members })) : null);
-  }
-  function applyDockStructure(snapStr) {
-    const tabs = JSON.parse(snapStr);
-    if (!tabs || !tabs.length) {
-      if (dock) { dock = null; }
-    } else {
-      const width = dock ? dock.width : Math.min(innerWidth * 0.6, 420);
-      const minimized = dock ? dock.minimized : false;
-      const restored = tabs.map((t) => {
-        const prev = dock && dock.tabs.find((p) => p.frameId === t.frameId);
-        return { frameId: t.frameId, members: [...t.members],
-          viewport: prev ? prev.viewport : { x: 0, y: 0, zoom: 1 } };
-      });
-      const active = restored.some((t) => t.frameId === (dock && dock.active))
-        ? dock.active : restored[0].frameId;
-      dock = { width, minimized, active, tabs: restored };
-    }
-    lastDock = snapStr;
-    flushViewport();
   }
   function pushUndo(entry) {
     undoStack.push(entry);
@@ -620,19 +633,17 @@
   }
   function recordUndo(coalesce) {
     const snap = contentSnapshot();
-    const dsnap = dockStructureSnapshot();
-    if (lastContent === null) { lastContent = snap; lastDock = dsnap; return; }  // first commit: seed baseline
-    if (snap === lastContent && dsnap === lastDock) return;    // nothing history-worthy (e.g. pan/zoom)
-    if (coalesce && snap !== lastContent && dsnap === lastDock) {
-      if (!coalesceTimer) coalesceBase = { c: lastContent, d: lastDock };  // remember pre-burst state
+    if (lastContent === null) { lastContent = snap; return; }  // first commit: seed baseline
+    if (snap === lastContent) return;    // nothing history-worthy (e.g. pan/zoom)
+    if (coalesce) {
+      if (!coalesceTimer) coalesceBase = lastContent;  // remember pre-burst state
       clearTimeout(coalesceTimer);
       coalesceTimer = setTimeout(flushCoalesce, 600);
     } else {
       flushCoalesce();                                          // finalize any pending text burst
-      pushUndo({ c: lastContent, d: lastDock });
+      pushUndo(lastContent);
     }
     lastContent = snap;
-    lastDock = dsnap;
     updateHistoryButtons();
   }
   function applyContentSnapshot(snapStr) {
@@ -640,15 +651,14 @@
     board.cards = data.cards || {};
     board.iframes = data.iframes || {};
     board.connections = data.connections || {};
-    reconcileToBoard();
+    reconcileToBoard();       // derives dock from the restored cards' dockMembers
     lastContent = snapStr;
     board.version++;
     scheduleSave();
     updateHistoryButtons();
   }
   function applyHistoryEntry(entry) {
-    applyDockStructure(entry.d);       // dock first: parents drive rendering
-    applyContentSnapshot(entry.c);     // reconcile re-homes/stows under the restored dock
+    applyContentSnapshot(entry);
     syncDockPanel();
     applyDockViewport();
     for (const cid of connEls.keys()) drawConnection(cid);
@@ -657,12 +667,12 @@
   function undo() {
     flushCoalesce();
     if (!undoStack.length) { updateHistoryButtons(); return; }
-    redoStack.push({ c: contentSnapshot(), d: dockStructureSnapshot() });
+    redoStack.push(contentSnapshot());
     applyHistoryEntry(undoStack.pop());
   }
   function redo() {
     if (!redoStack.length) return;
-    undoStack.push({ c: contentSnapshot(), d: dockStructureSnapshot() });
+    undoStack.push(contentSnapshot());
     if (undoStack.length > MAX_HISTORY) undoStack.shift();
     applyHistoryEntry(redoStack.pop());
   }
@@ -1914,12 +1924,13 @@
     const d = dock && board.cards[dock.active];
     return d && d.kind === 'frame' ? { x: d.x, y: d.y, w: d.w, h: d.h } : null;
   }
-  // Membership is STICKY, not geometric: each tab carries an explicit member
-  // list (seeded from the region's contents at dock time; joined by dropping
-  // over the panel or creating inside it; left by dragging out). Geometry
-  // must not silently reassign nodes — the docked region's canvas ghost is
-  // invisible, so a card created on the canvas over those world coordinates
-  // would otherwise vanish into the panel.
+  // Membership is STICKY, not geometric: each frame carries an explicit
+  // member list on its OWN card record (`dockMembers` — real, synced content;
+  // seeded from the region's contents at dock time; joined by dropping over
+  // the panel or creating inside it; left by dragging out). Geometry must not
+  // silently reassign nodes — the docked region's canvas ghost is invisible,
+  // so a card created on the canvas over those world coordinates would
+  // otherwise vanish into the panel.
   // recomputeDockMembers rebuilds the id→tab index from the lists and
   // reparents/stows whatever changed. opts.prune (reconcile only — undo and
   // remote merges) drops members whose CENTER left their region, so a
@@ -1932,7 +1943,8 @@
     if (dock) {
       for (const t of dock.tabs) {
         const fd = board.cards[t.frameId];
-        t.members = t.members.filter((id) => {
+        const list = (fd && fd.dockMembers) || [];
+        const kept = list.filter((id) => {
           if (!getNode(id) || isPinned(id) || isDockedFrame(id)) return false;
           if (opts && opts.prune && fd) {
             // members may live anywhere AROUND the region (the panel is a
@@ -1947,7 +1959,8 @@
           }
           return true;
         });
-        for (const id of t.members) if (!dockMembers.has(id)) dockMembers.set(id, t.frameId);
+        if (fd && kept.length !== list.length) fd.dockMembers = kept;   // a pruned stray survives the reconcile
+        for (const id of kept) if (!dockMembers.has(id)) dockMembers.set(id, t.frameId);
       }
       // a docked-button assembly is one unit: buttons live where their root
       // lives — including buttons attached to a docked frame's own tab,
@@ -1976,22 +1989,22 @@
     return changed;
   }
   // Explicit membership transitions (the ONLY ways in and out besides undock).
+  // Membership is real content now — pure mutators; every call site commits
+  // (some as their own gesture, some folded into a bigger one like paste/dup).
   function addToDockTab(ids, fid) {
     if (!dock) return;
-    const t = dock.tabs.find((t) => t.frameId === (fid || dock.active));
-    if (!t) return;
-    for (const id of ids) if (!t.members.includes(id) && !isDockedFrame(id) && !isPinned(id)) t.members.push(id);
-    recomputeDockMembers();
-    flushViewport();                   // membership must survive an abrupt reload
-    recordUndo();
+    const targetFid = fid || dock.active;
+    const c = board.cards[targetFid];
+    if (!c || !Array.isArray(c.dockMembers)) return;
+    for (const id of ids) if (!c.dockMembers.includes(id) && !isDockedFrame(id) && !isPinned(id)) c.dockMembers.push(id);
   }
   function removeFromDock(ids) {
     if (!dock) return;
     const drop = new Set(ids);
-    for (const t of dock.tabs) t.members = t.members.filter((id) => !drop.has(id));
-    recomputeDockMembers();
-    flushViewport();
-    recordUndo();
+    for (const t of dock.tabs) {
+      const c = board.cards[t.frameId];
+      if (c && Array.isArray(c.dockMembers)) c.dockMembers = c.dockMembers.filter((id) => !drop.has(id));
+    }
   }
   // Inactive tabs' members stay parented in the panel but invisible —
   // visibility (not display) so their geometry stays measurable.
@@ -2082,7 +2095,7 @@
     syncDockPanel();
     scheduleFrameEval();               // the incoming tab's embeds become visible
     commit({ viewportOnly: true });
-    flushViewport();                   // membership/arrangement saves immediately
+    flushViewport();                   // this device's arrangement saves immediately
   }
   // Fit the active frame's region into the panel (the tab's "home view").
   function dockFitRegion() {
@@ -2120,31 +2133,29 @@
       const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
       if (cx >= d.x && cx <= d.x + d.w && cy >= d.y && cy <= d.y + d.h) members.push(id);
     }
-    const tab = { frameId, members, viewport: { x: 0, y: 0, zoom: 1 } };
-    if (!dock) dock = { width: Math.min(innerWidth * 0.6, 420), minimized: false, active: frameId, tabs: [tab] };
-    else { dock.tabs.push(tab); dock.active = frameId; dock.minimized = false; }
+    d.dockMembers = members;            // real content: this frame is now docked
+    dock = deriveDockTabs(dock);
+    dock.active = frameId;
+    dock.minimized = false;
     syncDockPanel();
     recomputeDockMembers();
     dockFitRegion();
     for (const cid of connEls.keys()) drawConnection(cid);   // stow states changed
     scheduleFrameEval();
-    commit({ viewportOnly: true });    // persist dock state (view preference)
-    flushViewport();                   // …immediately: membership must survive an abrupt reload
-    recordUndo();                      // docking is a history step (structure changed)
+    commit();                          // membership is content; docking undoes/syncs like any edit
+    flushViewport();                   // …chrome (active tab) too, immediately: survive an abrupt reload
   }
   function undockFrame(fid) {
     if (!dock) return;
     fid = fid || dock.active;
-    const tab = dock.tabs.find((t) => t.frameId === fid);
     const d = board.cards[fid];
     // members may live anywhere around the region (free surface) — grow the
     // frame to CONTAIN them all before they land back on the canvas, so an
     // undocked frame always fully encloses its contents
-    let grew = false;
-    if (tab && d && d.kind === 'frame') {
+    if (d && d.kind === 'frame') {
       const pad = 24;
       let minX = d.x, minY = d.y, maxX = d.x + d.w, maxY = d.y + d.h;
-      for (const id of tab.members) {
+      for (const id of d.dockMembers || []) {
         if (dockMembers.get(id) !== fid) continue;
         const g = nodeGeom(id);
         if (!g) continue;
@@ -2154,12 +2165,10 @@
       if (minX < d.x || minY < d.y || maxX > d.x + d.w || maxY > d.y + d.h) {
         d.x = Math.round(minX); d.y = Math.round(minY);
         d.w = Math.round(maxX - minX); d.h = Math.round(maxY - minY);
-        grew = true;
       }
+      delete d.dockMembers;             // real content: this frame is no longer docked
     }
-    dock.tabs = dock.tabs.filter((t) => t.frameId !== fid);
-    if (!dock.tabs.length) dock = null;
-    else if (dock.active === fid) dock.active = dock.tabs[0].frameId;
+    dock = deriveDockTabs(dock);
     recomputeDockMembers();            // that region's nodes go back to the canvas
     syncDockPanel();
     if (board.cards[fid]) renderCard(fid);   // apply the (possibly grown) rect
@@ -2168,10 +2177,8 @@
     for (const cid of connEls.keys()) drawConnection(cid);
     applyDockViewport();
     scheduleFrameEval();
-    if (grew) commit();                // the resize is board content
-    else commit({ viewportOnly: true });
+    commit();                          // undocking is content now too
     flushViewport();
-    recordUndo();                      // undocking is a history step (structure changed)
   }
   function setDockMinimized(min) {
     if (!dock || dock.minimized === !!min) return;
@@ -3486,12 +3493,10 @@
     }
     // existing nodes update in place (undo/redo touches few); only NEW
     // off-screen nodes defer — e.g. switching to a big board hydrates lazily
-    // docked frames can vanish under undo/remote merge — drop their tabs
-    if (dock) {
-      dock.tabs = dock.tabs.filter((t) => board.cards[t.frameId] && board.cards[t.frameId].kind === 'frame');
-      if (!dock.tabs.length) dock = null;
-      else if (!dock.tabs.some((t) => t.frameId === dock.active)) dock.active = dock.tabs[0].frameId;
-    }
+    // docked frames are real content now (dockMembers) — re-derive tabs from
+    // whatever the cards say, so undo/redo/remote merge can add or drop a
+    // dock exactly like any other content change
+    dock = deriveDockTabs(dock);
     recomputeDockMembers();          // sets first (parents drive rendering)…
     for (const id of Object.keys(board.cards)) {
       if (isPinned(id)) continue;
@@ -3994,7 +3999,7 @@
       for (const t of ADD_TOOLS) {
         items.push({ label: t.menu, action: () => {
           const nid = t.at(world, { intoDock: inDockMenu });
-          if (inDockMenu && typeof nid === 'string') addToDockTab([nid]);
+          if (inDockMenu && typeof nid === 'string') { addToDockTab([nid]); commit(); }
         } });
       }
       if (clipboard) items.push({ label: 'Paste here', hint: '⌘V', action: () => pasteClipboard(world, { intoDock: inDockMenu }) });
@@ -4448,7 +4453,7 @@
     } else {
       const c = mode.at || toWorld(innerWidth / 2, innerHeight / 2);
       const nid = createIframe(c.x - 240, c.y - 160, src);
-      if (mode.intoDock) addToDockTab([nid]);   // created from the panel's menu
+      if (mode.intoDock) { addToDockTab([nid]); commit(); }   // created from the panel's menu
     }
   }
 
@@ -5716,22 +5721,13 @@
   function applyPulledBoard(id, content) {
     saveBoardContent(id, content);
     if (id === currentBoardId) {
-      // the dock restore on load/boot validated against local content that may
-      // have been behind Drive — a frame this device hadn't pulled yet reads as
-      // "gone" and drops its tab. If the user hasn't touched dock since (no
-      // history-worthy dock change recorded), re-derive it from the per-device
-      // preference against this fresher board so a frame doesn't lose its dock
-      // purely from sync timing.
-      const dockUnchangedSinceLoad = dockStructureSnapshot() === lastDock;
       content.viewport = board.viewport;   // viewport is local-only: don't let a pull move the view
       board = content;
-      if (dockUnchangedSinceLoad) dock = restoreDockState(id);
       undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
       if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
       clearSelection(); interactiveId = null;
-      reconcileToBoard();
+      reconcileToBoard();       // derives dock from the pulled cards' dockMembers
       lastContent = contentSnapshot();
-      lastDock = dockStructureSnapshot();
       updateHistoryButtons();
     }
   }
@@ -6111,16 +6107,17 @@
     currentBoardId = id;
     localStorage.setItem(CURRENT_KEY, id);
     board = loadBoardContent(id);
-    // restore this device's docked-frame window (a view preference, like the
-    // viewport) BEFORE rendering, so members render straight into the panel
-    dock = restoreDockState(id);
+    if (migrateLegacyDockMembers(id)) { board.version++; saveBoardContent(id, board); }
+    // this device's docked-frame CHROME (view preference, like the viewport)
+    // BEFORE rendering, so members render straight into the panel; which
+    // frames are docked comes from the content just loaded above
+    dock = deriveDockTabs(loadDockChrome(id));
     undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
     if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
     clearSelection(); interactiveId = null;
     reconcileToBoard();
     applyDockViewport();
     lastContent = contentSnapshot();
-    lastDock = dockStructureSnapshot();
     updateHistoryButtons();
     setHashBoard(id);
     setSaveState('saved');
@@ -6278,12 +6275,12 @@
   currentBoardId = pickInitialBoardId(library);
   localStorage.setItem(CURRENT_KEY, currentBoardId);
   board = loadBoardContent(currentBoardId);
-  // docked-frame window: restore before first render (see loadAndShow)
-  dock = restoreDockState(currentBoardId);
+  if (migrateLegacyDockMembers(currentBoardId)) { board.version++; saveBoardContent(currentBoardId, board); }
+  // docked-frame window CHROME: restore before first render (see loadAndShow)
+  dock = deriveDockTabs(loadDockChrome(currentBoardId));
   renderAll();
   updateEmptyState();
   lastContent = contentSnapshot();   // baseline for undo history
-  lastDock = dockStructureSnapshot();
   setSaveState('saved');
   updateBoardMenuLabel();
   renderBoardMenu();

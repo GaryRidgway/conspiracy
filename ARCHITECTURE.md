@@ -129,30 +129,51 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   is world-space, so dropping over the other window just lands there —
   never mix `getBoundingClientRect` with the wrong window's transform.
   Movers reparent live when the pointer crosses, so the ghost follows.
-- **Membership is STICKY, not geometric.** Each tab carries an explicit
-  member list: seeded center-in-rect when the frame docks, then changed
-  ONLY by gestures — drop over the panel joins the active tab, drop over
-  the canvas leaves, panel-menu creations/pastes join, duplicates of
-  members follow their source, and docked-button assemblies follow their
-  root. **The drop/creation position is law** — the panel is a free work
-  surface, so members may live outside the frame's rect; never clamp
-  placements to the region. Geometry must never silently reassign: the
-  docked region's canvas ghost is invisible, so a node created on the
-  canvas over those world coordinates must NOT vanish into the panel. The
-  one geometric rule left: reconcile (undo/remote — never commit) prunes
-  members a full region-size beyond the rect — reverted cross-window
-  drags, not deliberate placements.
-- **Dock state is a per-device view preference** — `{width, minimized,
-  active, tabs: [{frameId, members, viewport}]}` rides
-  `whiteboard:viewport:<id>`, never board content, never bumps `version`,
-  never syncs. Other devices see a normal board.
+- **Membership is STICKY, not geometric.** Each docked frame carries an
+  explicit member list on its OWN card record (`dockMembers` — real, synced
+  content, like any other field): seeded center-in-rect when the frame
+  docks, then changed ONLY by gestures — drop over the panel joins the
+  active tab, drop over the canvas leaves, panel-menu creations/pastes
+  join, duplicates of members follow their source, and docked-button
+  assemblies follow their root. **The drop/creation position is law** — the
+  panel is a free work surface, so members may live outside the frame's
+  rect; never clamp placements to the region. Geometry must never silently
+  reassign: the docked region's canvas ghost is invisible, so a node
+  created on the canvas over those world coordinates must NOT vanish into
+  the panel. The one geometric rule left: reconcile (undo/remote — never
+  commit) prunes members a full region-size beyond the rect — reverted
+  cross-window drags, not deliberate placements. Presence of `dockMembers`
+  (even `[]`) on a `kind:'frame'` card IS "this frame is docked" — absence
+  means undocked; remove with `delete`, never assign `undefined` (same rule
+  as any other field — see Record shape rules below).
+- **Split between synced content and per-device chrome.** Which frames are
+  docked, and their membership, is board content — it merges per-record/
+  per-field exactly like any other card field (non-overlapping edits to
+  different frames' `dockMembers` both survive; the same frame's membership
+  edited on both sides is a conflict, local wins, surfaced in merge review
+  like any other field conflict) and rides undo via the normal content
+  snapshot. Active tab, minimized state, panel width, and each tab's own
+  pan/zoom are ephemeral per-device arrangement — `{width, minimized,
+  active, tabs: [{frameId, viewport}]}` rides `whiteboard:viewport:<id>`,
+  never touches board content, never bumps `version`, never syncs, and
+  restoring it on every ⌘Z would yank the panel around unrelated undos.
+  `deriveDockTabs(prevDock)` is the single place that reconciles the two:
+  given whatever `board.cards` currently says is docked, it rebuilds
+  `dock.tabs`, preferring `prevDock`'s existing tab order/viewport/chrome
+  for tabs that still qualify and defaulting fresh ones. It runs after
+  every full or partial board replacement (boot, board-switch, undo/redo,
+  Drive pull/merge) via `reconcileToBoard`, so a frame's dock survives a
+  race where local content briefly lagged Drive — there's no separate
+  "restore once at load" step to race against. `migrateLegacyDockMembers`
+  is a one-time upgrade path: it adopts a device's pre-existing per-device
+  membership into `dockMembers` the first time a frame lacks the field.
 - Arrows: both ends in one window → that window's SVG (`#dock-connections`
   vs `#connections`, entries move via appendChild); one end each →
   hidden, records intact. `url(#…)` marker refs resolve document-wide.
 - While docked a frame can't move or resize (its rect anchors its tab's
   contents); undock first. Deleting it (or losing it to undo/remote merge)
-  closes its tab via the reconcile guard; the last tab closing hides the
-  panel.
+  closes its tab — `deriveDockTabs` just won't find `dockMembers` on it
+  anymore; the last tab closing hides the panel.
 - Main-canvas geometry consumers exclude members: fit, marquee (per-window
   via `ctx`), `findSnapTarget` (same-window only). `frameViewState`
   treats panel embeds as visible while open, far while minimized.

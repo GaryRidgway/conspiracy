@@ -486,11 +486,13 @@ test('jumping to a node in the panel pans the panel, not the canvas', { tag: ['@
 
 // ════════════════════════════════════════════════════════════════════════
 //  DOCK vs DRIVE SYNC RACE
-//  Dock restore runs synchronously against local content on load, before the
-//  async Drive reconcile has a chance to pull in anything this device is
-//  behind on. A frame missing from that local snapshot reads as "gone" and
-//  drops its tab — applyPulledBoard must re-derive dock from the per-device
-//  preference once fresher content lands, not leave it dropped forever.
+//  Dock membership is real, synced content (a frame card's `dockMembers`
+//  field) — deriveDockTabs rebuilds dock.tabs from whatever board.cards
+//  currently says on every reconcile (boot, board-switch, undo/redo, Drive
+//  pull/merge), not just once at load. So a frame missing from a stale local
+//  snapshot at load time isn't a permanent loss: once Drive delivers the
+//  frame (with its dockMembers intact), the very next reconcile picks it
+//  back up automatically.
 // ════════════════════════════════════════════════════════════════════════
 test('a Drive pull landing after load recovers dock state a stale local snapshot dropped', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
@@ -528,4 +530,46 @@ test('a Drive pull landing after load recovers dock state a stale local snapshot
   await expect(page.locator('#dock-panel')).toBeVisible();
   await expect(page.locator(`.frame-node[data-id="${frameId}"]`)).toHaveClass(/frame-docked/);
   expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
+});
+
+// ════════════════════════════════════════════════════════════════════════
+//  LEGACY DOCK MIGRATION
+//  Dock membership used to live only in the per-device chrome key. Adopt an
+//  existing per-device dock into the frame card's synced `dockMembers` the
+//  first time it loads under the new scheme.
+// ════════════════════════════════════════════════════════════════════════
+test('a pre-migration per-device dock is adopted into synced dockMembers on load', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const member = await addCardAt(page, 640, 360);
+  const memberId = await member.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // simulate a pre-migration per-device dock: the frame docked, membership
+  // only in the old per-device shape — the frame card itself has no
+  // dockMembers yet, exactly as it would look right after this deploy lands.
+  // addInitScript (not a plain evaluate before reload): reload fires pagehide
+  // on the current page first, which flushes the real (empty) dock and would
+  // clobber a plain write before the new page even boots.
+  await page.addInitScript(([frameId, memberId]) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    if (!cur) return;
+    const key = 'whiteboard:viewport:' + cur;
+    if (JSON.parse(localStorage.getItem(key) || 'null')?.dock) return;   // already migrated
+    localStorage.setItem(key, JSON.stringify({
+      x: 0, y: 0, zoom: 1,
+      dock: { width: 420, minimized: false, active: frameId,
+        tabs: [{ frameId, members: [memberId], x: 0, y: 0, zoom: 1 }] },
+    }));
+  }, [frameId, memberId]);
+  await page.reload();
+
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  await expect(page.locator(`.frame-node[data-id="${frameId}"]`)).toHaveClass(/frame-docked/);
+  const stored = await page.evaluate((frameId) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
+    return b.cards[frameId].dockMembers;
+  }, frameId);
+  expect(stored).toEqual([memberId]);
 });
