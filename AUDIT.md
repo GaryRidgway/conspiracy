@@ -134,7 +134,7 @@ executing the spec and passing the suite.
   the board menu — Escape-dedup only, their existing outside-click dismiss
   stays separate), removing the two remaining standalone Escape branches.
 
-### 17. [ ] Gate `refreshColorFilter`/`layoutAttachments`/re-sanitization on mutation type
+### 17. [x] Gate `refreshColorFilter`/`layoutAttachments`/re-sanitization on mutation type — done
 - **Split off from item 9** (see below) after item 9 itself was investigated
   and declined — this half doesn't touch `recordUndo`/undo history at all,
   so it doesn't inherit that item's risk.
@@ -149,14 +149,38 @@ executing the spec and passing the suite.
   touches that) — so `layoutAttachments()`'s full `Object.entries(board.cards)`
   scan + DOM query, and `refreshColorFilter()`'s full legend rebuild, are
   100% wasted work on every keystroke of a text edit.
-- **Fix:** thread a cheap mutation-kind hint through `commit(opts)` (e.g.
-  `opts.affects = {dock: false, color: false}` from the coalesce call
-  sites) and skip `layoutAttachments()`/`refreshColorFilter()` when the
-  caller asserts they can't apply. Arrow nudges are the one coalesced
-  caller that's NOT safe to skip `layoutAttachments()` for — a nudged node
-  can carry docked buttons that must re-derive position. Re-sanitizing in
-  `saveCardBody` stays as-is (correctness-critical: it's the XSS boundary
-  from CLAUDE.md's `sanitizeHtml()` rule, not a place to cut corners).
+- **Correction found while implementing:** the audit's own proposed fix — a
+  static per-call-site hint like `opts.affects = {dock: false}` for every
+  title/body edit — is actually wrong, not just imprecise.
+  `layoutAttachments()` doesn't only react to `attachedTo` changes; it also
+  re-derives docked buttons' position from their root's live *size*: a
+  card acting as a bottom-tray dock root reads its own `offsetHeight` (a
+  body edit changes that), and a frame's tab-docked buttons read the tab's
+  live `getBoundingClientRect()` (a title edit that changes tab width
+  changes that). A blanket "titles/bodies never affect docking" skip would
+  have left docked buttons visibly drifting out of place while typing —
+  exactly the "passes tests, breaks in a way nobody wrote a test for" class
+  Section B is reserved for.
+- **Landed:** `opts.affects = {ids: [...], color: false}` instead of a
+  static per-mutation-kind flag. `color: false` is safe unconditionally for
+  every coalesced call site (none of them ever touch `color`). For
+  `layoutAttachments`, `commit()` skips it only when **none** of `ids` is a
+  key in the item-12 `dockRootButtons` cache — i.e. only when the edited
+  node(s) currently have zero docked dependents, an O(1)-ish check reusing
+  a map that's already correct and current for this exact question. Arrow
+  nudges pass every id in the moved `carried` set (already resolved to
+  roots — `nudgeSelection` substitutes a dragged docked button's own id for
+  its root's, so `carried` never contains a bare dependent). Title/body
+  edits pass their own single id. Re-sanitizing in `saveCardBody` stays
+  as-is (correctness-critical XSS boundary, not touched).
+- **Tested:** `tests/usability.spec.js` "renaming a frame with a docked
+  button keeps the button flush with the growing tab" — types into a
+  frame's title while a button is docked to its tab and asserts the button
+  tracks the tab's growing width on every keystroke, not just after blur.
+  Verified this test fails (button drifts ~140px behind the tab) against a
+  naive `skipLayout = !!affects` version before confirming it passes with
+  the `dockRootButtons`-based check restored. Full suite run twice, 196/196
+  both times.
 - **Verify:** full suite twice; this is a targeted skip, not a timing
   change, so lower risk than item 9 — but still touches the shared
   `commit()` chokepoint, so treat call-site coverage carefully (every

@@ -1341,6 +1341,36 @@ test('a button docks to the right of a frame title and moves with the frame', { 
   expect(bp2.y - bp.y).toBe(50);
 });
 
+// Regression: commit() skips layoutAttachments on a coalesced title/body edit
+// when opts.affects proves none of its ids are a dock root — but a frame's
+// docked button reads the tab's live width, which a title edit changes. If
+// the skip check were a static "titles never affect docking" assumption
+// instead of the dockRootButtons lookup, the button would drift out of sync
+// with the tab while typing.
+test('renaming a frame with a docked button keeps the button flush with the growing tab', { tag: '@buttons' }, async ({ page }) => {
+  await page.click('#addFrameNode');
+  await page.keyboard.press('Escape');
+  const frame = page.locator('.frame-node');
+  const tab = frame.locator('.frame-tab');
+  const name = frame.locator('.frame-name');
+  const btn = await addFreeButton(page);
+  const tb0 = await tab.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: tb0.x + tb0.width + 20 + b0.width / 2, y: tb0.y + tb0.height / 2 });
+  await expect(frame).toHaveClass(/has-tab-buttons/);
+
+  await name.dblclick();
+  await page.keyboard.type('A Much Longer Frame Title');   // widens the tab per keystroke
+  await expect.poll(() => page.evaluate(() => {
+    const b = document.querySelector('.btn-node').getBoundingClientRect();
+    const t = document.querySelector('.frame-tab').getBoundingClientRect();
+    return Math.abs(b.left - (t.right - 1));
+  })).toBeLessThan(1);
+  const tb1 = await tab.boundingBox();
+  expect(tb1.width).toBeGreaterThan(tb0.width);   // sanity: the tab actually grew
+});
+
 // Regression: at boot, layoutAttachments must run AFTER the world transform
 // is applied — frame rows are measured from the tab's client rect through
 // toWorld (the model viewport). With a saved pan, measuring under the default

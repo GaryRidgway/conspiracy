@@ -562,7 +562,13 @@
   }
 
   // commit() is the single mutation chokepoint. opts.coalesce groups rapid
-  // text edits into one undo step.
+  // text edits into one undo step. opts.affects lets a caller that KNOWS its
+  // edit can't move docked geometry or change a color skip those two full-
+  // board passes — {ids: [...]} names every node whose position/size may
+  // have changed (layoutAttachments only re-derives docked buttons, so it's
+  // skipped when none of those ids are a dock root in dockRootButtons —
+  // itself derived from board.cards, so a root with no docked dependents
+  // right now correctly clears it too); {color: false} skips refreshColorFilter.
   function commit(opts) {
     // Viewport-only changes (pan/zoom) are a local, per-device view preference:
     // they don't touch content, aren't undoable, and must NOT bump the version
@@ -575,13 +581,16 @@
     // Docked buttons re-derive their x/y at the chokepoint, so whatever
     // mutated content (a drag, typing that grew a card, a color change)
     // can't leave a stale stored position behind. Unguarded on purpose: the
-    // pass is also what CLEARS docked styling when the last dock goes away.
-    layoutAttachments();
+    // pass is also what CLEARS docked styling when the last dock goes away —
+    // unless the caller's opts.affects proves none of its ids are dock roots.
+    const affects = opts && opts.affects;
+    const skipLayout = affects && affects.ids && affects.ids.every((id) => !dockRootButtons.has(id));
+    if (!skipLayout) layoutAttachments();
     board.version++;
     recordUndo(opts && opts.coalesce);
     scheduleSave();
     updateEmptyState();
-    refreshColorFilter();   // legend/dimming track content changes
+    if (!(affects && affects.color === false)) refreshColorFilter();   // legend/dimming track content changes
     refreshDriveStatus();   // show "changes pending…" until the next sync tick pushes
   }
 
@@ -1282,7 +1291,7 @@
 
     // Title: double-click to rename (shared with iframe titles); Enter → body.
     makeRenamable(titleEl, {
-      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true }); },
+      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true, affects: { ids: [id], color: false } }); },
       onCommit: (v) => { board.cards[id].title = v; commit(); },
       onEnter: () => bodyEl.focus(),
     });
@@ -1402,7 +1411,7 @@
     labelEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); labelEl.blur(); }
     });
-    labelEl.addEventListener('input', () => { board.cards[id].title = labelEl.textContent; commit({ coalesce: true }); });
+    labelEl.addEventListener('input', () => { board.cards[id].title = labelEl.textContent; commit({ coalesce: true, affects: { ids: [id], color: false } }); });
     labelEl.addEventListener('blur', () => {
       labelEl.removeAttribute('contenteditable');
       const d = board.cards[id];
@@ -2289,7 +2298,7 @@
       startNodeDrag(id, el, e);
     });
     makeRenamable(nameEl, {
-      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true }); },
+      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true, affects: { ids: [id], color: false } }); },
       onCommit: (v) => { board.cards[id].title = v; renderFrameNode(id); commit(); },
     });
     el.querySelector('.copy-link').addEventListener('click', (e) => {
@@ -2643,7 +2652,7 @@
     // Title: double-click to rename (shared with card titles).
     const labelEl = el.querySelector('.iframe-label');
     makeRenamable(labelEl, {
-      onInput: (v) => { board.iframes[id].title = v; commit({ coalesce: true }); },
+      onInput: (v) => { board.iframes[id].title = v; commit({ coalesce: true, affects: { ids: [id], color: false } }); },
       onCommit: (v) => {
         board.iframes[id].title = v;
         labelEl.textContent = v || labelFor(board.iframes[id].src);
@@ -4962,7 +4971,9 @@
       ensureNodeVisible(id, { maxPan: Math.max(Math.abs(dx), Math.abs(dy)) * z });
     }
     scheduleFrameEval();
-    commit({ coalesce: true });   // a burst of nudges undoes as one step
+    // affects.ids covers every node that actually moved, so a nudge that
+    // carries a dock root still re-derives its docked buttons' position
+    commit({ coalesce: true, affects: { ids: [...carried], color: false } });   // a burst of nudges undoes as one step
   }
 
   function openSelectedNode(id) {
@@ -5087,7 +5098,7 @@
     if (!data) return;
     data.body = sanitizeHtml(bodyEl.innerHTML);
     redrawConnectionsFor(id);   // body height may have changed
-    commit({ coalesce: true });
+    commit({ coalesce: true, affects: { ids: [id], color: false } });
   }
 
   // A card's label: its title, else a short snippet of its body text.
