@@ -4354,11 +4354,58 @@
       t.center ? t.center() : t.at(toWorld(innerWidth / 2, innerHeight / 2)));
   }
 
+  // ════════════════════════════════════════════════════════
+  //  LISTBOX NAV — shared by the three type-ahead popups below (button-link
+  //  modal, node-picker, ⌘K jump): arrow keys move a `.sel` highlight
+  //  between item buttons, but a class alone is silent to a screen reader —
+  //  role=listbox/option + aria-activedescendant announce the same thing.
+  // ════════════════════════════════════════════════════════
+  function makeListNav(listEl, inputEl) {
+    listEl.setAttribute('role', 'listbox');
+    let seq = 0;
+    const items = () => [...listEl.querySelectorAll('.np-item')];
+    // i === null means "no highlight" (used only for node-picker's Remove
+    // row, which must NOT be auto-selected — see its call site).
+    function setSel(i) {
+      const els = items();
+      els.forEach((el) => { if (!el.id) el.id = listEl.id + '-opt-' + (seq++); el.setAttribute('role', 'option'); });
+      if (i == null || !els.length) {
+        els.forEach((el) => { el.classList.remove('sel'); el.setAttribute('aria-selected', 'false'); });
+        inputEl.removeAttribute('aria-activedescendant');
+        return;
+      }
+      const idx = ((i % els.length) + els.length) % els.length;
+      els.forEach((el, n) => {
+        const on = n === idx;
+        el.classList.toggle('sel', on);
+        el.setAttribute('aria-selected', String(on));
+      });
+      els[idx].scrollIntoView({ block: 'nearest' });
+      inputEl.setAttribute('aria-activedescendant', els[idx].id);
+    }
+    function selIndex() {
+      const idx = items().findIndex((el) => el.classList.contains('sel'));
+      return idx === -1 ? null : idx;
+    }
+    // ArrowDown/ArrowUp from "no highlight" land on the first/last item
+    // rather than stepping off one that was never there.
+    function move(delta) {
+      const i = selIndex();
+      setSel(i == null ? (delta > 0 ? 0 : -1) : i + delta);
+    }
+    function selected() {
+      const idx = selIndex();
+      return idx == null ? null : items()[idx];
+    }
+    return { setSel, selIndex, move, selected };
+  }
+
   // ── Button-link modal: paste a URL, or pick a board item to fly to ──
   const blModal = document.getElementById('button-link-modal');
   const blInput = document.getElementById('bl-input');
   const blList = document.getElementById('bl-list');
   const blUseUrl = document.getElementById('bl-use-url');
+  const blNav = makeListNav(blList, blInput);
   let blButtonId = null;
 
   // Focus trap: while a modal is open, Tab cycles inside it instead of
@@ -4456,6 +4503,7 @@
       empty.textContent = blLooksLikeUrl(q) ? 'Press Enter to link this URL' : 'No matching items';
       blList.appendChild(empty);
     }
+    blNav.setSel(0);
   }
   function submitBlUrl() {
     const url = normalizeUrl(blInput.value);
@@ -4467,14 +4515,16 @@
   blInput.addEventListener('input', () => renderBlList(blInput.value));
   blInput.addEventListener('keydown', (e) => {
     // Escape is handled by the global MODALS chain below.
-    if (e.key === 'Enter') {
+    if (e.key === 'ArrowDown') { e.preventDefault(); blNav.move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); blNav.move(-1); }
+    else if (e.key === 'Enter') {
       e.preventDefault();
       // a deep link that resolves on this board beats the "Link to URL" path
       const nid = deepLinkNodeId(blInput.value);
-      const first = blList.querySelector('.np-item');
-      if (nid && getNode(nid) && first) { first.click(); return; }
+      const sel = blNav.selected() || blList.querySelector('.np-item');
+      if (nid && getNode(nid) && sel) { sel.click(); return; }
       if (blLooksLikeUrl(blInput.value)) { submitBlUrl(); return; }
-      if (first) first.click();
+      if (sel) sel.click();
     }
   });
   blUseUrl.addEventListener('click', submitBlUrl);
@@ -5161,6 +5211,7 @@
   const nodePicker = document.getElementById('node-picker');
   const npFilter = document.getElementById('np-filter');
   const npList = document.getElementById('np-list');
+  const npNav = makeListNav(npList, npFilter);
 
   // The node the toolbar is anchored to, so it can re-track the card as the
   // board pans/zooms (the toolbar is fixed-positioned in screen space).
@@ -5399,6 +5450,13 @@
       empty.textContent = 'No matching nodes';
       npList.appendChild(empty);
     }
+    // Auto-highlight the top search hit, same as the other two pickers — but
+    // never the Remove row, so a bare Enter right after reopening the picker
+    // still means "take the top hit," not "unlink." An explicit arrow press
+    // can still reach Remove; see the keydown handler below.
+    const built = [...npList.querySelectorAll('.np-item')];
+    const initial = built.findIndex((el) => !el.classList.contains('np-remove'));
+    npNav.setSel(initial === -1 ? null : initial);
   }
   // The picker's filter input holds focus while it's open, so ITS blur is the
   // "user clicked away" signal — without this, clicking the canvas from the
@@ -5408,11 +5466,14 @@
   npFilter.addEventListener('input', () => renderPickerList(npFilter.value));
   npFilter.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeNodePicker(); if (activeBody) activeBody.el.focus(); }
-    if (e.key === 'Enter') {
+    else if (e.key === 'ArrowDown') { e.preventDefault(); npNav.move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); npNav.move(-1); }
+    else if (e.key === 'Enter') {
       e.preventDefault();
-      // never the Remove row: Enter means "take the top search hit"
-      const first = npList.querySelector('.np-item:not(.np-remove)');
-      if (first) insertNodeLink(first.dataset.id);
+      // an explicit arrow-key pick (including Remove) wins; otherwise Enter
+      // means "take the top search hit" and must skip Remove
+      const target = npNav.selected() || npList.querySelector('.np-item:not(.np-remove)');
+      if (target) target.click();
     }
   });
 
@@ -5478,6 +5539,7 @@
   const jumpEl = document.getElementById('jump');
   const jumpInput = document.getElementById('jump-input');
   const jumpList = document.getElementById('jump-list');
+  const jumpNav = makeListNav(jumpList, jumpInput);
 
   // Everything findable about a node: its rendered text (title + card body),
   // a frame's URL, and the id (so a pasted deep-link id matches too).
@@ -5552,28 +5614,17 @@
       empty.textContent = 'No matching items';
       jumpList.appendChild(empty);
     }
-    setJumpSel(0);
-  }
-  function setJumpSel(i) {
-    const items = [...jumpList.querySelectorAll('.np-item')];
-    if (!items.length) return;
-    const idx = ((i % items.length) + items.length) % items.length;
-    items.forEach((el, n) => el.classList.toggle('sel', n === idx));
-    items[idx].scrollIntoView({ block: 'nearest' });
-  }
-  function jumpSelIndex() {
-    const items = [...jumpList.querySelectorAll('.np-item')];
-    return items.findIndex((el) => el.classList.contains('sel'));
+    jumpNav.setSel(0);
   }
 
   jumpInput.addEventListener('input', () => renderJumpList(jumpInput.value));
   jumpInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeJump(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); setJumpSel(jumpSelIndex() + 1); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setJumpSel(jumpSelIndex() - 1); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); jumpNav.move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); jumpNav.move(-1); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      const sel = jumpList.querySelector('.np-item.sel') || jumpList.querySelector('.np-item');
+      const sel = jumpNav.selected() || jumpList.querySelector('.np-item');
       if (sel) jumpToNode(sel.dataset.id);
     }
   });

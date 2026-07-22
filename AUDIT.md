@@ -313,11 +313,53 @@ executing the spec and passing the suite.
   docked button gets/loses `co-selected` — this exercises `markNode` off the
   new cache and passed unchanged. Full suite run twice, 195/195 both times.
 
-### 15. [ ] ⌘K jump list (and `#node-picker`, `#bl-list`): listbox semantics
-- **What:** arrow keys move a `.sel` class on plain divs (5461-5483) —
-  silent to screen readers.
+### 15. [x] ⌘K jump list (and `#node-picker`, `#bl-list`): listbox semantics — done
+- **What:** arrow keys move a `.sel` class on plain buttons — silent to
+  screen readers.
 - **Fix:** `role="listbox"`/`role="option"` + `aria-activedescendant` on
   the input, or `announce()` the highlighted item.
+- **Correction found while implementing:** the audit's own premise didn't
+  hold for two of the three named widgets. Only the ⌘K jump list actually
+  had arrow-key `.sel` highlighting (`setJumpSel`/`jumpSelIndex`,
+  app.js ~5557-5573 before this fix); `#node-picker` and the button-link
+  modal's `#bl-list` had **no** keyboard highlight at all — Enter always
+  took the first DOM match (or, for node-picker, the first non-Remove
+  match), and any other item was only reachable by mouse click. Applying
+  "add ARIA to the existing highlight" verbatim would have covered jump but
+  left the other two with no keyboard-navigable highlight to describe.
+- **Landed:** a shared `makeListNav(listEl, inputEl)` factory (new LISTBOX
+  NAV section, just above the button-link modal in app.js) now backs all
+  three popups. It owns the `.sel` class, assigns each rendered item a
+  stable `id` + `role="option"`/`aria-selected`, sets `role="listbox"` on
+  the container, and keeps `aria-activedescendant` on the input pointing at
+  the current highlight (`<input>`'s implicit `textbox` role already
+  supports `aria-activedescendant` directly — no extra role needed there).
+  `move(delta)` handles Arrow Up/Down, wrapping in both directions.
+  Node-picker and bl-list gained real arrow-key navigation as a result (not
+  just ARIA paint on missing behavior), and their Enter handlers now follow
+  the highlight (falling back to the first real hit when nothing's been
+  arrowed yet) instead of hardcoding "first DOM match."
+  - **Remove-row care:** node-picker's Remove row (shown only while editing
+    an existing link) must never fire on a bare, un-arrowed Enter — that
+    was the whole reason the old code special-cased "skip Remove" for
+    Enter. Auto-highlighting index 0 on every render (as jump/bl-list now
+    do) would have put the highlight ON Remove whenever it's the current
+    render's first item, silently turning a bare Enter into an unlink. Its
+    auto-highlight instead targets the first *non*-Remove item (`null` —
+    no highlight at all — if none exists), while an explicit arrow press
+    can still reach Remove and Enter will then follow it there.
+- **Tested:** `tests/usability.spec.js`, four new cases — jump-list's
+  listbox/option roles and `aria-activedescendant` tracking across an
+  Arrow Down; node-picker's Enter following an arrow press to the second
+  of two matches (not just the first); the Remove-row regression above,
+  verified fail-then-pass by temporarily making the auto-highlight ignore
+  the Remove row (bare Enter deleted the link — confirmed failing) before
+  restoring the "skip Remove" `findIndex`; and the button-link modal's
+  Enter following an arrow press, checked against the stored `action`.
+  Full suite run twice, 200/200 both times (196 prior + 4 new).
+- **Verify:** full suite twice, plus `test:nav` and `test:buttons` while
+  iterating. No data-model change — this is DOM/ARIA + input-handler code
+  only, so no merge/sync risk.
 
 ---
 

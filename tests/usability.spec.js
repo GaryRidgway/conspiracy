@@ -714,6 +714,137 @@ test('Find button opens quick jump; Escape closes it', { tag: '@nav' }, async ({
   await expect(page.locator('#jump')).toBeHidden();
 });
 
+// Regression: the three type-ahead popups (⌘K jump, node-picker, button-link
+// modal) move a highlight with a `.sel` class, which is invisible to a screen
+// reader without role=listbox/option + aria-activedescendant on the input.
+test('quick jump exposes listbox semantics and tracks the highlight via aria-activedescendant', { tag: '@nav' }, async ({ page }) => {
+  await addCardAt(page, 450, 350);
+  await addCardAt(page, 700, 350);
+  await page.keyboard.press('ControlOrMeta+k');
+  const list = page.locator('#jump-list');
+  const input = page.locator('#jump-input');
+  await expect(list).toHaveAttribute('role', 'listbox');
+  const items = list.locator('.np-item');
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toHaveAttribute('role', 'option');
+  await expect(items.nth(0)).toHaveAttribute('aria-selected', 'true');   // auto-highlighted
+  await expect(items.nth(1)).toHaveAttribute('aria-selected', 'false');
+  const firstId = await items.nth(0).getAttribute('id');
+  await expect(input).toHaveAttribute('aria-activedescendant', firstId);
+
+  await page.keyboard.press('ArrowDown');
+  await expect(items.nth(0)).toHaveAttribute('aria-selected', 'false');
+  await expect(items.nth(1)).toHaveAttribute('aria-selected', 'true');
+  const secondId = await items.nth(1).getAttribute('id');
+  await expect(input).toHaveAttribute('aria-activedescendant', secondId);
+});
+
+// Node-picker and the button-link modal only ever picked the FIRST search hit
+// on Enter — no arrow-key highlight existed at all. Both now share the same
+// arrow-driven highlight as quick jump, so Enter follows the highlight.
+test('arrow keys move the highlight in the node-link picker, and Enter follows it', { tag: '@nav' }, async ({ page }) => {
+  const a = await addCardAt(page, 250, 300);
+  const idA = await a.getAttribute('data-id');
+  const b = await addCardAt(page, 550, 300);
+  await b.locator('.card-title').dblclick();
+  await page.keyboard.type('Match One');
+  await page.keyboard.press('Enter');
+  const c = await addCardAt(page, 850, 300);
+  await c.locator('.card-title').dblclick();
+  await page.keyboard.type('Match Two');
+  await page.keyboard.press('Enter');
+  const idC = await c.getAttribute('data-id');
+
+  const bodyA = page.locator(`.node[data-id="${idA}"] .card-body`);
+  await bodyA.click();
+  await page.click('#tt-link');
+  await page.locator('#np-filter').fill('Match');
+  await expect(page.locator('#node-picker .np-item')).toHaveCount(2);
+
+  await page.keyboard.press('ArrowDown');   // off the auto-highlighted first hit (Match One)…
+  await page.keyboard.press('Enter');       // …and onto the second (Match Two)
+  const chip = bodyA.locator('a.node-link');
+  await expect(chip).toHaveAttribute('data-node', idC);
+});
+
+// The Remove row must never fire on a bare Enter (that would silently unlink
+// on a stray keystroke) but an explicit arrow press should still reach it.
+test('the node-picker Remove row is skipped by a bare Enter but reachable by arrowing to it', { tag: '@nav' }, async ({ page }) => {
+  const a = await addCardAt(page, 300, 300);
+  const idA = await a.getAttribute('data-id');
+  const b = await addCardAt(page, 700, 300);
+  const idB = await b.getAttribute('data-id');
+  const bodyA = page.locator(`.node[data-id="${idA}"] .card-body`);
+  await bodyA.click();
+  await page.click('#tt-link');
+  await page.locator(`#node-picker .np-item[data-id="${idB}"]`).click();
+  const chip = bodyA.locator('a.node-link');
+  await expect(chip).toHaveCount(1);
+
+  // reopen on the existing link: it's now editing, and Remove sits on top
+  await page.evaluate(() => {
+    const el = document.querySelector('a.node-link');
+    const r = document.createRange();
+    r.selectNode(el);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  });
+  await page.click('#tt-link');
+  await expect(page.locator('#node-picker .np-remove')).toBeVisible();
+
+  // bare Enter must still re-target to the top real hit, not remove the link
+  await page.keyboard.press('Enter');
+  await expect(bodyA.locator('a.node-link')).toHaveCount(1);
+
+  // reopen and this time arrow up onto Remove explicitly, then Enter
+  await page.evaluate(() => {
+    const el = document.querySelector('a.node-link');
+    const r = document.createRange();
+    r.selectNode(el);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  });
+  await page.click('#tt-link');
+  await page.keyboard.press('ArrowUp');
+  await expect(page.locator('#node-picker .np-remove')).toHaveClass(/sel/);
+  await page.keyboard.press('Enter');
+  await expect(bodyA.locator('a.node-link')).toHaveCount(0);
+});
+
+// The button-link modal never had arrow-key navigation either — Enter always
+// took the DOM-first item. Same shared fix applies there.
+test('arrow keys move the highlight in the button-link modal, and Enter follows it', { tag: '@buttons' }, async ({ page }) => {
+  const b = await addCardAt(page, 450, 300);
+  await b.locator('.card-title').dblclick();
+  await page.keyboard.type('Match One');
+  await page.keyboard.press('Enter');
+  const c = await addCardAt(page, 750, 300);
+  await c.locator('.card-title').dblclick();
+  await page.keyboard.type('Match Two');
+  await page.keyboard.press('Enter');
+  const idC = await c.getAttribute('data-id');
+
+  await page.click('#addButton');
+  const modal = page.locator('#button-link-modal');
+  await expect(modal).toBeVisible();
+  await page.keyboard.type('Match');
+  await expect(modal.locator('.np-item')).toHaveCount(2);
+
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(modal).toBeHidden();
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  const stored = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
+    return b.cards[Object.keys(b.cards).find((k) => b.cards[k].kind === 'button')].action;
+  });
+  expect(stored).toEqual({ type: 'node', target: idC });
+});
+
 // Paste a screenshot on the canvas → it becomes a card holding the image as a
 // data URI (downscaled, no remote fetch), which persists like any card.
 async function pasteImage(page) {
