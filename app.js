@@ -2414,7 +2414,8 @@
           <button class="copy-link icon-btn" title="Copy link to this embed"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
             <button class="czoom-btn czoom-out" title="Zoom content out"><span class="icon icon-remove"></span></button>
-            <button class="czoom-val" title="Reset content zoom to 100%">100%</button>
+            <button class="czoom-val" title="Click to edit, double-click to reset to 100%">100%</button>
+            <input class="czoom-input hidden" inputmode="numeric" autocomplete="off" aria-label="Content zoom percent">
             <button class="czoom-btn czoom-in" title="Zoom content in"><span class="icon icon-add"></span></button>
           </span>
           <button class="iframe-zoom icon-btn" title="Zoom canvas to this frame"><span class="icon icon-center_focus_strong"></span></button>
@@ -2603,6 +2604,8 @@
   // dir > 0 zooms the content in (bigger), dir < 0 out; ×1.25 per step.
   const nudgeFrameZoom = (id, dir) =>
     setFrameZoom(id, frameLogicalWidth(board.iframes[id]) * (dir > 0 ? 1 / 1.25 : 1.25));
+  // set by target percentage rather than logical width — for the editable field
+  const setFrameZoomPct = (id, pct) => setFrameZoom(id, IFRAME_LOGICAL_WIDTH * 100 / Math.max(1, Math.round(pct)));
 
   function labelFor(src) {
     try { return new URL(src).hostname.replace(/^www\./, ''); }
@@ -2666,7 +2669,58 @@
     czoom.addEventListener('pointerdown', (e) => e.stopPropagation());
     el.querySelector('.czoom-in').addEventListener('click', (e) => { e.stopPropagation(); nudgeFrameZoom(id, 1); });
     el.querySelector('.czoom-out').addEventListener('click', (e) => { e.stopPropagation(); nudgeFrameZoom(id, -1); });
-    el.querySelector('.czoom-val').addEventListener('click', (e) => { e.stopPropagation(); setFrameZoom(id, IFRAME_LOGICAL_WIDTH); });
+
+    // the value is editable: type a percentage directly, arrow keys nudge it
+    // by 1% live while editing, double-click resets to 100%. Click and
+    // dblclick both fire on a double-click, so the single-click action waits
+    // out the window in case a second click turns it into a dblclick instead.
+    // A real <input> swaps in for editing — a <button> can't take typed text
+    // even with contenteditable set.
+    const czoomVal = el.querySelector('.czoom-val');
+    const czoomInput = el.querySelector('.czoom-input');
+    let czoomClickTimer = null;
+    let czoomCancelled = false;
+    const beginZoomEdit = () => {
+      czoomInput.value = String(frameZoomPct(board.iframes[id]));
+      czoomVal.classList.add('hidden');
+      czoomInput.classList.remove('hidden');
+      czoomInput.focus();
+      czoomInput.select();
+    };
+    const endZoomEdit = () => {
+      czoomInput.classList.add('hidden');
+      czoomVal.classList.remove('hidden');
+    };
+    czoomVal.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearTimeout(czoomClickTimer);
+      czoomClickTimer = setTimeout(() => { czoomClickTimer = null; beginZoomEdit(); }, 250);
+    });
+    czoomVal.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      clearTimeout(czoomClickTimer);
+      czoomClickTimer = null;
+      setFrameZoom(id, IFRAME_LOGICAL_WIDTH);
+    });
+    czoomInput.addEventListener('pointerdown', (e) => e.stopPropagation());
+    czoomInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); czoomInput.blur(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); czoomCancelled = true; czoomInput.blur(); return; }
+      const dir = (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? 1
+        : (e.key === 'ArrowDown' || e.key === 'ArrowLeft') ? -1 : 0;
+      if (!dir) return;
+      e.preventDefault(); e.stopPropagation();
+      const cur = parseInt(czoomInput.value, 10);
+      setFrameZoomPct(id, (Number.isFinite(cur) ? cur : frameZoomPct(board.iframes[id])) + dir);
+      czoomInput.value = String(frameZoomPct(board.iframes[id]));
+      czoomInput.select();
+    });
+    czoomInput.addEventListener('blur', () => {
+      if (czoomCancelled) { czoomCancelled = false; endZoomEdit(); return; }
+      const n = parseInt(czoomInput.value, 10);
+      if (Number.isFinite(n) && n > 0) setFrameZoomPct(id, n);
+      endZoomEdit();
+    });
 
     delBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteNode(id); });

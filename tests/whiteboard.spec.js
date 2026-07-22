@@ -912,10 +912,43 @@ test('per-iframe content zoom: + enlarges, % resets, and it persists', { tag: '@
   await page.reload();
   expect(await frameScale(page)).toBeGreaterThan(s0);
 
-  // clicking the % resets to 100%
-  await page.locator('.node.iframe-node .czoom-val').click();
+  // double-clicking the % resets to 100%
+  await page.locator('.node.iframe-node .czoom-val').dblclick();
   await expect(page.locator('.node.iframe-node .czoom-val')).toHaveText('100%');
   expect(await frameScale(page)).toBeCloseTo(s0, 5);
+});
+
+test('per-iframe content zoom: the % field is editable, with arrow keys nudging by 1%', { tag: '@frames' }, async ({ page }) => {
+  await addFrame(page, EMBED_URL);
+  const val = page.locator('.node.iframe-node .czoom-val');
+  const input = page.locator('.node.iframe-node .czoom-input');
+  await expect(val).toHaveText('100%');
+
+  // click, wait past the click/dblclick disambiguation window, then type
+  await val.click();
+  await page.waitForTimeout(300);
+  await expect(input).toBeVisible();
+  await expect(val).toBeHidden();
+  await expect(input).toHaveValue('100');
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('150');
+  await page.keyboard.press('Enter');
+  await expect(input).toBeHidden();
+  await expect(val).toHaveText('150%');
+
+  // arrow keys nudge by 1% live, while still editing
+  await val.click();
+  await page.waitForTimeout(300);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await expect(input).toHaveValue('152');
+  await page.keyboard.press('ArrowLeft');
+  await expect(input).toHaveValue('151');
+
+  // Escape cancels back to the last committed value
+  await page.keyboard.type('9');
+  await page.keyboard.press('Escape');
+  await expect(val).toHaveText('151%');
 });
 
 test('zoom-to-frame button centers the iframe and zooms in', { tag: ['@frames', '@nav'] }, async ({ page }) => {

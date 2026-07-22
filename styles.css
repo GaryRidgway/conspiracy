@@ -1457,6 +1457,21 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   padding: 0 0.1rem;
 }
 .czoom-btn:hover, .czoom-val:hover { color: var(--text); background: var(--border); }
+.czoom-val.hidden, .czoom-input.hidden { display: none; }
+.czoom-input {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  width: 2.6em;
+  text-align: center;
+  color: var(--text);
+  background: var(--surface);
+  border: 0;
+  border-left: 1px solid var(--border2);
+  border-right: 1px solid var(--border2);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  padding: 0 0.1rem;
+}
 
 .iframe-wrap {
   flex: 1;
