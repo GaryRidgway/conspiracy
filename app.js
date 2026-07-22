@@ -2681,7 +2681,7 @@
     let czoomClickTimer = null;
     let czoomCancelled = false;
     const beginZoomEdit = () => {
-      czoomInput.value = String(frameZoomPct(board.iframes[id]));
+      czoomInput.value = frameZoomPct(board.iframes[id]) + '%';
       czoomVal.classList.add('hidden');
       czoomInput.classList.remove('hidden');
       czoomInput.focus();
@@ -2712,7 +2712,7 @@
       e.preventDefault(); e.stopPropagation();
       const cur = parseInt(czoomInput.value, 10);
       setFrameZoomPct(id, (Number.isFinite(cur) ? cur : frameZoomPct(board.iframes[id])) + dir);
-      czoomInput.value = String(frameZoomPct(board.iframes[id]));
+      czoomInput.value = frameZoomPct(board.iframes[id]) + '%';
       czoomInput.select();
     });
     czoomInput.addEventListener('blur', () => {

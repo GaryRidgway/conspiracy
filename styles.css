@@ -1452,7 +1452,7 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   box-sizing: border-box;
   font-family: var(--font-mono);
   font-size: 0.62rem;
-  width: 2.6em;
+  width: 3em;
   text-align: center;
   border-style: solid;
   border-width: 0 1px;

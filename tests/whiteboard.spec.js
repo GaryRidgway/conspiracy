@@ -594,9 +594,12 @@ test('⌘/Ctrl+Z undoes an iframe move even when the frame had focus', { tag: '@
   await node.locator('iframe').evaluate((f) => f.focus());
   expect(await page.evaluate(() => document.activeElement.tagName)).toBe('IFRAME');
 
-  const hb = await node.locator('.iframe-header').boundingBox();
-  await drag(page, { x: hb.x + hb.width * 0.4, y: hb.y + hb.height / 2 },
-                   { x: hb.x + hb.width * 0.4 + 140, y: hb.y + hb.height / 2 + 70 });
+  // drag from the title label, not a fraction of the header's width — the
+  // header's other buttons are fixed-width and the label absorbs whatever's
+  // left, so a width-based fraction can drift onto a button as they resize
+  const lb = await node.locator('.iframe-label').boundingBox();
+  await drag(page, { x: lb.x + lb.width * 0.3, y: lb.y + lb.height / 2 },
+                   { x: lb.x + lb.width * 0.3 + 140, y: lb.y + lb.height / 2 + 70 });
   expect(await page.evaluate(() => document.activeElement.tagName)).not.toBe('IFRAME');  // focus returned
 
   await page.keyboard.press('ControlOrMeta+z');
@@ -610,9 +613,9 @@ test('undoing a move keeps the same iframe element (no reload)', { tag: '@undo' 
   await node.locator('iframe').evaluate((f) => { f.dataset.marker = 'KEEP'; });
 
   const before = await node.evaluate((el) => el.style.left);
-  const hb = await node.locator('.iframe-header').boundingBox();
-  await drag(page, { x: hb.x + hb.width * 0.4, y: hb.y + hb.height / 2 },
-                   { x: hb.x + hb.width * 0.4 + 140, y: hb.y + hb.height / 2 + 70 });
+  const lb = await node.locator('.iframe-label').boundingBox();
+  await drag(page, { x: lb.x + lb.width * 0.3, y: lb.y + lb.height / 2 },
+                   { x: lb.x + lb.width * 0.3 + 140, y: lb.y + lb.height / 2 + 70 });
   expect(await node.evaluate((el) => el.style.left)).not.toBe(before);
 
   await page.click('#undoBtn');
@@ -929,7 +932,7 @@ test('per-iframe content zoom: the % field is editable, with arrow keys nudging 
   await page.waitForTimeout(300);
   await expect(input).toBeVisible();
   await expect(val).toBeHidden();
-  await expect(input).toHaveValue('100');
+  await expect(input).toHaveValue('100%');
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.type('150');
   await page.keyboard.press('Enter');
@@ -941,9 +944,9 @@ test('per-iframe content zoom: the % field is editable, with arrow keys nudging 
   await page.waitForTimeout(300);
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
-  await expect(input).toHaveValue('152');
+  await expect(input).toHaveValue('152%');
   await page.keyboard.press('ArrowLeft');
-  await expect(input).toHaveValue('151');
+  await expect(input).toHaveValue('151%');
 
   // Escape cancels back to the last committed value
   await page.keyboard.type('9');
