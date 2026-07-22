@@ -83,6 +83,32 @@ test('the panel flips a record to the other device and back, undoably', { tag: '
   await expect(title).toHaveText('Alpha');
 });
 
+test('a pull landing while the review panel is open closes it instead of letting a stale flip clobber it', { tag: '@boards' }, async ({ page }) => {
+  const id = await addNamedCard(page, 'Alpha');
+  const rec = await storedCard(page, id);
+  await openReview(page, [{ coll: 'cards', id, label: 'Alpha', alt: { ...rec, title: 'Beta' }, keptSide: 'local' }]);
+
+  const panel = page.locator('#merge-review');
+  const title = page.locator(`.node.card[data-id="${id}"] .card-title`);
+  await expect(panel).toBeVisible();
+
+  // another sync tick lands a genuinely newer, unrelated edit while the panel
+  // is still open — no new conflict, since only the remote side changed
+  await page.evaluate(({ id, rec }) => {
+    const content = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+    content.cards[id] = { ...rec, title: 'Gamma' };
+    content.version++;
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content);
+  }, { id, rec });
+  await expect(title).toHaveText('Gamma');
+
+  // the panel's kept/alt are now stale — clicking a choice must not apply
+  // them over the newer content; it should just close instead
+  await panel.locator('.mr-choice', { hasText: 'Other device' }).click();
+  await expect(title).toHaveText('Gamma');
+  await expect(panel).toBeHidden();
+});
+
 test('"use other device for all" applies every alt, deletes included — and deletes can be flipped back', { tag: '@boards' }, async ({ page }) => {
   const idA = await addNamedCard(page, 'Alpha');
   const idB = await addNamedCard(page, 'Gamma');

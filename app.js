@@ -5836,6 +5836,12 @@
   document.body.appendChild(mergeReview);
   let mergeReviewItems = [];
   let mergeReviewBoard = null;
+  // Watermark against a pull/merge landing while the panel sits open: kept/alt
+  // are snapshots taken at open time, so if the board moved on since (another
+  // sync tick pulled a genuinely newer edit), applying a stale choice would
+  // silently clobber that newer content. Bumped by our OWN commits below so
+  // flipping back and forth within the review stays legal.
+  let mergeReviewVersion = null;
 
   function closeMergeReview() { mergeReview.classList.add('hidden'); }
   document.addEventListener('keydown', (e) => {
@@ -5846,6 +5852,7 @@
 
   function openMergeReview(items) {
     mergeReviewBoard = currentBoardId;
+    mergeReviewVersion = board.version;
     mergeReviewItems = items.map((it) => ({
       ...it,
       // snapshot what the merge kept NOW (the live record), so a flip to the
@@ -5869,10 +5876,17 @@
     else board[item.coll][item.id] = JSON.parse(JSON.stringify(v));
   }
   function applyMergeChoices(changes) {   // [{item, choice}] → one undo step
-    if (mergeReviewBoard !== currentBoardId) { closeMergeReview(); return; }
+    // board switched, OR a pull/merge landed since the panel opened (or since
+    // our last flip) — kept/alt are stale, applying them would clobber
+    // whatever arrived meanwhile, so bail instead of trusting them
+    if (mergeReviewBoard !== currentBoardId || board.version !== mergeReviewVersion) {
+      closeMergeReview();
+      return;
+    }
     for (const { item, choice } of changes) setMergeChoice(item, choice);
     reconcileToBoard();
     commit();
+    mergeReviewVersion = board.version;   // our own bump is expected — rebase the watermark
     renderMergeReview();
   }
 

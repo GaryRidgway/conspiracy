@@ -346,6 +346,17 @@ is REVERSIBLE (and undoable) after the fact. There are still no per-record
 timestamps — "which is newer" is unknowable across devices; the panel shows
 both versions instead of guessing.
 
+The panel is non-modal and has no auto-dismiss, so it can sit open across
+later sync ticks. Its `kept`/`alt` are snapshots taken at open time — if a
+later pull/merge lands while it's still open (`board` gets fully replaced;
+see Board switching), those snapshots no longer reflect the live record.
+`applyMergeChoices` guards against this with a `mergeReviewVersion`
+watermark (`board.version` at open, rebased after each of the panel's own
+commits): a version drift it didn't cause means something else changed the
+board meanwhile, so it closes the panel instead of applying a stale choice
+over whatever just arrived. Without this, flipping a choice on a stale panel
+silently overwrote newer synced content with no conflict raised for it.
+
 ### Known limitations (accepted, not bugs)
 
 - A pull/merge clears the undo/redo stacks (rebasing undo history across a
