@@ -825,6 +825,12 @@
   // ════════════════════════════════════════════════════════
   const selectedNodes = new Set();   // node ids
   let selectedConn = null;           // connection id, or null
+  // root id → its docked buttons' ids. layoutAttachments already computes this
+  // exact map every commit/reconcile (the only points attachedTo can change),
+  // so markNode reuses it instead of rescanning board.cards per call — a
+  // marquee drag calls markNode once per newly (de)selected node per pointer
+  // move, which was O(changed × cards) before this cache.
+  let dockRootButtons = new Map();
 
   function markNode(id, on) {
     const el = nodeEls.get(id);
@@ -832,11 +838,10 @@
     // a selected root lights up its docked buttons too — they move as one,
     // so they should read as one (visual only: NOT in selectedNodes, or a
     // delete would cascade instead of orphaning)
-    for (const [bid, c] of Object.entries(board.cards)) {
-      if (c.kind === 'button' && c.attachedTo && dockRoot(bid) === id) {
-        const bel = nodeEls.get(bid);
-        if (bel) bel.classList.toggle('co-selected', on);
-      }
+    const kids = dockRootButtons.get(id);
+    if (kids) for (const bid of kids) {
+      const bel = nodeEls.get(bid);
+      if (bel) bel.classList.toggle('co-selected', on);
     }
   }
   function markConn(id, on) {
@@ -1493,6 +1498,7 @@
   // derived position rides the same undo step and save as the change itself.
   function layoutAttachments() {
     const byRoot = new Map();
+    dockRootButtons = byRoot;   // published for markNode's co-select lookup
     for (const [bid, c] of Object.entries(board.cards)) {
       if (c.kind !== 'button') continue;
       const bel = nodeEls.get(bid);

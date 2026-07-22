@@ -269,12 +269,25 @@ executing the spec and passing the suite.
   machinery than this fix warrants. Covered instead by code inspection plus
   the existing frame-loading suite.
 
-### 12. [ ] Marquee: stop `markNode` scanning all cards
+### 12. [x] Marquee: stop `markNode` scanning all cards — done
 - **Where:** `startBoxSelect` onMove 3545-3570 → `setSelection` (856-863) →
   `markNode` (816-827) scans `board.cards` per marked node to co-select
   docked buttons — O(changed × cards) per move on docked-button-heavy boards.
-- **Fix:** build the attachedTo→root reverse map once per gesture (or reuse
-  the one `layoutAttachments` already builds).
+- **Landed:** `layoutAttachments` already builds a root→docked-buttons map
+  (`byRoot`) every commit/reconcile — the only points `attachedTo` can
+  change. It now publishes that map into a module-level `dockRootButtons`
+  cache; `markNode` looks a node's id up in it instead of rescanning
+  `board.cards`, turning an O(changed × cards) marquee move into O(changed).
+  Hydration (`ensureNode`/`afterHydration`/`drainHydration`) already calls
+  `layoutAttachments` right after materializing new nodes, so the cache
+  can't go stale relative to what's actually selectable on screen.
+- **Tested:** no dedicated perf test (no existing harness to assert an
+  internal scan count without adding test-only instrumentation this fix
+  doesn't otherwise warrant). Correctness covered by the existing
+  `tests/usability.spec.js` "a button docks to the right of a frame title
+  and moves with the frame" test, which selects a root and asserts its
+  docked button gets/loses `co-selected` — this exercises `markNode` off the
+  new cache and passed unchanged. Full suite run twice, 195/195 both times.
 
 ### 15. [ ] ⌘K jump list (and `#node-picker`, `#bl-list`): listbox semantics
 - **What:** arrow keys move a `.sel` class on plain divs (5461-5483) —
