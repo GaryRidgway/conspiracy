@@ -5716,8 +5716,16 @@
   function applyPulledBoard(id, content) {
     saveBoardContent(id, content);
     if (id === currentBoardId) {
+      // the dock restore on load/boot validated against local content that may
+      // have been behind Drive — a frame this device hadn't pulled yet reads as
+      // "gone" and drops its tab. If the user hasn't touched dock since (no
+      // history-worthy dock change recorded), re-derive it from the per-device
+      // preference against this fresher board so a frame doesn't lose its dock
+      // purely from sync timing.
+      const dockUnchangedSinceLoad = dockStructureSnapshot() === lastDock;
       content.viewport = board.viewport;   // viewport is local-only: don't let a pull move the view
       board = content;
+      if (dockUnchangedSinceLoad) dock = restoreDockState(id);
       undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
       if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
       clearSelection(); interactiveId = null;
@@ -5727,6 +5735,7 @@
       updateHistoryButtons();
     }
   }
+  window.__wb_applyPulledBoard = applyPulledBoard;
 
   // Non-blocking notice shown after a background merge that had true conflicts
   // (same field edited on both devices → this device's version was kept). Names

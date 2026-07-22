@@ -483,3 +483,49 @@ test('jumping to a node in the panel pans the panel, not the canvas', { tag: ['@
   expect(bb.x).toBeGreaterThan(panel.x);                     // centered in the panel
   expect(bb.x + bb.width).toBeLessThan(panel.x + panel.width + 1);
 });
+
+// ════════════════════════════════════════════════════════════════════════
+//  DOCK vs DRIVE SYNC RACE
+//  Dock restore runs synchronously against local content on load, before the
+//  async Drive reconcile has a chance to pull in anything this device is
+//  behind on. A frame missing from that local snapshot reads as "gone" and
+//  drops its tab — applyPulledBoard must re-derive dock from the per-device
+//  preference once fresher content lands, not leave it dropped forever.
+// ════════════════════════════════════════════════════════════════════════
+test('a Drive pull landing after load recovers dock state a stale local snapshot dropped', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  const cardId = await card.getAttribute('data-id');
+  await dockViaMenu(page);
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.waitForTimeout(500);                            // debounced viewport (dock) save
+
+  // capture the fully-synced content — this is what "Drive" will later deliver
+  const { boardKey, goodContent } = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const boardKey = 'whiteboard:board:' + cur;
+    return { boardKey, goodContent: JSON.parse(localStorage.getItem(boardKey)) };
+  });
+
+  // simulate a local cache that's behind Drive: this device hasn't pulled the
+  // frame card back down yet, even though its own per-device dock preference
+  // still names it
+  await page.addInitScript(([boardKey, frameId]) => {
+    const b = JSON.parse(localStorage.getItem(boardKey));
+    delete b.cards[frameId];
+    localStorage.setItem(boardKey, JSON.stringify(b));
+  }, [boardKey, frameId]);
+  await page.reload();
+  await expect(page.locator('#dock-panel')).toBeHidden();    // restore dropped the "missing" frame's tab
+  await expect(page.locator(`[data-id="${frameId}"]`)).toHaveCount(0);
+
+  // the Drive pull lands moments later with the frame back in it
+  await page.evaluate((content) => {
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content);
+  }, goodContent);
+
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  await expect(page.locator(`.frame-node[data-id="${frameId}"]`)).toHaveClass(/frame-docked/);
+  expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
+});
