@@ -236,18 +236,38 @@ executing the spec and passing the suite.
   on `commit()`, never mid-gesture, and non-dragged nodes don't move during
   a single free-button drag.
 
-### 11. [ ] Fly-to: cap hydration and defer iframe loads mid-flight
-- **Where:** fly loop 4086-4098 → `applyViewport` → `scheduleFrameEval`
-  (710) → `promotePendingInView` (3386-3395) + `evaluateFrameLoading` (2504).
-- **What:** `promotePendingInView` hydrates every pending near-view node
+### 11. [x] Fly-to: cap hydration and defer iframe loads mid-flight — done
+- **Where:** fly loop `app.js:4098-4141` → `applyViewport` (693) →
+  `scheduleFrameEval` (2554) → `promotePendingInView` (3424) +
+  `evaluateFrameLoading` (2530).
+- **What:** `promotePendingInView` hydrated every pending near-view node
   synchronously in one rAF (no `HYDRATE_CHUNK` cap like `drainHydration`
-  has) — a flight sweeping a dense region hydrates dozens of nodes in one
-  animation frame (visible hitch). `evaluateFrameLoading` sets iframe `src`
-  the instant an embed intersects — including transiently, mid-flight, for
+  has) — a flight sweeping a dense region hydrated dozens of nodes in one
+  animation frame (visible hitch). `evaluateFrameLoading` set iframe `src`
+  the instant an embed intersected — including transiently, mid-flight, for
   embeds merely flown past.
-- **Fix:** while `flyRAF` is set, cap `promotePendingInView` at
-  `HYDRATE_CHUNK` per frame (or skip and promote on landing), and route
-  "visible" iframe loads through the existing idle queue until landing.
+- **Landed:** while `flyRAF` is set, `promotePendingInView` now stops
+  promoting once it's hydrated `HYDRATE_CHUNK` nodes in that frame, picking
+  up the rest on the next; once the flight lands (`flyRAF` cleared) any
+  remainder flushes uncapped as before. `evaluateFrameLoading` now treats a
+  `'visible'` frame the same as `'near'` while `flyRAF` is set — it's queued
+  for the existing serial idle-prefetch instead of loaded synchronously —
+  and only fast-paths straight to `loadFrame` once the camera has settled.
+- **Tested:** `tests/loading.spec.js` — "a flight caps per-frame hydration at
+  HYDRATE_CHUNK instead of bursting". Idle-time hydration is stubbed out
+  (`requestIdleCallback = () => 0`) so only the flight's own promotion path
+  can materialize nodes; a 64-card cluster sits at the flight's midpoint
+  (fastest part of the ease curve, tight enough that the sweeping near-view
+  margin crosses it in one frame) and the per-frame render count is sampled
+  across the whole flight. Verified this test fails without the cap (max
+  single-frame delta jumped to 48) before confirming it passes with the fix
+  (deltas of 24, 24, 16). No dedicated test for the iframe-defer half: by
+  the time an embed is fully `'visible'`, its generous near-ring margin
+  means the ordinary idle-prefetch path has almost always already loaded it
+  for an unrelated reason, so a black-box assertion on that specific branch
+  would be either flaky or require adding an internal test hook — more
+  machinery than this fix warrants. Covered instead by code inspection plus
+  the existing frame-loading suite.
 
 ### 12. [ ] Marquee: stop `markNode` scanning all cards
 - **Where:** `startBoxSelect` onMove 3545-3570 → `setSelection` (856-863) →

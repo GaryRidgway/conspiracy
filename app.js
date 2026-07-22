@@ -2536,8 +2536,11 @@
       if (!el || el.classList.contains('loaded')) continue;
       const d = board.iframes[id];
       const state = frameViewState(id, d);
-      if (state === 'visible') loadFrame(id);         // what the user sees loads first
-      else if (state === 'near') {
+      // mid-flight, "visible" may only be transient — a frame the flight is
+      // sweeping past, not one the user will actually land on — so treat it
+      // like "near" until the camera settles
+      if (state === 'visible' && !flyRAF) loadFrame(id);         // what the user sees loads first
+      else if (state === 'near' || (state === 'visible' && flyRAF)) {
         const fx = (d.x + d.w / 2) * z + board.viewport.x;
         const fy = (d.y + d.h / 2) * z + board.viewport.y;
         near.push({ id, dist: Math.hypot(fx - cx, fy - cy) });
@@ -3421,10 +3424,12 @@
   function promotePendingInView() {
     if (!pendingNodes.size) return;
     let touched = false;
+    let promoted = 0;
     for (const id of [...pendingNodes]) {
+      if (flyRAF && promoted >= HYDRATE_CHUNK) break;   // spread a flight's hydration across frames
       const n = getNode(id);
       if (!n) { pendingNodes.delete(id); continue; }
-      if (nodeNearView(n.data, 0.25)) { renderNodeNow(id); touched = true; }
+      if (nodeNearView(n.data, 0.25)) { renderNodeNow(id); touched = true; promoted++; }
     }
     if (touched) { layoutAttachments(); refreshColorFilter(); }
   }

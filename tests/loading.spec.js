@@ -192,3 +192,63 @@ test('frames shrunk to a dot do not load even on screen; zooming in loads them',
   });
   await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', EMBED_URL);
 });
+
+// ════════════════════════════════════════════════════════════════════════
+//  FLY-TO HYDRATION CAP — a flight sweeping past a dense cluster must not
+//  hydrate it all in one animation frame (visible hitch); promotePendingInView
+//  spreads it across frames at HYDRATE_CHUNK while a flight is in progress.
+// ════════════════════════════════════════════════════════════════════════
+
+test('a flight caps per-frame hydration at HYDRATE_CHUNK instead of bursting', { tag: '@frames' }, async ({ page }) => {
+  const HYDRATE_CHUNK = 24;
+  await addCard(page);
+  await panBy(page, 6000, 0);   // camera starts far from home; resetView flies it back
+
+  // idle-time hydration (unrelated to flight) would otherwise drain the
+  // cluster in the background before the flight even starts — stub it out so
+  // only the flight's own promotion path can materialize these nodes
+  await page.addInitScript(() => { window.requestIdleCallback = () => 0; });
+
+  // cluster sits at the flight's midpoint (fastest part of the ease curve),
+  // tight enough that the sweeping viewport crosses its near-view margin in
+  // one frame — exactly the burst the cap has to spread out
+  const { cx, cy } = await page.evaluate(() => ({ cx: innerWidth / 2, cy: innerHeight / 2 }));
+  const clusterX = Math.round(cx + 3000);
+  const clusterY = Math.round(cy);
+  const N = 64;
+  await page.addInitScript(([clusterX, clusterY, N]) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    if (!cur) return;
+    const key = 'whiteboard:board:' + cur;
+    const b = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!b || b.cards.cluster_0) return;
+    for (let i = 0; i < N; i++) {
+      b.cards['cluster_' + i] = {
+        x: clusterX + (i % 8) * 15, y: clusterY + Math.floor(i / 8) * 15, title: 'C' + i, body: '',
+      };
+    }
+    b.version++;
+    localStorage.setItem(key, JSON.stringify(b));
+  }, [clusterX, clusterY, N]);
+  await page.reload();
+  await expect(page.locator('.node.card[data-id="cluster_0"]')).toHaveCount(0);   // pending: off screen, idle stubbed
+
+  await page.click('#settingsBtn');
+  await page.check('#setFlyTo');
+  await page.keyboard.press('Escape');
+
+  // sample the rendered card count every rAF across the whole flight
+  const counts = await page.evaluate(() => new Promise((resolve) => {
+    const samples = [];
+    document.getElementById('resetView').click();
+    const start = performance.now();
+    const tick = () => {
+      samples.push(document.querySelectorAll('.node.card').length);
+      if (performance.now() - start < 1000) requestAnimationFrame(tick); else resolve(samples);
+    };
+    requestAnimationFrame(tick);
+  }));
+  const deltas = counts.slice(1).map((c, i) => c - counts[i]);
+  expect(Math.max(...deltas)).toBeLessThanOrEqual(HYDRATE_CHUNK);
+  expect(counts[counts.length - 1]).toBe(N + 1);   // all of it lands by the time the flight settles
+});
