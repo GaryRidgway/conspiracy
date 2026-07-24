@@ -911,6 +911,13 @@
     selectedConn = id;
     markConn(id, true);
   }
+  // A connection is a valid keyboard target only when its <g> exists and
+  // isn't hidden: a spanning arrow (one end docked) is display:none, so
+  // cycling to it or opening its menu would give no on-screen feedback.
+  function connVisible(id) {
+    const en = connEls.get(id);
+    return !!en && en.g.style.display !== 'none';
+  }
   // Keyboard reach for connections (ports/arrows are otherwise pointer-only):
   // with a node selected, E steps through just that node's connections (Shift+E
   // steps backward, mirroring Tab/Shift+Tab), Escape returns to the node, Enter
@@ -929,12 +936,7 @@
     }
     if (!connCycleFrom) return;
     const set = connsByNode.get(connCycleFrom);
-    // only arrows actually on screen — a spanning arrow (one end in the dock)
-    // is hidden, so selecting it would give no visible feedback
-    const ids = (set ? [...set] : []).filter((cid) => {
-      const en = connEls.get(cid);
-      return en && en.g.style.display !== 'none';
-    }).sort();
+    const ids = (set ? [...set] : []).filter(connVisible).sort();
     if (!ids.length) { announce('No connections on this item'); return; }
     const cur = selectedConn ? ids.indexOf(selectedConn) : -1;
     // fresh start (nothing highlighted yet): forward lands on the first arrow,
@@ -4237,8 +4239,8 @@
   function openMenuForSelection() {
     let target, cx, cy;
     if (selectedConn) {
+      if (!connVisible(selectedConn)) return;
       const entry = connEls.get(selectedConn);
-      if (!entry || entry.g.style.display === 'none') return;
       const r = entry.g.getBoundingClientRect();
       target = entry.g; cx = r.left + r.width / 2; cy = r.top + r.height / 2;
     } else if (selectedNodes.size === 1) {
