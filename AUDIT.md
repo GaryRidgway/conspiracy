@@ -530,7 +530,7 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
 
 ## Section C — closeout (either model; do LAST)
 
-### 16. [ ] Record known limitations in ARCHITECTURE.md (deliberate, scoped)
+### 16. [x] Record known limitations in ARCHITECTURE.md (deliberate, scoped) — done
 Written last because it records what items 13–15 leave undone.
 - Nodes have no screen-reader semantics: bare `div.node.card` with unlabeled
   contenteditable (1216-1226); the roving-selection model is announce()-based
@@ -543,6 +543,14 @@ Written last because it records what items 13–15 leave undone.
 - Discoverability: C-mode and the F6 region cycle (4900-4912) are only
   documented in the help panel; consider `aria-keyshortcuts` on relevant
   chrome.
+- **Landed:** a new "Accessibility: known limitations (deliberate, scoped)"
+  subsection at the end of ARCHITECTURE.md's Interaction model captures all
+  three above — reframed against the now-complete 13/14/15, which made every
+  *action* keyboard-reachable — plus a fourth note that E anchors connection
+  selection to a node by design (no global connection cycle). The keyboard
+  model bullet was also updated to list E and the M/Shift+F10/ContextMenu
+  trigger, with the `connCycleFrom` anchor and single-source menu-item
+  invariants recorded. Docs only — no code, no test change.
 
 ---
 

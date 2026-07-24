@@ -439,16 +439,56 @@ silently overwrote newer synced content with no conflict raised for it.
 - Keyboard model — the load-bearing distinction is `onCanvas`
   (`activeElement` is `<body>`): on the canvas, Tab cycles nodes in reading
   order, arrows nudge (Shift=1px), Enter opens, C aims a connection
-  (Tab/arrows retarget, Enter creates), Delete removes. In the chrome, all
-  keys keep native meaning (Tab traverses controls). F6 hops canvas → toolbar
-  → palette → zoom bar; Escape steps back toward the canvas. Modals trap Tab
-  (capture-phase listener) and restore focus to their trigger on close.
+  (Tab/arrows retarget, Enter creates), E cycles the selected node's
+  connections (Enter labels the highlighted one, Escape steps back to the
+  node), M / Shift+F10 / ContextMenu open that node's (or connection's)
+  context menu, Delete removes. In the chrome, all keys keep native meaning
+  (Tab traverses controls). F6 hops canvas → toolbar → palette → zoom bar;
+  Escape steps back toward the canvas. Modals trap Tab (capture-phase
+  listener) and restore focus to their trigger on close.
   **Never intercept a key without checking `onCanvas`/`editing` first.**
+- Selecting a connection by keyboard (E) keeps its anchor node in
+  `connCycleFrom`, not in `selectedNodes` — `selectConn` clears the latter.
+  The anchor is re-derived from the live connection if it goes stale, so it
+  needs no separate invalidation. The keyboard context menu
+  (`openMenuForSelection`) reuses `onCanvasContextMenu` via a synthetic
+  event, so menu items live in exactly one place regardless of trigger.
 - Escape is a priority chain: open modal → board menu → blur editing → blur
   chrome → exit iframe interact mode → clear selection.
 - Iframe "interact mode" (`interactiveId`) is runtime-only state and must
   never trap the user: every canvas gesture (pan, wheel, zoom controls, ⌘K
   jump) calls `exitInteract()`. Any new gesture must too.
+
+### Accessibility: known limitations (deliberate, scoped)
+
+The keyboard model above makes every *action* reachable without a pointer
+(select, nudge, connect, select/label an arrow, open the context menu,
+delete). What remains unshipped — recorded here so it's a decision, not a
+surprise:
+
+- **Nodes have no screen-reader object semantics.** A card is a bare
+  `div.node.card` holding an unlabeled `contenteditable`; selection is a
+  visual `.selected` class plus an `aria-live` `announce()`, which a
+  *virtual-cursor / browse-mode* user (arrowing the document, not driving the
+  app's own keys) never encounters — to them the canvas is undifferentiated.
+  The honest fix is a real object model: `role="group"` +
+  `aria-label` (the node's title) + `aria-roledescription` ("card" /
+  "frame" / "button") per node, and connections exposed likewise. That's a
+  render-layer change touching every `renderCard`/`renderIframe`/
+  `renderConnection` path and the selection model, not a patch — scoped out
+  deliberately rather than half-added.
+- **Resize is pointer-only.** Node/frame resize handles and the dock-panel
+  width splitter (`#dock-resizer`) have no keyboard equivalent. A keyboard
+  resize (e.g. a mode where arrows grow/shrink, à la Shift+Alt+arrows) would
+  be a new interaction to design, not a wiring gap.
+- **Shortcuts aren't machine-discoverable.** The single-key actions (C, E,
+  M, F6, the ⌘-combos) are documented in the help panel (`?`) but not
+  surfaced as `aria-keyshortcuts` on the relevant chrome, so assistive tech
+  can't enumerate them. Additive when wanted.
+- **E requires a node first.** Connection selection is anchored to a
+  selected node by design (targeted, quiet on dense boards); there is no
+  global "cycle every connection on the board" key. If a connection is
+  wanted with no obvious owning node, select either endpoint and press E.
 
 ### Touch input (TOUCH GESTURES section in app.js)
 
