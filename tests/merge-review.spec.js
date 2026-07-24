@@ -8,15 +8,9 @@
 //  Neither needs OAuth/Drive.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { boardOf, cardRecord, merge } from './helpers.js';
+import { boardOf, cardRecord, merge, installErrorGuard } from './helpers.js';
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 // create a titled card and return its data-id
 async function addNamedCard(page, title) {

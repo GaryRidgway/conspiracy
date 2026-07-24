@@ -11,17 +11,11 @@
 //  Sourced from real user complaints — see the chat notes / commit message.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { drag, addCardAt, worldScale, nodePos, boardOf, cardRecordAt, merge } from './helpers.js';
+import { drag, addCardAt, worldScale, nodePos, boardOf, cardRecordAt, merge, installErrorGuard } from './helpers.js';
 
 const within = (b, w, h) => b && b.x + b.width > 0 && b.y + b.height > 0 && b.x < w && b.y < h;
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 // ── 1. Getting lost on the infinite canvas (Miro/Excalidraw: "easily get
 //      lost", "no way to show all elements") — Fit must recover. ──
@@ -588,12 +582,9 @@ test('recoloring a node updates an existing connection\'s gradient', { tag: '@co
 // Connect two cards and return the exact screen point of the curve's middle
 // (the label anchor / dblclick target).
 async function connectTwoCards(page) {
-  // pin by data-id — addCardAt returns a live `.last()` locator that would
-  // re-resolve to the second card once it exists
-  const aid = await (await addCardAt(page, 300, 300)).getAttribute('data-id');
-  const bid = await (await addCardAt(page, 760, 320)).getAttribute('data-id');
-  const A = page.locator(`.node.card[data-id="${aid}"]`);
-  const B = page.locator(`.node.card[data-id="${bid}"]`);
+  // addCardAt returns a data-id-pinned locator, so A/B stay put as more nodes appear
+  const A = await addCardAt(page, 300, 300);
+  const B = await addCardAt(page, 760, 320);
   await A.hover();
   const port = await A.locator('.port.right').boundingBox();
   const bb = await B.boundingBox();
@@ -1725,18 +1716,26 @@ test('a blank board shows a centered empty-state prompt that clears once a node 
 // long body must NOT — the title alone drives width.
 test('a long heading widens the card; a long body does not', { tag: '@cards' }, async ({ page }) => {
   const widthOf = (loc) => loc.evaluate((el) => el.getBoundingClientRect().width);
+  // pin each new card by data-id (see makeCardAt / helpers.addCardAt) rather
+  // than .last() — the card is returned in title-edit mode, ready to type
+  const ids = () => page.evaluate(() => [...document.querySelectorAll('.node.card')].map((e) => e.dataset.id));
+  const addCardPinned = async () => {
+    const before = await ids();
+    await page.click('#addCard');
+    await expect(page.locator('.node.card')).toHaveCount(before.length + 1);
+    const id = (await ids()).find((i) => !before.includes(i));
+    return page.locator(`.node.card[data-id="${id}"]`);
+  };
 
   // short title → default width
-  await page.click('#addCard');
+  const plain = await addCardPinned();
   await page.keyboard.press('Escape');
-  const plain = page.locator('.node.card').last();
   expect(await widthOf(plain)).toBeLessThanOrEqual(245);
 
   // long title → grows past the default
-  await page.click('#addCard');
+  const wide = await addCardPinned();
   await page.keyboard.type('A really quite long heading that should not be cut off');
   await page.keyboard.press('Escape');
-  const wide = page.locator('.node.card').last();
   const wideW = await widthOf(wide);
   expect(wideW).toBeGreaterThan(280);
   // title is fully visible — not clipped by ellipsis
@@ -1745,9 +1744,8 @@ test('a long heading widens the card; a long body does not', { tag: '@cards' }, 
   expect(clipped).toBe(false);
 
   // short title + long body → stays at default (body never drives width)
-  await page.click('#addCard');
+  const card = await addCardPinned();
   await page.keyboard.press('Escape');
-  const card = page.locator('.node.card').last();
   await card.locator('.card-body').click();
   await page.keyboard.type('This is a long note with plenty of words that should simply wrap onto multiple lines instead of stretching the card wider and wider.');
   await page.keyboard.press('Escape');

@@ -7,7 +7,7 @@
 //  lifts go to window, where every drag in the app listens.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { drag, addCardAt, worldScale, nodePos } from './helpers.js';
+import { drag, addCardAt, worldScale, nodePos, installErrorGuard } from './helpers.js';
 
 const touch = (page, type, id, x, y) => page.evaluate(([type, id, x, y]) => {
   const target = type === 'pointerdown' ? document.elementFromPoint(x, y) : window;
@@ -21,13 +21,7 @@ const touch = (page, type, id, x, y) => page.evaluate(([type, id, x, y]) => {
 
 const worldTransform = (page) => page.evaluate(() => document.getElementById('world').style.transform);
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 // ── One finger on empty canvas pans; it never draws the marquee, never
 //    zooms, and a motionless tap deselects (the mouse's box-select roles). ──

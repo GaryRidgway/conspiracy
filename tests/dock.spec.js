@@ -9,7 +9,7 @@
 //  Dock state is per-device view preference (rides the viewport key).
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { drag, addCardAt, nodePos } from './helpers.js';
+import { drag, addCardAt, nodePos, installErrorGuard } from './helpers.js';
 
 // default frame: 640×400 at the view centre (≈ screen (320,160)–(960,560))
 async function addFrame(page) {
@@ -26,13 +26,7 @@ const parentWorld = (loc) => loc.evaluate((el) => el.parentElement.id);
 const mainTransform = (page) => page.evaluate(() => document.getElementById('world').style.transform);
 const dockTransform = (page) => page.evaluate(() => document.getElementById('dock-world').style.transform);
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 test('docking a frame moves its contents into the panel; undocking returns them', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);

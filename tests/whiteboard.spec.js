@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { drag, worldScale } from './helpers.js';
+import { drag, worldScale, installErrorGuard } from './helpers.js';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
@@ -39,10 +39,14 @@ async function connectionMidpoint(page) {
 // Create a card via the tool palette (it appears at the view centre, title
 // already in edit mode), then drag it so its centre sits at screen (x, y).
 async function makeCardAt(page, x, y, { title, body } = {}) {
-  const before = await page.locator('.node.card').count();
+  // pin by data-id, never .last(): dock members render after #world in
+  // document order, so .last() can grab a panel node, not the new card
+  const ids = () => page.evaluate(() => [...document.querySelectorAll('.node.card')].map((e) => e.dataset.id));
+  const before = await ids();
   await page.click('#addCard');
-  await expect(page.locator('.node.card')).toHaveCount(before + 1);
-  const node = page.locator('.node.card').last();
+  await expect(page.locator('.node.card')).toHaveCount(before.length + 1);
+  const id = (await ids()).find((i) => !before.includes(i));
+  const node = page.locator(`.node.card[data-id="${id}"]`);
   if (title != null) await page.keyboard.type(title);
   if (body != null) { await page.keyboard.press('Enter'); await page.keyboard.type(body); }
   await page.keyboard.press('Escape');               // leave title edit mode
@@ -55,16 +59,7 @@ async function makeCardAt(page, x, y, { title, body } = {}) {
   return node;
 }
 
-// ── fixture: fresh isolated context per test + error capture ──
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => {
-  expect(errors, 'no uncaught page errors').toEqual([]);
-});
+installErrorGuard(test);
 
 // ════════════════════════════════════════════════════════
 test('boots with an empty board and a toolbar', { tag: '@chrome' }, async ({ page }) => {

@@ -4,6 +4,20 @@
 //  by only a single spec stay local to that file — this is for things that
 //  must change together, not a dumping ground.
 // ════════════════════════════════════════════════════════════════════════
+import { expect } from '@playwright/test';
+
+// Every spec fails on the first uncaught page error. Registered from each
+// spec's top level (installErrorGuard(test)) so the beforeEach — fresh sink
+// + goto('/') — and afterEach live here, not copied verbatim into every file.
+export function installErrorGuard(test) {
+  const errors = [];
+  test.beforeEach(async ({ page }) => {
+    errors.length = 0;
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto('/');
+  });
+  test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+}
 
 export async function drag(page, from, to) {
   await page.mouse.move(from.x, from.y);

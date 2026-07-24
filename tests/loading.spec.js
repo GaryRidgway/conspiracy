@@ -9,6 +9,7 @@
 //  reloads the page to re-evaluate from the persisted viewport.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { installErrorGuard } from './helpers.js';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
@@ -36,13 +37,7 @@ async function panBy(page, dx, dy) {
 const frameSrc = (page) =>
   page.locator('.node.iframe-node iframe').evaluate((f) => f.getAttribute('src'));
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 test('visible frame loads immediately; a far frame stays an unloaded placeholder', { tag: '@frames' }, async ({ page }) => {
   await addFrame(page, EMBED_URL);
@@ -96,12 +91,14 @@ test('near-ring frame prefetches in idle time while still off screen', { tag: '@
 //  that needs the whole board (Tab, fit, search) flushes synchronously.
 // ════════════════════════════════════════════════════════════════════════
 
-// create a card via the palette and return its data-id
+// create a card via the palette and return its data-id (diff ids, never
+// .last(): dock members render after #world, so .last() can miss the new one)
 async function addCard(page) {
+  const ids = () => page.evaluate(() => [...document.querySelectorAll('.node.card')].map((e) => e.dataset.id));
+  const before = await ids();
   await page.click('#addCard');
   await page.keyboard.press('Escape');
-  const node = page.locator('.node.card').last();
-  return node.getAttribute('data-id');
+  return (await ids()).find((i) => !before.includes(i));
 }
 
 // inject a card far outside the viewport straight into the stored board,

@@ -7,7 +7,7 @@
 //  back onto the canvas at its original spot.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { drag, addCardAt } from './helpers.js';
+import { drag, addCardAt, installErrorGuard } from './helpers.js';
 
 const within = (b, w, h) => b && b.x + b.width > 0 && b.y + b.height > 0 && b.x < w && b.y < h;
 
@@ -34,13 +34,7 @@ async function seedBoard(page, mutate) {
   await page.reload();
 }
 
-let errors;
-test.beforeEach(async ({ page }) => {
-  errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto('/');
-});
-test.afterEach(() => expect(errors, 'no uncaught page errors').toEqual([]));
+installErrorGuard(test);
 
 test('pin a button: it leaves the canvas, the chip navigates, and it all survives reload', { tag: '@buttons' }, async ({ page }) => {
   // a target card, and a button linked to it
