@@ -584,3 +584,39 @@ Comments explain *why* (constraints, rejected alternatives), section banners
 deps — additions must justify themselves against "one file, view-source
 debuggable". Icons are self-hosted SVGs applied via CSS masks
 (`-webkit-` longhands, not the shorthand).
+
+## Deferred optimizations (decisions, not backlog noise)
+
+Each was investigated during the code audit and parked with a specific
+revisit trigger — recorded here so they aren't re-litigated. The full audit
+trail (including the checklist that closed out every acted-on item) lived in
+`AUDIT.md`; it was removed once complete and survives in git history.
+
+- **Per-keystroke whole-board `JSON.stringify` (undo snapshots) — declined.**
+  Every coalesced edit runs `recordUndo` → `contentSnapshot()`, which
+  stringifies all cards/iframes/connections (several MB on a board with
+  pasted images). Two deferral attempts both failed: snapshotting once per
+  burst loses a genuine two-step undo boundary when a burst is interrupted
+  (nudge A, then drag B before the 600ms timer), and `setTimeout(0)`-deferred
+  bookkeeping races (fuzz-failed on the 9th of 10 runs) because `commit()` is
+  a *post-hoc* chokepoint — sites mutate `board` first, then notify, so the
+  "state just before edit N+1" exists only at commit N and `contentSnapshot()`
+  only ever reads the live board. Accurate undo boundaries therefore *require*
+  synchronous work at every commit; any deferral merges boundaries.
+  **The one door still open:** make the snapshot cheaper, not later — a
+  per-record `Map<id, json>` cache with dirty hints threaded through
+  `commit(opts)` (re-stringify one card, concatenate cached strings for the
+  rest). Same risk class as the item-7/8 runtime caches: a stale entry is
+  silent undo-history corruption that passes tests, so every
+  wholesale-board-replacement path (undo apply, merge, pull, import, board
+  switch) needs correct invalidation. Build only if typing on a real
+  image-heavy board demonstrably janks, and only with the same fuzz-loop
+  verification that caught the second attempt.
+- **`typedConfirm` factory (clear-board vs delete-board word gates) — not
+  done.** At n=2 the ~15 lines each of word-gate logic stay inline; revisit
+  only if a third typed confirmation appears.
+- **`fitTransform(r, g, pad, maxZoom)` — not done.** Fit-and-center math
+  exists in ~4 algebraic variants (`dockFitRegion`, `frameNode` ×2,
+  `fitToContent`) with deliberate pad/cap differences; they're stable and
+  behavior-tested. Consolidate into one pure helper only if touching that
+  area anyway.
