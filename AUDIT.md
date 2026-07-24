@@ -384,7 +384,7 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   (`addPorts`, 987-1010) reads `getBoundingClientRect` on the same events —
   early-return when `el.classList.contains('dragging')`.
 
-### 8. [ ] Endpoint→connections index for `redrawConnectionsFor`
+### 8. [x] Endpoint→connections index for `redrawConnectionsFor` — done
 - **Where:** `app.js:2938-2942`.
 - **What:** linear scan of ALL connections, called per drag-move per mover,
   per docked button in `layoutAttachments` (1516, 1548), per hydrated node
@@ -395,6 +395,36 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
 - **Fix:** maintain a `Map` from node id → connection ids, updated on
   connection create/delete. O(all) → O(degree). No data-model change —
   runtime index only, rebuilt on board load/merge.
+- **Landed:** `connsByNode` (node id → Set of connection ids) lives beside
+  `connEls` and is keyed to the ENTRY lifecycle, not to create/delete call
+  sites — that choice fell out of mapping every `board.connections`
+  mutation path first: wholesale rewrites (undo/redo, board switch, pull,
+  merge apply, import) all funnel through `reconcileToBoard`/`renderAll`,
+  which call `renderConnection(id)` for every id and remove dead entries;
+  incremental paths (create, duplicate/paste `remapConnections`, delete,
+  delete-node cascade, dangling-endpoint self-heal) each touch exactly one
+  of those two points too. So: `renderConnection` (re)indexes whenever the
+  entry's recorded `from`/`to` differ from the data — which also keeps the
+  index true when a merge-review flip rewrites an existing record's
+  endpoints in place — and a new shared `removeConnEntry(id)` (DOM entry +
+  index rows in one teardown) replaced the three copy-pasted removal
+  triples. `doClearBoard` clears the map wholesale. The dangling self-heal
+  now also drops a stale entry instead of leaving it orphaned in `connEls`.
+  Second half: `drawConnection` caches the gradient stops per entry under a
+  `from|to` hex key — the key derives from the LIVE colors each draw, so a
+  recolor invalidates it by construction; only the 7 stop writes + hue math
+  are skipped when unchanged. Gradient x1/y1/x2/y2 still update every draw
+  (they're world-coordinate endpoints, not colors).
+- **Tested:** two new cases. `tests/whiteboard.spec.js` "a connection
+  restored by undo still re-routes when its node moves" — delete a
+  connection, undo, drag an endpoint, assert the path changes; verified
+  fail-then-pass against the naive version (index maintained only in
+  `createConnection`): the undo-restored arrow froze mid-board while every
+  pre-existing test still passed. `tests/usability.spec.js` "recoloring a
+  node updates an existing connection's gradient" — recolor AFTER the
+  connection exists (the existing gradient test colors first, so it can't
+  catch a stale cache) and assert both stop ends + arrowhead re-tint.
+  Full suite run twice, 202/202 both times.
 
 ### 13. [ ] Connections are keyboard-unreachable once created
 - **What:** `C`-mode creates arrows by keyboard, but `selectConn` is only

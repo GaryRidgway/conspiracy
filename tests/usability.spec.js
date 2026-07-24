@@ -554,6 +554,37 @@ test('a connection fades between its two nodes\' colors', { tag: '@connections' 
   await expect(conn.locator('marker path')).toHaveAttribute('fill', '#6BA6FF');  // arrow = target
 });
 
+// Regression: drawConnection caches the gradient's stop colors (they can only
+// change when an endpoint's color does, never per drag-frame). Recoloring a
+// node AFTER the connection exists must invalidate that cache — the test
+// above colors both nodes first, so it would never catch the cache staying
+// stale on the live gradient.
+test('recoloring a node updates an existing connection\'s gradient', { tag: '@connections' }, async ({ page }) => {
+  const aid = await (await addCardAt(page, 300, 300)).getAttribute('data-id');
+  const bid = await (await addCardAt(page, 760, 320)).getAttribute('data-id');
+  const A = page.locator(`.node.card[data-id="${aid}"]`);
+  const B = page.locator(`.node.card[data-id="${bid}"]`);
+  await A.hover();
+  const port = await A.locator('.port.right').boundingBox();
+  const bb = await B.boundingBox();
+  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 },
+                   { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 });
+  const conn = page.locator('#connections g.conn');
+  await expect(conn).toHaveCount(1);
+  const stops = conn.locator('linearGradient stop');
+  const neutral = await stops.first().getAttribute('stop-color');   // both ends uncolored
+
+  await A.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Red"]').click();
+  await expect(stops.first()).toHaveAttribute('stop-color', '#F87171');
+  expect(neutral).not.toBe('#F87171');
+
+  await B.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch[title="Blue"]').click();
+  await expect(stops.last()).toHaveAttribute('stop-color', '#6BA6FF');
+  await expect(conn.locator('marker path')).toHaveAttribute('fill', '#6BA6FF');   // arrowhead re-tints too
+});
+
 // Connect two cards and return the exact screen point of the curve's middle
 // (the label anchor / dblclick target).
 async function connectTwoCards(page) {

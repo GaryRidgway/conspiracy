@@ -799,6 +799,12 @@
   // ════════════════════════════════════════════════════════
   const nodeEls = new Map();  // id → element
   const connEls = new Map();  // id → { g, line, hit }
+  // node id → Set of connection ids touching it. redrawConnectionsFor runs per
+  // mover per drag-frame (and per keystroke via saveCardBody), so it must cost
+  // O(that node's arrows), not a scan of every connection on the board.
+  // Runtime-only — maintained through renderConnection/removeConnEntry, which
+  // every path that adds, rewrites, or removes a connection goes through.
+  const connsByNode = new Map();
 
   function getNode(id) {
     if (board.cards[id])   return { type: 'card',   data: board.cards[id] };
@@ -2918,11 +2924,38 @@
     return { x: x / m, y: y / m };
   }
 
+  function indexConn(id, from, to) {
+    for (const nid of [from, to]) {
+      let s = connsByNode.get(nid);
+      if (!s) connsByNode.set(nid, (s = new Set()));
+      s.add(id);
+    }
+  }
+  function unindexConn(id, from, to) {
+    for (const nid of [from, to]) {
+      const s = connsByNode.get(nid);
+      if (s) { s.delete(id); if (!s.size) connsByNode.delete(nid); }
+    }
+  }
+  // Single teardown for a connection's DOM entry + its index rows — every
+  // removal path must come through here or the index goes stale.
+  function removeConnEntry(id) {
+    const entry = connEls.get(id);
+    if (!entry) return;
+    entry.g.remove(); entry.labelEl.remove();
+    connEls.delete(id);
+    unindexConn(id, entry.from, entry.to);
+  }
+
   function renderConnection(id) {
     const data = board.connections[id];
     if (!data) return;
     // drop dangling connections whose endpoints no longer exist
-    if (!getNode(data.from) || !getNode(data.to)) { delete board.connections[id]; return; }
+    if (!getNode(data.from) || !getNode(data.to)) {
+      delete board.connections[id];
+      removeConnEntry(id);
+      return;
+    }
 
     let entry = connEls.get(id);
     if (!entry) {
@@ -2994,6 +3027,14 @@
       entry = { g, line, hit, grad, stops, mpath, labelEl };
       connEls.set(id, entry);
     }
+    // (Re)index by CURRENT endpoints — a merge-review flip can rewrite an
+    // existing record's from/to in place, and reconcileToBoard re-renders
+    // every id, so checking here keeps the index true through that path too.
+    if (entry.from !== data.from || entry.to !== data.to) {
+      if (entry.from) unindexConn(id, entry.from, entry.to);
+      indexConn(id, data.from, data.to);
+      entry.from = data.from; entry.to = data.to;
+    }
     drawConnection(id);
   }
 
@@ -3030,9 +3071,16 @@
     const from = nodeColorHex(data.from), to = nodeColorHex(data.to);
     entry.grad.setAttribute('x1', p.a.x); entry.grad.setAttribute('y1', p.a.y);
     entry.grad.setAttribute('x2', p.b.x); entry.grad.setAttribute('y2', p.b.y);
-    const colors = spectrumStops(from, to, CONN_STOPS);
-    entry.stops.forEach((s, i) => s.setAttribute('stop-color', colors[i]));
-    entry.mpath.setAttribute('fill', to);
+    // The stop colors depend only on the endpoint hexes — during a drag those
+    // can't change, so skip the 7 stop writes + hue math on every frame. The
+    // key derives from the LIVE colors, so a recolor invalidates it by itself.
+    if (entry.gradKey !== from + '|' + to) {
+      entry.gradKey = from + '|' + to;
+      entry.gradColors = spectrumStops(from, to, CONN_STOPS);
+      entry.stops.forEach((s, i) => s.setAttribute('stop-color', entry.gradColors[i]));
+      entry.mpath.setAttribute('fill', to);
+    }
+    const colors = entry.gradColors;
 
     // Label pill sits at the curve's midpoint (cubic bezier at t=0.5) and is
     // tinted with the gradient's middle color so it reads as part of the line.
@@ -3050,9 +3098,8 @@
   }
 
   function redrawConnectionsFor(nodeId) {
-    for (const [cid, c] of Object.entries(board.connections)) {
-      if (c.from === nodeId || c.to === nodeId) drawConnection(cid);
-    }
+    const set = connsByNode.get(nodeId);
+    if (set) for (const cid of set) drawConnection(cid);
   }
 
   function createConnection(from, to) {
@@ -3068,8 +3115,7 @@
 
   function deleteConnection(id) {
     delete board.connections[id];
-    const entry = connEls.get(id);
-    if (entry) { entry.g.remove(); entry.labelEl.remove(); connEls.delete(id); }
+    removeConnEntry(id);
     if (selectedConn === id) selectedConn = null;
     commit();
   }
@@ -3150,8 +3196,7 @@
     for (const [cid, c] of Object.entries(board.connections)) {
       if (c.from === id || c.to === id) {
         delete board.connections[cid];
-        const ce = connEls.get(cid);
-        if (ce) { ce.g.remove(); ce.labelEl.remove(); connEls.delete(cid); }
+        removeConnEntry(cid);
       }
     }
     selectedNodes.delete(id);
@@ -3554,11 +3599,7 @@
       }
     }
     for (const id of [...connEls.keys()]) {
-      if (!board.connections[id]) {
-        const entry = connEls.get(id);
-        entry.g.remove(); entry.labelEl.remove();
-        connEls.delete(id);
-      }
+      if (!board.connections[id]) removeConnEntry(id);
     }
     // existing nodes update in place (undo/redo touches few); only NEW
     // off-screen nodes defer — e.g. switching to a big board hydrates lazily
@@ -4609,6 +4650,7 @@
     board.cards = {}; board.iframes = {}; board.connections = {};
     nodeEls.forEach((el) => el.remove()); nodeEls.clear();
     connEls.forEach((c) => { c.g.remove(); c.labelEl.remove(); }); connEls.clear();
+    connsByNode.clear();
     clearSelection(); interactiveId = null;
     commit();
   }

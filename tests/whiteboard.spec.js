@@ -394,6 +394,36 @@ test('select a connection and delete it with the Delete key', { tag: '@connectio
   await expect(page.locator('#connections g.conn')).toHaveCount(0);
 });
 
+// Regression: redrawConnectionsFor consults a node→connections index instead
+// of scanning every connection per drag-frame. Undo rebuilds board.connections
+// wholesale — if the restored connection weren't re-indexed, its arrow would
+// freeze in place the next time an endpoint moved (drag redraws come only
+// through the index) while every static assertion still passed.
+test('a connection restored by undo still re-routes when its node moves', { tag: ['@connections', '@undo'] }, async ({ page }) => {
+  await makeCardAt(page, 250, 300, { title: 'A' });
+  await makeCardAt(page, 700, 320, { title: 'B' });
+  const a = page.locator('.node.card').nth(0);
+  const b = page.locator('.node.card').nth(1);
+  await a.hover();
+  const port = await a.locator('.port.right').boundingBox();
+  await drag(page, center(port), center(await b.boundingBox()));
+  await expect(page.locator('#connections g.conn')).toHaveCount(1);
+
+  const mid = await connectionMidpoint(page);
+  await page.mouse.click(mid.x, mid.y);
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#connections g.conn')).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('#connections g.conn')).toHaveCount(1);
+
+  const before = await page.locator('#connections .line').getAttribute('d');
+  const hb = await b.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + hb.width * 0.55, y: hb.y + hb.height / 2 },
+                   { x: hb.x + hb.width * 0.55, y: hb.y + hb.height / 2 + 200 });
+  const after = await page.locator('#connections .line').getAttribute('d');
+  expect(after).not.toBe(before);
+});
+
 test('deleting a node removes its connections', { tag: '@connections' }, async ({ page }) => {
   await makeCardAt(page, 250, 300, { title: 'A' });
   await makeCardAt(page, 700, 320, { title: 'B' });
