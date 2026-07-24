@@ -812,7 +812,7 @@
     return null;
   }
 
-  // current geometry in world units (reads live size from the DOM)
+  // current geometry in world units (size from the DOM, or the drag cache mid-drag)
   // While a node drag is live, sizes are frozen (only positions change), so
   // startNodeDrag installs this memo: without it, every connection redraw's
   // offsetWidth read lands between the drag's own style writes and forces a
@@ -1029,9 +1029,9 @@
         for (const m of movers) if (m.el.parentElement !== w) w.appendChild(m.el);
       }
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
-      // ALL position writes first, THEN the redraws: interleaving them made
-      // every mover's connection redraw (an offsetWidth read via nodeGeom,
-      // now served by dragSizeCache anyway) flush layout once per mover
+      // Positions first, then redraws, then the one measuring pass below
+      // (layoutAttachmentsFor). Redraws read only cached sizes (dragSizeCache)
+      // and record x/y, so they force no layout — a frame measures once.
       for (const m of movers) {
         m.d.x = m.ox + dx; m.d.y = m.oy + dy;
         m.el.style.left = m.d.x + 'px';
@@ -4568,7 +4568,7 @@
       const idx = selIndex();
       return idx == null ? null : items()[idx];
     }
-    return { setSel, selIndex, move, selected };
+    return { setSel, move, selected };
   }
 
   // ── Button-link modal: paste a URL, or pick a board item to fly to ──

@@ -40,5 +40,5 @@ from real data-loss bugs and are invisible from any single code site.
 ## Style
 
 Comments explain *why*, not what. Match the existing section-banner layout
-in app.js and the existing test helpers (`addCardAt`, `connectTwoCards`,
-`drag`) before writing new ones.
+in app.js and the existing test helpers (`addCardAt`, `drag`) before
+writing new ones.

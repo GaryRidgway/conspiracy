@@ -2,7 +2,7 @@
 
 An infinite-canvas whiteboard: vanilla JS, no build step, no runtime
 dependencies. Three files are the whole app — `index.html` (static shell,
-modals, toolbars), `styles.css`, and `app.js` (~6,000 lines, one IIFE, all
+modals, toolbars), `styles.css`, and `app.js` (~6,600 lines, one IIFE, all
 logic). `config.js` holds the Google OAuth client id + Picker API key
 (origin-restricted, safe to commit — see SETUP-google-drive.md).
 
