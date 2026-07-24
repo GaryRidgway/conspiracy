@@ -440,8 +440,8 @@ silently overwrote newer synced content with no conflict raised for it.
   (`activeElement` is `<body>`): on the canvas, Tab cycles nodes in reading
   order, arrows nudge (Shift=1px), Enter opens, C aims a connection
   (Tab/arrows retarget, Enter creates), E cycles the selected node's
-  connections (Enter labels the highlighted one, Escape steps back to the
-  node), M / Shift+F10 / ContextMenu open that node's (or connection's)
+  connections (Shift+E backward; Enter labels the highlighted one, Escape
+  steps back to the node), M / Shift+F10 / ContextMenu open that node's (or connection's)
   context menu, Delete removes. In the chrome, all keys keep native meaning
   (Tab traverses controls). F6 hops canvas → toolbar → palette → zoom bar;
   Escape steps back toward the canvas. Modals trap Tab (capture-phase

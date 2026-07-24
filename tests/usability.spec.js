@@ -2031,11 +2031,11 @@ test('keyboard: Escape cancels an aimed connection without creating one', { tag:
 // existed but nothing keyboard-driven could set selectedConn. E now steps
 // through the selected node's connections, Enter labels the highlighted one,
 // Escape returns to the node.
-test('keyboard: E cycles a node\'s connections, Enter labels one, Escape returns to the node', { tag: ['@a11y', '@connections'] }, async ({ page }) => {
+test('keyboard: E cycles a node\'s connections both ways, Enter labels one, Escape returns to the node', { tag: ['@a11y', '@connections'] }, async ({ page }) => {
   const a = await addCardAt(page, 300, 300);
   const b = await addCardAt(page, 760, 300);
   const c = await addCardAt(page, 520, 560);
-  const aid = await a.getAttribute('data-id');
+  const d = await addCardAt(page, 900, 560);
   const connect = async (fromEl, side, toEl) => {
     await fromEl.hover();
     const p = await fromEl.locator(`.port.${side}`).boundingBox();
@@ -2045,27 +2045,39 @@ test('keyboard: E cycles a node\'s connections, Enter labels one, Escape returns
   };
   await connect(a, 'right', b);            // A → B
   await connect(a, 'bottom', c);           // A → C
-  await expect(page.locator('#connections g.conn')).toHaveCount(2);
-
-  await page.mouse.click(60, 180);         // focus the canvas
-  await page.keyboard.press('Tab');        // A is the top-left node → selected first
-  await expect(a).toHaveClass(/selected/);
+  await connect(a, 'right', d);            // A → D  (three arrows: direction is observable)
+  await expect(page.locator('#connections g.conn')).toHaveCount(3);
 
   const selConn = () => page.locator('#connections g.conn.selected');
+  const selId = () => selConn().getAttribute('data-id');
+  // select A via its header — clicking the body would focus the contenteditable
+  // (onCanvas would go false and E would type instead of cycling)
+  await a.locator('.card-header').click();
+  await expect(a).toHaveClass(/selected/);
+
+  // forward E visits all three in order, then wraps
   await page.keyboard.press('e');
-  await expect(selConn()).toHaveCount(1);
-  const first = await selConn().getAttribute('data-id');
+  const seq = [await selId()];
+  await page.keyboard.press('e'); seq.push(await selId());
+  await page.keyboard.press('e'); seq.push(await selId());
+  expect(new Set(seq).size).toBe(3);        // three distinct arrows
   await page.keyboard.press('e');
-  await expect(selConn()).toHaveCount(1);
-  const second = await selConn().getAttribute('data-id');
-  expect(second).not.toBe(first);          // stepped to the node's OTHER connection
-  await page.keyboard.press('e');
-  expect(await selConn().getAttribute('data-id')).toBe(first);   // wraps
+  expect(await selId()).toBe(seq[0]);       // wraps to the first
+
+  // Shift+E from seq[0] steps BACKWARD to seq[2] (forward would give seq[1])
+  await page.keyboard.press('Shift+e');
+  expect(await selId()).toBe(seq[2]);
+  await page.keyboard.press('Shift+e');
+  expect(await selId()).toBe(seq[1]);
 
   await page.keyboard.press('Escape');     // back to the node, not empty
   await expect(a).toHaveClass(/selected/);
   await expect(selConn()).toHaveCount(0);
+  // Shift+E from the node lands on the LAST arrow directly (backward fresh start)
+  await page.keyboard.press('Shift+e');
+  expect(await selId()).toBe(seq[2]);
 
+  await page.keyboard.press('Escape');
   await page.keyboard.press('e');          // reselect a connection
   await page.keyboard.press('Enter');      // edit its label
   await page.keyboard.type('allied with');

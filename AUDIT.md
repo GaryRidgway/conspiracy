@@ -473,8 +473,10 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   call) — targeted, and it stays quiet on a dense board. Key is **E** (edge),
   free on the canvas and sitting naturally beside C (connect).
 - **Landed:** with one node selected, `E` selects its first connection and
-  each further `E` steps to the next (wrapping); `cycleNodeConnections`
-  reads the node's arrows straight from the item-8 `connsByNode` index
+  each further `E` steps to the next (wrapping), `Shift+E` steps backward
+  (mirroring Tab/Shift+Tab; from the node it lands on the last arrow
+  directly); `cycleNodeConnections(dir)` reads the node's arrows straight
+  from the item-8 `connsByNode` index
   (O(degree), no board scan) and skips any currently-hidden spanning arrow.
   `Enter` on a selected connection opens its label editor (`beginConnLabelEdit`,
   the same entry point the pointer dblclick uses); `Delete` already worked.
@@ -485,11 +487,14 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   Each step `announce()`s the target node + label + position for screen
   readers. Help panel gained "Select an arrow → E" and the label row now
   notes `Enter`.
-- **Tested:** `usability.spec.js` "E cycles a node's connections, Enter
-  labels one, Escape returns to the node" — builds a 2-connection hub,
-  asserts E steps to the other arrow and wraps, Escape lands back on the
-  node, and Enter+type labels the highlighted arrow. Fail-then-pass verified
-  by disabling the E branch. Full suite run twice.
+- **Tested:** `usability.spec.js` "E cycles a node's connections both ways,
+  Enter labels one, Escape returns to the node" — builds a 3-connection hub
+  (three arrows make direction observable), asserts forward E visits all
+  three and wraps, Shift+E steps back through them and reaches the last arrow
+  directly from the node, Escape lands back on the node, and Enter+type
+  labels the highlighted arrow. Fail-then-pass verified by disabling the E
+  branch and, separately, by forcing the direction forward. Full suite run
+  twice.
 
 ### 14. [x] Keyboard path to context-menu actions — done
 - **What:** color coding, Pin to toolbar, Dock frame, button-link editing,

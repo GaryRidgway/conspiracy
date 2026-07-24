@@ -912,13 +912,14 @@
     markConn(id, true);
   }
   // Keyboard reach for connections (ports/arrows are otherwise pointer-only):
-  // with a node selected, E steps through just that node's connections, Escape
-  // returns to the node, Enter edits the highlighted arrow's label. The anchor
-  // node is remembered here rather than kept in selectedNodes (selectConn
-  // clears those) — and it's re-derived from the live connection if it ever
-  // goes stale, so no separate invalidation is needed.
+  // with a node selected, E steps through just that node's connections (Shift+E
+  // steps backward, mirroring Tab/Shift+Tab), Escape returns to the node, Enter
+  // edits the highlighted arrow's label. The anchor node is remembered here
+  // rather than kept in selectedNodes (selectConn clears those) — and it's
+  // re-derived from the live connection if it ever goes stale, so no separate
+  // invalidation is needed.
   let connCycleFrom = null;
-  function cycleNodeConnections() {
+  function cycleNodeConnections(dir) {
     if (!selectedConn) {
       if (selectedNodes.size !== 1) return;    // need exactly one node to start
       connCycleFrom = [...selectedNodes][0];
@@ -936,7 +937,11 @@
     }).sort();
     if (!ids.length) { announce('No connections on this item'); return; }
     const cur = selectedConn ? ids.indexOf(selectedConn) : -1;
-    const next = ids[(cur + 1) % ids.length];
+    // fresh start (nothing highlighted yet): forward lands on the first arrow,
+    // backward on the last — so Shift+E from the node reaches the end directly
+    const next = cur === -1
+      ? ids[dir < 0 ? ids.length - 1 : 0]
+      : ids[(cur + dir + ids.length) % ids.length];
     selectConn(next);
     const c = board.connections[next];
     const other = c.from === connCycleFrom ? c.to : c.from;
@@ -5145,11 +5150,12 @@
       return;
     }
     // E steps through the selected node's connections (or the next one once a
-    // connection is already highlighted) — the keyboard path to selecting an arrow
+    // connection is already highlighted); Shift+E steps backward — the keyboard
+    // path to selecting an arrow
     if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey &&
         onCanvas && (selectedConn || selectedNodes.size === 1)) {
       e.preventDefault();
-      cycleNodeConnections();
+      cycleNodeConnections(e.shiftKey ? -1 : 1);
       return;
     }
     // Shift+F10 / the Menu key / bare M open the context menu for the current
