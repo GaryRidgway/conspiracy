@@ -462,13 +462,34 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   catch a stale cache) and assert both stop ends + arrowhead re-tint.
   Full suite run twice, 202/202 both times.
 
-### 13. [ ] Connections are keyboard-unreachable once created
+### 13. [x] Connections are keyboard-unreachable once created — done
 - **What:** `C`-mode creates arrows by keyboard, but `selectConn` is only
   called from pointer paths (865-869); Tab cycles nodes only. The Delete
   handler already supports `selectedConn` (4829-4831) — keyboard just can't
   set it. Label editing is dblclick-only (2857).
 - **Direction:** include connections in the Tab cycle, or a "next
   connection of selected node" key; Enter to edit label.
+- **Decision:** per-node cycle key rather than folding into Tab (user's
+  call) — targeted, and it stays quiet on a dense board. Key is **E** (edge),
+  free on the canvas and sitting naturally beside C (connect).
+- **Landed:** with one node selected, `E` selects its first connection and
+  each further `E` steps to the next (wrapping); `cycleNodeConnections`
+  reads the node's arrows straight from the item-8 `connsByNode` index
+  (O(degree), no board scan) and skips any currently-hidden spanning arrow.
+  `Enter` on a selected connection opens its label editor (`beginConnLabelEdit`,
+  the same entry point the pointer dblclick uses); `Delete` already worked.
+  `Escape` steps back to the node the cycle began from rather than clearing
+  outright. The anchor node is held in `connCycleFrom` (not in
+  `selectedNodes`, which `selectConn` clears) and re-derived from the live
+  connection if it ever goes stale — so no separate invalidation is needed.
+  Each step `announce()`s the target node + label + position for screen
+  readers. Help panel gained "Select an arrow → E" and the label row now
+  notes `Enter`.
+- **Tested:** `usability.spec.js` "E cycles a node's connections, Enter
+  labels one, Escape returns to the node" — builds a 2-connection hub,
+  asserts E steps to the other arrow and wraps, Escape lands back on the
+  node, and Enter+type labels the highlighted arrow. Fail-then-pass verified
+  by disabling the E branch. Full suite run twice.
 
 ### 14. [ ] Keyboard path to context-menu actions
 - **What:** color coding, Pin to toolbar, Dock frame, button-link editing,

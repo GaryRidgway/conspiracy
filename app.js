@@ -911,6 +911,38 @@
     selectedConn = id;
     markConn(id, true);
   }
+  // Keyboard reach for connections (ports/arrows are otherwise pointer-only):
+  // with a node selected, E steps through just that node's connections, Escape
+  // returns to the node, Enter edits the highlighted arrow's label. The anchor
+  // node is remembered here rather than kept in selectedNodes (selectConn
+  // clears those) — and it's re-derived from the live connection if it ever
+  // goes stale, so no separate invalidation is needed.
+  let connCycleFrom = null;
+  function cycleNodeConnections() {
+    if (!selectedConn) {
+      if (selectedNodes.size !== 1) return;    // need exactly one node to start
+      connCycleFrom = [...selectedNodes][0];
+    } else if (!connCycleFrom || !getNode(connCycleFrom)) {
+      const c = board.connections[selectedConn];   // mid-cycle but anchor lost
+      connCycleFrom = c ? c.from : null;
+    }
+    if (!connCycleFrom) return;
+    const set = connsByNode.get(connCycleFrom);
+    // only arrows actually on screen — a spanning arrow (one end in the dock)
+    // is hidden, so selecting it would give no visible feedback
+    const ids = (set ? [...set] : []).filter((cid) => {
+      const en = connEls.get(cid);
+      return en && en.g.style.display !== 'none';
+    }).sort();
+    if (!ids.length) { announce('No connections on this item'); return; }
+    const cur = selectedConn ? ids.indexOf(selectedConn) : -1;
+    const next = ids[(cur + 1) % ids.length];
+    selectConn(next);
+    const c = board.connections[next];
+    const other = c.from === connCycleFrom ? c.to : c.from;
+    announce(`Connection to ${nodeTitle(other)}${c.label ? ', ' + c.label : ''}. `
+      + `${ids.indexOf(next) + 1} of ${ids.length}. Enter to label, Delete to remove.`);
+  }
   // pointerdown on a node: shift toggles; otherwise select just it — but keep
   // an existing multi-selection intact when pressing on an already-selected
   // node, so it can be dragged as a group.
@@ -5052,11 +5084,26 @@
       openSelectedNode([...selectedNodes][0]);
       return;
     }
+    // Enter on a keyboard-selected connection edits its label (the pointer
+    // path is a double-click on the line)
+    if (e.key === 'Enter' && onCanvas && selectedConn) {
+      e.preventDefault();
+      beginConnLabelEdit(selectedConn);
+      return;
+    }
     // C starts a keyboard connection from the selected node (ports are drag-only)
     if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey &&
         onCanvas && selectedNodes.size === 1) {
       e.preventDefault();
       startKbConnect([...selectedNodes][0]);
+      return;
+    }
+    // E steps through the selected node's connections (or the next one once a
+    // connection is already highlighted) — the keyboard path to selecting an arrow
+    if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey &&
+        onCanvas && (selectedConn || selectedNodes.size === 1)) {
+      e.preventDefault();
+      cycleNodeConnections();
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !editing && (selectedNodes.size || selectedConn)) {
@@ -5068,6 +5115,9 @@
       if (editing) ae.blur();
       else if (!onCanvas && ae.blur) ae.blur();   // step out of the chrome, back to the canvas
       else if (interactiveId) setInteractive(interactiveId, false);
+      // stepping out of a connection cycle lands back on the node it began
+      // from, not all the way to an empty selection
+      else if (selectedConn && connCycleFrom && getNode(connCycleFrom)) selectNode(connCycleFrom);
       else clearSelection();
     }
   });

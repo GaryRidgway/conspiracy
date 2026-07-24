@@ -2027,6 +2027,52 @@ test('keyboard: Escape cancels an aimed connection without creating one', { tag:
   await expect(page.locator('#connections .conn-temp')).toHaveCount(0);
 });
 
+// Connections were pointer-only to select once created: Delete and label-edit
+// existed but nothing keyboard-driven could set selectedConn. E now steps
+// through the selected node's connections, Enter labels the highlighted one,
+// Escape returns to the node.
+test('keyboard: E cycles a node\'s connections, Enter labels one, Escape returns to the node', { tag: ['@a11y', '@connections'] }, async ({ page }) => {
+  const a = await addCardAt(page, 300, 300);
+  const b = await addCardAt(page, 760, 300);
+  const c = await addCardAt(page, 520, 560);
+  const aid = await a.getAttribute('data-id');
+  const connect = async (fromEl, side, toEl) => {
+    await fromEl.hover();
+    const p = await fromEl.locator(`.port.${side}`).boundingBox();
+    const t = await toEl.boundingBox();
+    await drag(page, { x: p.x + p.width / 2, y: p.y + p.height / 2 },
+                     { x: t.x + t.width / 2, y: t.y + t.height / 2 });
+  };
+  await connect(a, 'right', b);            // A → B
+  await connect(a, 'bottom', c);           // A → C
+  await expect(page.locator('#connections g.conn')).toHaveCount(2);
+
+  await page.mouse.click(60, 180);         // focus the canvas
+  await page.keyboard.press('Tab');        // A is the top-left node → selected first
+  await expect(a).toHaveClass(/selected/);
+
+  const selConn = () => page.locator('#connections g.conn.selected');
+  await page.keyboard.press('e');
+  await expect(selConn()).toHaveCount(1);
+  const first = await selConn().getAttribute('data-id');
+  await page.keyboard.press('e');
+  await expect(selConn()).toHaveCount(1);
+  const second = await selConn().getAttribute('data-id');
+  expect(second).not.toBe(first);          // stepped to the node's OTHER connection
+  await page.keyboard.press('e');
+  expect(await selConn().getAttribute('data-id')).toBe(first);   // wraps
+
+  await page.keyboard.press('Escape');     // back to the node, not empty
+  await expect(a).toHaveClass(/selected/);
+  await expect(selConn()).toHaveCount(0);
+
+  await page.keyboard.press('e');          // reselect a connection
+  await page.keyboard.press('Enter');      // edit its label
+  await page.keyboard.type('allied with');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.conn-label', { hasText: 'allied with' })).toHaveCount(1);
+});
+
 test('keyboard: the board menu list is arrow-navigable and Enter switches boards', { tag: ['@a11y', '@boards'] }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await page.click('#newBoardBtn');                    // now on "Board 2"
