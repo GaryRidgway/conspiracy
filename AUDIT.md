@@ -369,7 +369,7 @@ These either thread through render/commit/merge where the failure mode is
 a subtle stale-state bug that passes tests, or require designing new
 keyboard interaction against the `onCanvas`/`editing` key-handling rules.
 
-### 7. [ ] Node drag: batch layout writes/reads; cache mover sizes
+### 7. [x] Node drag: batch layout writes/reads; cache mover sizes — done
 - **Where:** `startNodeDrag` onMove, `app.js:932-957`; `nodeGeom` 788-793;
   `layoutAttachments` 1476-1549.
 - **What:** per mover per pointermove: `style.left/top` write →
@@ -383,6 +383,42 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
 - **Related cheap fix:** the dragged node's own port-proximity handler
   (`addPorts`, 987-1010) reads `getBoundingClientRect` on the same events —
   early-return when `el.classList.contains('dragging')`.
+- **Landed (three parts, all gated on the frozen-topology invariant of a
+  drag — membership only changes at the drop):**
+  1. `nodeGeom` gained a `dragSizeCache` (id → `{w,h}`), installed at drag
+     start and cleared at the top of `onUp` (before the drop docks/commits,
+     which legitimately resize). It's lazy: a miss falls through to a live
+     read (nodes can hydrate mid-drag) and memoizes. Only w/h are cached —
+     x/y always read live from the record, which the drag is what mutates.
+  2. `onMove` now writes ALL mover `left/top` first, THEN redraws — no
+     read wedged between writes to force a synchronous layout per mover.
+  3. `layoutAttachments`'s per-root body was extracted to `layoutRoot`, and
+     a scoped `layoutAttachmentsFor(ids)` re-lays only the dragged
+     assemblies (via the item-12 `dockRootButtons` map, still authoritative
+     mid-drag since topology is frozen) instead of scanning every card each
+     frame. A dragged docked button always routes its drag through its root
+     (button pointerdown, `app.js:1425`), so every moving assembly's root
+     is in `ids` — verified by swapping the scoped call back to the full
+     `layoutAttachments()` and getting byte-identical mid-drag button
+     positions (85.2/69.25 px either way).
+  Port fix landed too, but with a **correction**: a bare
+  `if (dragging) return` regressed fly-to. A handle lit while grabbing the
+  card (the grab point sits within `PORT_NEAR_PX` of a port) would freeze
+  lit for the whole drag, because the early-return also skipped the toggle
+  that normally clears it as the cursor pulls away. A visible port is a
+  laid-out child, so it inflated the node's `nodeVisualGeom` bounds and
+  shifted where a later fit/fly-to landed. Fix: clear `.near` on all the
+  node's ports before returning (cheap classList writes, still no rect read).
+- **Tested:** three new cases. `usability.spec.js` "a docked button tracks
+  its card mid-drag" asserts the button follows the card's own live delta
+  WHILE the pointer is held (an after-release check can't catch a broken
+  scoped path — the drop's full layout masks it); verified fail-then-pass
+  by no-op'ing `layoutAttachmentsFor`. "a port lit while grabbing a card
+  does not stay lit after the drag" grabs exactly where `addCardAt` does,
+  reproducing the stuck-port regression (fail-then-pass verified). The
+  pre-existing "fly-to glides to the same destination" test was the tripwire
+  that first caught the port regression and now guards it too. Full suite
+  run twice, 204/204 both times.
 
 ### 8. [x] Endpoint→connections index for `redrawConnectionsFor` — done
 - **Where:** `app.js:2938-2942`.

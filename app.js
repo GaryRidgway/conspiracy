@@ -813,10 +813,21 @@
   }
 
   // current geometry in world units (reads live size from the DOM)
+  // While a node drag is live, sizes are frozen (only positions change), so
+  // startNodeDrag installs this memo: without it, every connection redraw's
+  // offsetWidth read lands between the drag's own style writes and forces a
+  // synchronous layout per mover per frame. Lazy — a miss falls through to a
+  // live read (nodes can hydrate mid-drag) and caches it for the gesture.
+  let dragSizeCache = null;   // Map id → {w, h} for the drag's duration
   function nodeGeom(id) {
     const el = nodeEls.get(id);
     const n = getNode(id);
     if (!el || !n) return null;
+    if (dragSizeCache) {
+      let s = dragSizeCache.get(id);
+      if (!s) dragSizeCache.set(id, (s = { w: el.offsetWidth, h: el.offsetHeight }));
+      return { x: n.data.x, y: n.data.y, w: s.w, h: s.h };
+    }
     return { x: n.data.x, y: n.data.y, w: el.offsetWidth, h: el.offsetHeight };
   }
 
@@ -948,6 +959,8 @@
     let moved = false;
     let dragCtx = pointerCtx(e.clientX, e.clientY);
     movers.forEach((m) => m.el.classList.add('dragging'));
+    dragSizeCache = new Map();    // sizes are frozen for the gesture — see nodeGeom
+    const moverIds = movers.map((m) => m.nid);
 
     // a single dragged free button can dock: track the zone under it live.
     // Every other node's position is static for the gesture's duration, so
@@ -979,20 +992,27 @@
         for (const m of movers) if (m.el.parentElement !== w) w.appendChild(m.el);
       }
       const dx = Math.round(now.x - start.x), dy = Math.round(now.y - start.y);
+      // ALL position writes first, THEN the redraws: interleaving them made
+      // every mover's connection redraw (an offsetWidth read via nodeGeom,
+      // now served by dragSizeCache anyway) flush layout once per mover
       for (const m of movers) {
         m.d.x = m.ox + dx; m.d.y = m.oy + dy;
         m.el.style.left = m.d.x + 'px';
         m.el.style.top = m.d.y + 'px';
-        redrawConnectionsFor(m.nid);
       }
+      for (const m of movers) redrawConnectionsFor(m.nid);
       if (dx || dy) moved = true;
-      layoutAttachments();                         // docked buttons ride along live
+      // docked buttons ride along live — but only assemblies whose ROOT is
+      // being dragged can move (topology is frozen until the drop), so skip
+      // the full-board pass and re-derive just those
+      layoutAttachmentsFor(moverIds);
       // snap zones only make sense in the window the pointer is actually in
       if (snapButton) setSnapTarget(pctx === (inDock(snapButton) ? 'dock' : 'main') ? findSnapTarget(snapButton, snapCandidates) : null);
       scheduleFrameEval();
     };
     const onUp = (ev) => {
       if (ev.pointerId !== pid) return;
+      dragSizeCache = null;   // before the drop acts: docking/committing can resize
       movers.forEach((m) => m.el.classList.remove('dragging'));
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
@@ -1034,6 +1054,15 @@
     // grabbable on hover regardless) — all four lit on every hover reads as
     // permanent chrome on a busy board.
     el.addEventListener('pointermove', (e) => {
+      // mid-drag, skip the getBoundingClientRect (it would force a layout on
+      // the frame the drag's writes just dirtied). Clear any lit port first,
+      // though: a handle lit while grabbing the card would otherwise stay
+      // stuck on through the whole drag — and a visible port inflates the
+      // node's nodeVisualGeom bounds, throwing off a later fly-to.
+      if (el.classList.contains('dragging')) {
+        for (const p of ports) p.classList.remove('near');
+        return;
+      }
       const r = el.getBoundingClientRect();
       const mx = r.left + r.width / 2, my = r.top + r.height / 2;
       const at = { top: [mx, r.top], right: [r.right, my], bottom: [mx, r.bottom], left: [r.left, my] };
@@ -1530,66 +1559,84 @@
     for (const el of world.querySelectorAll('.frame-node.has-tab-buttons, .card.has-dock, .btn-node.has-chain')) {
       if (!byRoot.has(el.dataset.id)) el.classList.remove('has-tab-buttons', 'has-dock', 'has-chain');
     }
-    for (const [rid, bids] of byRoot) {
-      bids.sort((a, b) =>
-        ((board.cards[a].attachOrder || 0) - (board.cards[b].attachOrder || 0)) ||
-        (a < b ? -1 : 1));
-      const t = getNode(rid);
-      const tel = nodeEls.get(rid);
-      const kind = t.data.kind === 'frame' ? 'title'
-        : t.data.kind === 'button' ? 'chain' : 'bottom';
-      // keep the visual group-highlight fresh if a dock changed mid-selection
-      const rootSel = selectedNodes.has(rid);
-      for (const bid of bids) nodeEls.get(bid).classList.toggle('co-selected', rootSel);
-      if (kind === 'bottom') {
-        // full-width tray: equal tab segments sharing 1px borders
-        tel.classList.add('has-dock');
-        const width = (tel.offsetWidth + (bids.length - 1)) / bids.length;
-        bids.forEach((bid, i) => {
-          const d = board.cards[bid];
-          const bel = nodeEls.get(bid);
-          bel.style.width = width + 'px';
-          d.x = Math.round(t.data.x + i * (width - 1));
-          d.y = Math.round(t.data.y + tel.offsetHeight - 1);
-          bel.style.left = d.x + 'px';
-          bel.style.top = d.y + 'px';
-          setDockClasses(bel, kind, i === 0, i === bids.length - 1);
-          redrawConnectionsFor(bid);
-        });
+    for (const [rid, bids] of byRoot) layoutRoot(rid, bids);
+  }
+
+  // Re-derive one root's docked buttons. Split out of layoutAttachments so a
+  // node drag can re-lay only the assemblies whose root actually moved
+  // (layoutAttachmentsFor) instead of scanning every card on the board.
+  function layoutRoot(rid, bids) {
+    bids.sort((a, b) =>
+      ((board.cards[a].attachOrder || 0) - (board.cards[b].attachOrder || 0)) ||
+      (a < b ? -1 : 1));
+    const t = getNode(rid);
+    const tel = nodeEls.get(rid);
+    const kind = t.data.kind === 'frame' ? 'title'
+      : t.data.kind === 'button' ? 'chain' : 'bottom';
+    // keep the visual group-highlight fresh if a dock changed mid-selection
+    const rootSel = selectedNodes.has(rid);
+    for (const bid of bids) nodeEls.get(bid).classList.toggle('co-selected', rootSel);
+    if (kind === 'bottom') {
+      // full-width tray: equal tab segments sharing 1px borders
+      tel.classList.add('has-dock');
+      const width = (tel.offsetWidth + (bids.length - 1)) / bids.length;
+      bids.forEach((bid, i) => {
+        const d = board.cards[bid];
+        const bel = nodeEls.get(bid);
+        bel.style.width = width + 'px';
+        d.x = Math.round(t.data.x + i * (width - 1));
+        d.y = Math.round(t.data.y + tel.offsetHeight - 1);
+        bel.style.left = d.x + 'px';
+        bel.style.top = d.y + 'px';
+        setDockClasses(bel, kind, i === 0, i === bids.length - 1);
+        redrawConnectionsFor(bid);
+      });
+    } else {
+      // horizontal row flush right of the frame tab / root button. Rect
+      // math, not offsetTop/offsetLeft: those are integers measured from
+      // the padding edge, so the frame's 1.5px border misaligns the row.
+      let x, y;
+      if (kind === 'title') {
+        tel.classList.add('has-tab-buttons');
+        // client rect → world through the frame's own window transform
+        // (the frame may live in the docked panel)
+        const r = tel.querySelector('.frame-tab').getBoundingClientRect();
+        const p = ctxToWorld(inDock(rid) ? 'dock' : 'main', r.right, r.top);
+        x = p.x - 1;   // share the 1px border
+        y = p.y;
       } else {
-        // horizontal row flush right of the frame tab / root button. Rect
-        // math, not offsetTop/offsetLeft: those are integers measured from
-        // the padding edge, so the frame's 1.5px border misaligns the row.
-        let x, y;
-        if (kind === 'title') {
-          tel.classList.add('has-tab-buttons');
-          // client rect → world through the frame's own window transform
-          // (the frame may live in the docked panel)
-          const r = tel.querySelector('.frame-tab').getBoundingClientRect();
-          const p = ctxToWorld(inDock(rid) ? 'dock' : 'main', r.right, r.top);
-          x = p.x - 1;   // share the 1px border
-          y = p.y;
-        } else {
-          tel.classList.add('has-chain');
-          x = t.data.x + tel.offsetWidth - 1;
-          y = t.data.y;
-        }
-        bids.forEach((bid, i) => {
-          const d = board.cards[bid];
-          const bel = nodeEls.get(bid);
-          bel.style.width = '';
-          // quarter-pixel, not whole-pixel: the tab's edges sit at fractional
-          // positions (1.5px frame border, rem paddings), and a rounded chip
-          // renders its border on a different half-pixel than the tab's
-          d.x = Math.round(x * 4) / 4;
-          d.y = Math.round(y * 4) / 4;
-          bel.style.left = d.x + 'px';
-          bel.style.top = d.y + 'px';
-          setDockClasses(bel, kind, i === 0, i === bids.length - 1);
-          redrawConnectionsFor(bid);
-          x += bel.offsetWidth - 1;
-        });
+        tel.classList.add('has-chain');
+        x = t.data.x + tel.offsetWidth - 1;
+        y = t.data.y;
       }
+      bids.forEach((bid, i) => {
+        const d = board.cards[bid];
+        const bel = nodeEls.get(bid);
+        bel.style.width = '';
+        // quarter-pixel, not whole-pixel: the tab's edges sit at fractional
+        // positions (1.5px frame border, rem paddings), and a rounded chip
+        // renders its border on a different half-pixel than the tab's
+        d.x = Math.round(x * 4) / 4;
+        d.y = Math.round(y * 4) / 4;
+        bel.style.left = d.x + 'px';
+        bel.style.top = d.y + 'px';
+        setDockClasses(bel, kind, i === 0, i === bids.length - 1);
+        redrawConnectionsFor(bid);
+        x += bel.offsetWidth - 1;
+      });
+    }
+  }
+
+  // Re-lay only the dragged assemblies. Topology is frozen for a drag's
+  // duration (membership follows the DROP), so the dockRootButtons map the
+  // last full layoutAttachments published is still authoritative — we just
+  // reposition each moved id that happens to be a live dock root. A dragged
+  // docked button always routes its drag through its root (see the button's
+  // pointerdown), so every moving assembly's root is in `ids`.
+  function layoutAttachmentsFor(ids) {
+    for (const id of ids) {
+      const bids = dockRootButtons.get(id);
+      if (bids) layoutRoot(id, bids.slice());   // slice: layoutRoot sorts in place
     }
   }
 

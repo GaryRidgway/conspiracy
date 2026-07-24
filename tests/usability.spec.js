@@ -1403,6 +1403,62 @@ async function addFreeButton(page) {
   const id = await page.locator('.btn-node').last().getAttribute('data-id');
   return page.locator(`.btn-node[data-id="${id}"]`);
 }
+// Regression: a node drag re-lays only its own dragged assemblies (scoped
+// layoutAttachmentsFor) instead of the whole board every frame. The check has
+// to read the docked button WHILE THE POINTER IS STILL DOWN — on drop, the
+// commit's full layoutAttachments re-lays everything and would paper over a
+// broken scoped path, so an after-release assertion (as the "rides its drags"
+// test does) can't catch a regression here.
+test('a docked button tracks its card mid-drag, before the pointer is released', { tag: '@buttons' }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 280);
+  const btn = await addFreeButton(page);
+  const cb = await card.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+
+  const bBefore = await btn.boundingBox();
+  const cBefore = await card.boundingBox();
+  const hb = await card.locator('.card-header').boundingBox();
+  // manual held drag: down, move, ASSERT while held, then release
+  await page.mouse.move(hb.x + 24, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + 24 + 90, hb.y + hb.height / 2 + 70, { steps: 8 });
+  // the button must track the card's OWN live delta (compared to the card,
+  // not a fixed number — a full-width tray's box tracks a few px off the
+  // card's, which is unrelated to whether the scoped re-layout ran). If the
+  // scoped path did nothing, the button would sit still (~0) while the card
+  // moved its full ~90/70, and this would fail.
+  await expect.poll(async () => {
+    const bNow = await btn.boundingBox();
+    const cNow = await card.boundingBox();
+    return Math.abs((bNow.x - bBefore.x) - (cNow.x - cBefore.x)) < 6
+        && Math.abs((bNow.y - bBefore.y) - (cNow.y - cBefore.y)) < 6;
+  }).toBe(true);
+  const cNow = await card.boundingBox();
+  expect(cNow.x - cBefore.x).toBeGreaterThan(60);       // sanity: the card really moved
+  await page.mouse.up();
+});
+
+// Regression: skipping the port-proximity read while a node is being dragged
+// must still CLEAR any port lit while grabbing it — a stuck-lit port stays
+// visible after the drop and (being a laid-out child) inflates the node's
+// nodeVisualGeom bounds, which then throws off a later fit/fly-to on it.
+test('a port lit while grabbing a card does not stay lit after the drag', { tag: '@connections' }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 320);
+  const hb = await card.locator('.card-header').boundingBox();
+  // grab the header near its left edge — close enough to light the left port
+  // (within PORT_NEAR_PX) at the very spot the drag starts from
+  const gx = hb.x + 24, gy = hb.y + hb.height / 2;
+  await page.mouse.move(gx, gy);
+  await expect(card.locator('.port.near')).toHaveCount(1);
+  await page.mouse.down();
+  await page.mouse.move(gx + 60, gy + 90, { steps: 6 });
+  await page.mouse.up();
+  await expect(card.locator('.port.near')).toHaveCount(0);   // not stuck on
+});
+
 // A button's name defines its width: a long label grows the pill instead of
 // being clipped at an arbitrary cap — how wide a button gets is the user's call.
 test('a long button name expands the button instead of truncating', { tag: '@buttons' }, async ({ page }) => {
