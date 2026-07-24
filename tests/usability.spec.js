@@ -2073,6 +2073,51 @@ test('keyboard: E cycles a node\'s connections, Enter labels one, Escape returns
   await expect(page.locator('.conn-label', { hasText: 'allied with' })).toHaveCount(1);
 });
 
+// Context-menu actions (color, pin, dock, copy id, …) were right-click only,
+// and nodes hold virtual selection — no DOM focus — so the browser's own menu
+// key had nothing to target. M (also Shift+F10 / the Menu key) now opens the
+// menu for the selection with role=menu, focus on the first item, and arrow-
+// key navigation.
+test('keyboard: M opens the context menu for the selected node with arrow-nav, and an item fires', { tag: ['@a11y'] }, async ({ page }) => {
+  const card = await addCardAt(page, 450, 320);
+  await page.mouse.click(60, 180);        // focus the canvas
+  await page.keyboard.press('Tab');       // select the card
+  await expect(card).toHaveClass(/selected/);
+
+  await page.keyboard.press('m');
+  const menu = page.locator('#context-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute('role', 'menu');
+  // focus landed inside the menu, on the first menuitem
+  expect(await page.evaluate(() => document.activeElement.closest('#context-menu') !== null)).toBe(true);
+  const firstFocused = await page.evaluate(() => document.activeElement.textContent);
+
+  await page.keyboard.press('ArrowDown');
+  expect(await page.evaluate(() => document.activeElement.textContent)).not.toBe(firstFocused);
+
+  // arrow to the Duplicate item and activate it with Enter
+  await page.keyboard.press('Home');      // back to the first item
+  const label = () => page.evaluate(() => document.activeElement.querySelector('.ctx-label')?.textContent || '');
+  for (let i = 0; i < 12 && !/Duplicate/.test(await label()); i++) await page.keyboard.press('ArrowDown');
+  expect(await label()).toMatch(/Duplicate/);
+  await page.keyboard.press('Enter');
+  await expect(menu).toBeHidden();
+  await expect(page.locator('.node.card')).toHaveCount(2);   // duplicated
+  // focus is back on the canvas (body), not stranded in the removed menu
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+});
+
+test('keyboard: Escape closes the M-opened menu without acting', { tag: ['@a11y'] }, async ({ page }) => {
+  await addCardAt(page, 450, 320);
+  await page.mouse.click(60, 180);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('m');
+  await expect(page.locator('#context-menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#context-menu')).toBeHidden();
+  await expect(page.locator('.node.card')).toHaveCount(1);   // nothing happened
+});
+
 test('keyboard: the board menu list is arrow-navigable and Enter switches boards', { tag: ['@a11y', '@boards'] }, async ({ page }) => {
   await page.click('#boardMenuBtn');
   await page.click('#newBoardBtn');                    // now on "Board 2"

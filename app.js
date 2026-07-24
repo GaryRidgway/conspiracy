@@ -4020,8 +4020,22 @@
   const contextMenu = document.createElement('div');
   contextMenu.id = 'context-menu';
   contextMenu.className = 'hidden';
+  contextMenu.setAttribute('role', 'menu');
   document.body.appendChild(contextMenu);
   let ctxDispose = null;
+  // Arrow-key navigation between items when the menu holds focus (opened by
+  // keyboard). Enter/Space already activate a focused button natively, and
+  // Escape closes via the window handler in openContextMenu.
+  const ctxFocusables = () => [...contextMenu.querySelectorAll('.ctx-item, .ctx-swatch')];
+  contextMenu.addEventListener('keydown', (e) => {
+    const foci = ctxFocusables();
+    if (!foci.length) return;
+    const i = foci.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); foci[(i + 1 + foci.length) % foci.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); foci[(i - 1 + foci.length) % foci.length].focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); foci[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); foci[foci.length - 1].focus(); }
+  });
 
   function closeContextMenu() {
     if (contextMenu.classList.contains('hidden')) return;
@@ -4031,7 +4045,9 @@
   }
 
   // items: array of 'sep' or { label, hint?, danger?, action }
-  function openContextMenu(x, y, items) {
+  // opts.focus (keyboard-opened menus) moves focus to the first item so the
+  // arrow-key nav above has somewhere to start.
+  function openContextMenu(x, y, items, opts) {
     contextMenu.innerHTML = '';
     for (const it of items) {
       if (it === 'sep') {
@@ -4048,6 +4064,8 @@
         none.className = 'ctx-swatch ctx-swatch-none' + (it.current ? '' : ' active');
         none.title = 'No color';
         none.setAttribute('aria-label', 'No color');
+        none.setAttribute('role', 'menuitemradio');
+        none.setAttribute('aria-checked', String(!it.current));
         none.addEventListener('click', () => { closeContextMenu(); it.onPick(null); });
         row.appendChild(none);
         for (const c of NODE_COLORS) {
@@ -4056,6 +4074,8 @@
           sw.className = 'ctx-swatch' + (it.current === c.key ? ' active' : '');
           sw.title = c.label;
           sw.setAttribute('aria-label', c.label);
+          sw.setAttribute('role', 'menuitemradio');
+          sw.setAttribute('aria-checked', String(it.current === c.key));
           sw.style.setProperty('--sw', c.hex);
           sw.addEventListener('click', () => { closeContextMenu(); it.onPick(c.key); });
           row.appendChild(sw);
@@ -4066,6 +4086,7 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+      b.setAttribute('role', 'menuitem');
       b.innerHTML = `<span class="ctx-label"></span>` + (it.hint ? `<span class="ctx-hint"></span>` : '');
       b.querySelector('.ctx-label').textContent = it.label;
       if (it.hint) b.querySelector('.ctx-hint').textContent = it.hint;
@@ -4077,6 +4098,10 @@
     const r = contextMenu.getBoundingClientRect();
     contextMenu.style.left = Math.max(6, Math.min(x, innerWidth - r.width - 6)) + 'px';
     contextMenu.style.top = Math.max(6, Math.min(y, innerHeight - r.height - 6)) + 'px';
+    // keyboard-opened: land focus on the first item so arrows/Enter work and a
+    // screen reader enters the menu. (Closing clears innerHTML, which drops
+    // focus back to the body — i.e. back to the canvas.)
+    if (opts && opts.focus) { const f = ctxFocusables()[0]; if (f) f.focus(); }
 
     const onDown = (e) => { if (!contextMenu.contains(e.target)) closeContextMenu(); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeContextMenu(); } };
@@ -4102,7 +4127,7 @@
   viewport.addEventListener('pointerdown', recordCtxPreActive, true);
   dockPanel.addEventListener('pointerdown', recordCtxPreActive, true);
 
-  const onCanvasContextMenu = (e) => {
+  const onCanvasContextMenu = (e, menuOpts) => {
     // if the user was already editing text (or is inside an interactive frame),
     // leave the native menu alone for paste/spellcheck
     const pa = ctxPreActive;
@@ -4195,10 +4220,31 @@
       items.push('sep');
       items.push({ label: 'Select all', hint: '⌘A', action: selectAllNodes });
     }
-    openContextMenu(e.clientX, e.clientY, items);
+    openContextMenu(e.clientX, e.clientY, items, menuOpts);
   };
   viewport.addEventListener('contextmenu', onCanvasContextMenu);
   dockPanel.addEventListener('contextmenu', onCanvasContextMenu);
+
+  // Keyboard equivalent of a right-click. Selection is virtual — no node holds
+  // DOM focus — so there's nothing for the browser's own ContextMenu key to
+  // aim at; this drives the SAME onCanvasContextMenu with a synthetic event
+  // pointed at the selected node (or connection) and its on-screen anchor.
+  function openMenuForSelection() {
+    let target, cx, cy;
+    if (selectedConn) {
+      const entry = connEls.get(selectedConn);
+      if (!entry || entry.g.style.display === 'none') return;
+      const r = entry.g.getBoundingClientRect();
+      target = entry.g; cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+    } else if (selectedNodes.size === 1) {
+      const el = nodeEls.get([...selectedNodes][0]);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      target = el; cx = r.left + Math.min(28, r.width / 2); cy = r.top + Math.min(28, r.height / 2);
+    } else return;
+    ctxPreActive = null;   // synthetic, not a pointerdown — no "was editing" state applies
+    onCanvasContextMenu({ target, clientX: cx, clientY: cy, button: 0, preventDefault() {} }, { focus: true });
+  }
 
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Space') return;
@@ -5104,6 +5150,15 @@
         onCanvas && (selectedConn || selectedNodes.size === 1)) {
       e.preventDefault();
       cycleNodeConnections();
+      return;
+    }
+    // Shift+F10 / the Menu key / bare M open the context menu for the current
+    // selection, anchored on it — the keyboard equivalent of a right-click
+    if (onCanvas && (selectedNodes.size === 1 || selectedConn) &&
+        ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu' ||
+         (e.key.toLowerCase() === 'm' && !e.metaKey && !e.ctrlKey && !e.altKey))) {
+      e.preventDefault();
+      openMenuForSelection();
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !editing && (selectedNodes.size || selectedConn)) {

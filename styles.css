@@ -778,11 +778,12 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   cursor: pointer;
   text-align: left;
 }
-.ctx-item:hover { background: var(--accent); color: #1a1205; }
+/* keyboard focus mirrors hover so arrow-key nav reads the same as pointing */
+.ctx-item:hover, .ctx-item:focus { background: var(--accent); color: #1a1205; outline: none; }
 .ctx-item.danger { color: var(--danger); }
-.ctx-item.danger:hover { background: var(--danger); color: #2a0d08; }
+.ctx-item.danger:hover, .ctx-item.danger:focus { background: var(--danger); color: #2a0d08; }
 .ctx-hint { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
-.ctx-item:hover .ctx-hint { opacity: 0.85; }
+.ctx-item:hover .ctx-hint, .ctx-item:focus .ctx-hint { opacity: 0.85; }
 .ctx-sep { height: 1px; margin: 0.25rem 0.3rem; background: var(--border2); }
 
 /* Color swatch row (node context menu): a dot per palette color + a "none". */
@@ -795,7 +796,7 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   cursor: pointer;
   transition: transform 0.1s;
 }
-.ctx-swatch:hover { transform: scale(1.18); }
+.ctx-swatch:hover, .ctx-swatch:focus { transform: scale(1.18); outline: 2px solid var(--text); outline-offset: 2px; }
 .ctx-swatch.active { box-shadow: 0 0 0 2px var(--surface2), 0 0 0 3px var(--text); }
 .ctx-swatch-none {
   background: var(--surface);

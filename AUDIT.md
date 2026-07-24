@@ -491,7 +491,7 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   node, and Enter+type labels the highlighted arrow. Fail-then-pass verified
   by disabling the E branch. Full suite run twice.
 
-### 14. [ ] Keyboard path to context-menu actions
+### 14. [x] Keyboard path to context-menu actions — done
 - **What:** color coding, Pin to toolbar, Dock frame, button-link editing,
   Copy ID exist only behind `contextmenu`. Nodes never hold real DOM focus
   (selection is virtual), so ContextMenu key / Shift+F10 can't target them.
@@ -501,6 +501,30 @@ keyboard interaction against the `onCanvas`/`editing` key-handling rules.
   `role="menu"`/`menuitem`.
 - **Structural half:** a keyboard trigger (e.g. Shift+F10 opens the menu
   for the selected node).
+- **Decision:** trigger is Shift+F10 + the ContextMenu key + a bare **M**
+  (user's call) — the standard keys plus a one-key path that actually works
+  on a Mac laptop (no Menu key, awkward Fn+F10).
+- **Landed (both halves):**
+  - *Cheap half* — `#context-menu` now carries `role="menu"`, each item
+    `role="menuitem"` (swatches `menuitemradio` + `aria-checked`), a keydown
+    handler gives Up/Down/Home/End nav across the focusable items, and
+    `openContextMenu(x, y, items, {focus})` lands focus on the first item
+    when opened by keyboard. Enter/Space activate a focused item natively;
+    closing clears `innerHTML`, which drops focus back to the body (the
+    canvas) so the user isn't stranded. A `:focus` style mirrors `:hover`.
+  - *Structural half* — `openMenuForSelection()` drives the SAME
+    `onCanvasContextMenu` with a synthetic event (target + on-screen anchor)
+    pointed at the selected node, so every existing per-kind menu item comes
+    along for free with zero duplication. Works for a keyboard-selected
+    connection too (item 13), anchored at the arrow's midpoint. `menuOpts`
+    is threaded through `onCanvasContextMenu` → `openContextMenu` to carry
+    the `{focus:true}`.
+  - Help panel: "Colors, links & more → right-click, or M."
+- **Tested:** `usability.spec.js` "M opens the context menu … with arrow-nav,
+  and an item fires" (asserts role=menu, focus lands inside, ArrowDown moves
+  it, arrowing to Duplicate + Enter duplicates, and focus returns to body)
+  and "Escape closes the M-opened menu without acting." Both fail-then-pass
+  verified by disabling the trigger. Full suite run twice.
 
 ---
 
