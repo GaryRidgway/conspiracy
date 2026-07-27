@@ -538,6 +538,12 @@ body.space-pan #viewport.panning,
   background: var(--bg);
   border-left: 1px solid var(--border2);
   box-shadow: -12px 0 32px rgba(0,0,0,0.45);
+  /* second window, so #viewport's rule doesn't reach here: without this a
+     double-click to enter interact mode also starts a text selection, and a
+     range spanning the <iframe> paints the whole embed in the selection color.
+     Safe on editable nodes (contenteditable overrides it) and can't touch the
+     embedded page's own selection (separate document). */
+  user-select: none;
 }
 #dock-panel.hidden { display: none; }
 #dock-resizer {

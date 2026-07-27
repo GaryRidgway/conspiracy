@@ -11,6 +11,8 @@
 import { test, expect } from '@playwright/test';
 import { drag, addCardAt, nodePos, installErrorGuard } from './helpers.js';
 
+const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
+
 // default frame: 640×400 at the view centre (≈ screen (320,160)–(960,560))
 async function addFrame(page) {
   await page.click('#addFrameNode');
@@ -566,4 +568,36 @@ test('a pre-migration per-device dock is adopted into synced dockMembers on load
     return b.cards[frameId].dockMembers;
   }, frameId);
   expect(stored).toEqual([memberId]);
+});
+
+// ════════════════════════════════════════════════════════════════════════
+//  NO STRAY SELECTION IN THE PANEL
+//  The dock is a SECOND window (#dock-panel), a sibling of #viewport — so the
+//  canvas's user-select:none doesn't reach it. Without a rule of its own, a
+//  double-click to enter interact mode also starts a text selection, and a
+//  range spanning the <iframe> paints the whole embed in the selection color.
+// ════════════════════════════════════════════════════════════════════════
+test('double-clicking a docked embed enters interact mode without selecting it', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);                                    // region at the view centre
+  // an embed whose centre sits in the region → it docks along with the frame
+  await page.click('#addFrame');
+  await expect(page.locator('#frame-modal')).toBeVisible();
+  await page.fill('#frame-url', EMBED_URL);
+  await page.click('#frame-add');
+  await expect(page.locator('#frame-modal')).toBeHidden();
+
+  const embed = page.locator('.node.iframe-node');
+  await dockViaMenu(page);
+  expect(await parentWorld(embed)).toBe('dock-world');     // reparented into the panel
+  await expect(embed).toHaveClass(/loaded/);               // active-dock embeds load on their own
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  const box = await embed.boundingBox();
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(embed).toHaveClass(/interactive/);          // the dblclick still does its real job
+  // …and left nothing selected: no caret range, no highlighted embed
+  expect(await page.evaluate(() => {
+    const s = window.getSelection();
+    return { text: s.toString(), collapsed: s.isCollapsed };
+  })).toEqual({ text: '', collapsed: true });
 });
