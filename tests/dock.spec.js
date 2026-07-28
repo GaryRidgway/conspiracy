@@ -730,3 +730,40 @@ test('undocking a frame already in view moves nothing and leaves the camera alon
   expect(await nodePos(card)).toEqual(cardPos);
   expect(await worldScale(page)).toBeCloseTo(zoom, 5);      // …and untouched camera
 });
+
+// The suite pre-seeds fly-to OFF, so the landing above always cuts instantly.
+// The app's own default is ON, and undocking is the one navigation that also
+// mutates content in the same breath — the animated path has to reach the same
+// place and not strand the camera mid-flight.
+test.describe('undocking with fly-to at its default', { tag: ['@dock', '@nav'] }, () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('an animated landing settles with the region framed and the viewport saved', async ({ page }) => {
+    const frame = await addFrame(page);
+    await addCardAt(page, 640, 360);
+    await dockViaMenu(page);
+    await page.evaluate(() => {
+      const v = document.getElementById('viewport');
+      for (let i = 0; i < 14; i++) v.dispatchEvent(new WheelEvent('wheel',
+        { deltaY: -600, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    const zoomed = await worldScale(page);
+    await page.click('#dockUndockBtn');
+    await expect(page.locator('#dock-panel')).toBeHidden();
+
+    // let the flight land, then assert the destination — not a frozen mid-hop
+    await expect.poll(() => worldScale(page)).toBeLessThan(zoomed);
+    await page.waitForTimeout(900);
+    const settled = await worldScale(page);
+    const box = await frame.boundingBox();
+    const vp = page.viewportSize();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+
+    // the landed viewport reached storage (the flight commits on arrival)
+    await expect.poll(() => page.evaluate(() => {
+      const k = Object.keys(localStorage).find((x) => x.startsWith('whiteboard:viewport:'));
+      return k ? JSON.parse(localStorage.getItem(k)).zoom : null;
+    })).toBeCloseTo(settled, 3);
+  });
+});
