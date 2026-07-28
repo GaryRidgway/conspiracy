@@ -2633,6 +2633,7 @@
       nodeEls.set(id, el);
       wireIframe(id, el);
       addPorts(el, id);
+      frameWrapResize.observe(el.querySelector('.iframe-wrap'));
     }
     el.style.left = data.x + 'px';
     el.style.top = data.y + 'px';
@@ -2808,10 +2809,32 @@
     const wrap = el.querySelector('.iframe-wrap');
     const frame = el.querySelector('.iframe-frame');
     const s = wrap.clientWidth / lw;
+    // No layout box: the node is inside a display:none subtree, so every
+    // measurement is 0 and the scale below would collapse the page to nothing —
+    // permanently, because nothing re-measured it afterwards. Leave the previous
+    // layout alone; frameWrapResize re-runs this the moment a box exists.
+    if (!s) return;
     frame.style.width = lw + 'px';
-    frame.style.height = (s > 0 ? wrap.clientHeight / s : wrap.clientHeight) + 'px';
+    frame.style.height = wrap.clientHeight / s + 'px';
     frame.style.transform = `scale(${s})`;
   }
+
+  // The dock panel is display:none until syncDockPanel() un-hides it, and
+  // renderAll renders nodes BEFORE that call — so every embed in a docked frame
+  // measured 0 at boot and rendered as a blank box with `loaded` already set (so
+  // not even the placeholder showed). Minimizing the panel re-created the same
+  // state for any later re-render. Observing the wrap covers both without
+  // depending on render order.
+  const frameWrapResize = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      // removal reports a 0 box once — take that as the cue to stop observing,
+      // so detached embeds aren't retained by the observer
+      if (!e.target.isConnected) { frameWrapResize.unobserve(e.target); continue; }
+      if (!e.target.clientWidth) continue;                 // still boxless
+      const el = e.target.closest('.iframe-node');
+      if (el) layoutFrame(el);
+    }
+  });
 
   function setFrameZoom(id, lw) {
     const data = board.iframes[id];

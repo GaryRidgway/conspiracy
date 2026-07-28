@@ -129,6 +129,15 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   is world-space, so dropping over the other window just lands there —
   never mix `getBoundingClientRect` with the wrong window's transform.
   Movers reparent live when the pointer crosses, so the ghost follows.
+- **Never measure a panel node for layout without checking it has a box.**
+  `#dock-panel` is `display: none` while hidden or minimized, so everything
+  inside measures 0 — and `renderAll` renders nodes BEFORE `syncDockPanel()`
+  un-hides the panel. `layoutFrame` scaled an embed by `wrap.clientWidth / lw`,
+  which made every embed in a docked frame boot at `scale(0)`: a blank box with
+  `loaded` already set, so not even the placeholder showed, and nothing
+  re-measured it. It now bails on a zero box and a `ResizeObserver`
+  (`frameWrapResize`) re-runs the layout when a box appears — which covers boot,
+  un-minimize, and any future render-order change without depending on one.
 - **Membership is STICKY, not geometric.** Each docked frame carries an
   explicit member list on its OWN card record (`dockMembers` — real, synced
   content, like any other field): seeded center-in-rect when the frame

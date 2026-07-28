@@ -767,3 +767,54 @@ test.describe('undocking with fly-to at its default', { tag: ['@dock', '@nav'] }
     })).toBeCloseTo(settled, 3);
   });
 });
+
+// ── Embed sizing inside the panel ──
+// layoutFrame() scales the inner iframe from wrap.clientWidth, which is 0 inside
+// a display:none subtree. renderAll renders nodes BEFORE syncDockPanel() un-hides
+// the panel, so every embed in a docked frame booted at scale(0): a blank box,
+// with `loaded` already set so not even the placeholder showed. Nothing
+// re-measured it, so it stayed blank until the frame was resized by hand.
+test('a docked embed is sized, not collapsed, after a reload', { tag: ['@dock', '@frames'] }, async ({ page }) => {
+  await addFrame(page);
+  await page.click('#addFrame');
+  await page.fill('#frame-url', EMBED_URL);
+  await page.click('#frame-add');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.iframe-node')).toHaveClass(/loaded/);
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const before = await page.locator('.iframe-frame').boundingBox();
+  expect(before.width).toBeGreaterThan(0);
+
+  await page.reload();
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  await expect(page.locator('.iframe-node')).toHaveClass(/loaded/);
+  // the whole bug: a rendered, loaded embed with no size
+  await expect.poll(async () => (await page.locator('.iframe-frame').boundingBox()).width)
+    .toBeCloseTo(before.width, 0);
+  const after = await page.locator('.iframe-frame').boundingBox();
+  expect(after.height).toBeCloseTo(before.height, 0);
+});
+
+// Same measurement, reached the other way: minimized means display:none too, so
+// a render while minimized must not bake in the collapsed scale either.
+test('restoring a minimized panel sizes its embeds', { tag: ['@dock', '@frames'] }, async ({ page }) => {
+  await addFrame(page);
+  await page.click('#addFrame');
+  await page.fill('#frame-url', EMBED_URL);
+  await page.click('#frame-add');
+  await page.keyboard.press('Escape');
+  await dockViaMenu(page);
+  const before = await page.locator('.iframe-frame').boundingBox();
+
+  await page.locator('.dock-rail-tab.active').click();          // minimize
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.reload();                                          // renders while hidden
+  await expect(page.locator('#dock-rail')).toBeVisible();
+  await page.locator('.dock-rail-tab').first().click();         // restore
+  await expect(page.locator('#dock-panel')).toBeVisible();
+
+  await expect.poll(async () => (await page.locator('.iframe-frame').boundingBox()).width)
+    .toBeCloseTo(before.width, 0);
+});
