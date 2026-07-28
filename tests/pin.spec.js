@@ -197,3 +197,38 @@ test('the canvas context menu offers every palette node type', { tag: '@chrome' 
   await page.keyboard.press('Escape');
   await expect(page.locator('.btn-node')).toHaveCount(1);
 });
+
+// The dock hangs off the TOP of the palette, which is vertically centred, so
+// it grows straight into the toolbar's corner. It used to be capped at 70vh —
+// always more headroom than actually exists — so a full dock painted over the
+// top menu (equal z-index, later in the DOM) and ran off the top of the screen
+// with the earliest chips unreachable.
+test('a full pin dock stays clear of the toolbar and on screen', { tag: ['@buttons', '@chrome'] }, async ({ page }) => {
+  await addCardAt(page, 400, 300);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await seedBoard(page, `
+    for (let i = 0; i < 14; i++) {
+      b.cards['pin_' + i] = { kind: 'button', x: 100 + i * 10, y: 100,
+                              title: 'Jump ' + i, pinned: 1000 + i };
+    }
+  `);
+  const dock = page.locator('#pin-dock');
+  await expect(dock.locator('.pin-chip')).toHaveCount(14);
+
+  const geom = () => page.evaluate(() => {
+    const p = document.getElementById('pin-dock');
+    const r = p.getBoundingClientRect();
+    const b = document.getElementById('toolbar').getBoundingClientRect();
+    return { top: r.top, barBottom: b.bottom, scrolls: p.scrollHeight > p.clientHeight,
+             onTopOfBar: document.elementFromPoint(b.left + 30, b.top + b.height / 2)
+               .closest('#toolbar') !== null };
+  });
+  const g = await geom();
+  expect(g.top).toBeGreaterThanOrEqual(g.barBottom);   // below the menu, not over it
+  expect(g.scrolls).toBe(true);                        // capped, so every chip stays reachable
+
+  // On a window too short for any headroom the cap floors out and they overlap
+  // again — there the toolbar's z-index has to be what keeps the menu usable.
+  await page.setViewportSize({ width: 1280, height: 380 });
+  await expect.poll(async () => (await geom()).onTopOfBar).toBe(true);
+});

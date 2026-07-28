@@ -12,6 +12,9 @@
   --text-2: #B4BCCE;
   --text-3: #ABB3C5;
   --danger: #FF8A7A;
+  /* #toolbar's footprint (top:1rem + its button-row height) plus a gap, for
+     the left-gutter chrome that has to stay clear of it. */
+  --top-chrome: 77px;
   --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-mono, ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
 }
@@ -449,7 +452,11 @@ body.space-pan #viewport.panning,
 #toolbar {
   position: fixed;
   top: 1rem; left: 1rem;
-  z-index: 10;
+  /* Above the rest of the viewport chrome (all z-index 10): the palette shares
+     the left gutter and its pin dock grows up into this corner, and at equal
+     z-index the later element (#tools) would win on DOM order alone. The board
+     menu, dock panel and overlays stay deliberately higher. */
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -910,7 +917,14 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   gap: 0.3rem;
   width: max-content;
   max-width: 200px;
-  max-height: 70vh;
+  /* Stop at the toolbar instead of running off the top of the screen. The
+     palette is centred, so its top edge sits 50vh - (its own height / 2) down
+     — and `50%` on an absolutely-positioned child resolves against exactly
+     that height, so the cap needs no hard-coded palette size. Then take off
+     this box's 10px offset and the top-chrome reserve. The floor keeps a
+     usable stub on a very short window; there the toolbar's higher z-index is
+     what keeps the menu readable. */
+  max-height: max(48px, calc(50vh - 50% - 10px - var(--top-chrome)));
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
