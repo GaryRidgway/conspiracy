@@ -180,7 +180,10 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   Navigation (`frameNode`) into a member pans the PANEL.
 - Reparenting an `<iframe>` element reloads its page — embeds crossing the
   boundary (or dock/undock of a region containing them) reload. Inherent
-  browser behavior; accepted.
+  browser behavior; accepted, but not silent: `markIframeReloading()` runs
+  before the move and re-shows the placeholder until `load` fires (4s
+  bail-out, as some pages never fire it). Without it the element stays
+  `.loaded` over a blank box and the embed reads as having disappeared.
 
 ### Record shape rules (the merge depends on these)
 

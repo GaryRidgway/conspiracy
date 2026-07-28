@@ -601,3 +601,34 @@ test('double-clicking a docked embed enters interact mode without selecting it',
     return { text: s.toString(), collapsed: s.isCollapsed };
   })).toEqual({ text: '', collapsed: true });
 });
+
+// Reparenting an <iframe> reloads its page (ARCHITECTURE.md: inherent, accepted),
+// so dock/undock refetches every embed in the region. The element keeps .loaded
+// through that, which used to leave a blank box with no sign anything was
+// coming — reading as "the embed disappeared". The placeholder has to come back
+// for the duration.
+test('an embed reparented by docking shows its placeholder until the reload paints', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  await page.click('#addFrame');
+  await page.fill('#frame-url', EMBED_URL);
+  await page.click('#frame-add');
+  const embed = page.locator('.node.iframe-node');
+  await expect(embed.locator('iframe')).toHaveAttribute('src', EMBED_URL);
+  await expect(embed).toHaveClass(/loaded/);
+  await expect(embed.locator('.frame-placeholder')).toBeHidden();
+
+  // hold the refetch open so the transient state is observable at all
+  let release = () => {};
+  const held = new Promise((r) => { release = r; });
+  await page.route(EMBED_URL, async (route) => { await held; await route.continue(); });
+
+  await dockViaMenu(page);
+  await expect(embed).toHaveClass(/reloading/);
+  await expect(embed.locator('.frame-placeholder')).toBeVisible();
+  await expect(embed.locator('.ph-note')).toHaveText(/reloading/i);
+
+  release();
+  await expect(embed).not.toHaveClass(/reloading/);
+  await expect(embed.locator('.frame-placeholder')).toBeHidden();
+  await expect(embed.locator('.ph-note')).toHaveText(/click to load/i);   // idle text restored
+});

@@ -1519,6 +1519,10 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   cursor: pointer;
 }
 .iframe-node.loaded .frame-placeholder { display: none; }
+/* …except while a reparent (dock/undock) is refetching the page: the element
+   is still `.loaded`, but there's nothing painted behind this yet. After the
+   .loaded rule so it wins on source order at equal specificity. */
+.iframe-node.reloading .frame-placeholder { display: flex; cursor: default; }
 .frame-placeholder .ph-host {
   font-size: 0.9rem;
   font-weight: 650;

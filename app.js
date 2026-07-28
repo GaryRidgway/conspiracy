@@ -2093,7 +2093,10 @@
       if (before.get(id) === dockMembers.get(id)) continue;
       const el = nodeEls.get(id);
       if (el) {
-        if (el.parentElement !== worldFor(id)) worldFor(id).appendChild(el);
+        if (el.parentElement !== worldFor(id)) {
+          if (board.iframes[id]) markIframeReloading(el);   // the move refetches the page
+          worldFor(id).appendChild(el);
+        }
         if (!dockMembers.has(id)) el.classList.remove('dock-stowed');   // back to the canvas
       }
       redrawConnectionsFor(id);        // arrows re-route (or hide) across windows
@@ -2594,6 +2597,30 @@
     const safeSrc = safeNavUrl(data.src);   // block javascript:/data: from untrusted board content
     if (frame.getAttribute('src') !== safeSrc) frame.setAttribute('src', safeSrc);
     el.classList.add('loaded');
+  }
+
+  // Moving an <iframe> element in the DOM reloads its page — inherent browser
+  // behavior, so docking or undocking a region refetches every embed in it.
+  // `.loaded` stays on through that, which left a blank box with no sign
+  // anything was coming; bring the placeholder back until it paints again.
+  // Call BEFORE the reparent, while the old document is still attached.
+  function markIframeReloading(el) {
+    const frame = el.querySelector('.iframe-frame');
+    if (!frame || !frame.getAttribute('src')) return;   // never loaded → placeholder is already up
+    if (el.classList.contains('reloading')) return;     // a second move: the pending listener covers it
+    const note = el.querySelector('.ph-note');
+    const idle = note && note.textContent;
+    if (note) note.textContent = 'reloading…';
+    el.classList.add('reloading');
+    let timer = 0;
+    const done = () => {
+      clearTimeout(timer);
+      frame.removeEventListener('load', done);
+      el.classList.remove('reloading');
+      if (note) note.textContent = idle;
+    };
+    frame.addEventListener('load', done);
+    timer = setTimeout(done, 4000);   // same bail-out as the idle prefetch: some pages never fire load
   }
 
   // 'visible' = intersects the real viewport, 'near' = within the prefetch
