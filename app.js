@@ -5518,6 +5518,14 @@
     lockTo(textToolbar, left, top);                           // steady on-screen tracking → instant
     return true;
   }
+  // Cards auto-size to their text, so typing moves the anchor the toolbar is
+  // pinned to. That only matters below the card — a card grows DOWNWARD from a
+  // fixed top edge, so the flipped-below toolbar is the one that ends up
+  // sitting on the text it belongs to. Observed rather than driven from the
+  // body's `input` handler: growth is rarer than keystrokes, and the
+  // positioner reads layout, so per-keystroke would thrash it.
+  const editedCardResize = new ResizeObserver(() => repositionTextToolbar());
+
   function showTextToolbar(cardEl) {
     textToolbarEl = cardEl;
     toolbarReleased = false;
@@ -5525,6 +5533,8 @@
     clearTimeout(textToolbar._glideTimer);
     textToolbar.classList.remove('hidden');
     positionTextToolbar(cardEl);
+    editedCardResize.disconnect();     // one card at a time — the focused one
+    editedCardResize.observe(cardEl);
   }
   function repositionTextToolbar() {
     if (textToolbarEl && !textToolbar.classList.contains('hidden')) {
@@ -5536,6 +5546,7 @@
     }
   }
   function hideTextToolbar() {
+    editedCardResize.disconnect();
     textToolbar.classList.add('hidden');
     textToolbarEl = null;
     closeNodePicker();

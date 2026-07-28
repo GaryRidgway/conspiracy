@@ -2228,6 +2228,31 @@ test('the edit toolbar releases the edge and scrolls off once its card leaves th
   await expect.poll(() => bar.evaluate((el) => parseFloat(el.style.left))).toBeLessThan(-100);
 });
 
+// Cards auto-size to their text, so typing moves the anchor. Above the card
+// that's harmless (the top edge is fixed), but a toolbar flipped BELOW a
+// top-of-screen card used to stay at the old bottom edge — which typing then
+// pushed past, leaving the bar parked on top of the text it belongs to.
+test('the edit toolbar follows the bottom edge of a card that grows as you type', { tag: '@chrome' }, async ({ page }) => {
+  const card = await addCardAt(page, 400, 90);               // high enough to force the flip below
+  await card.locator('.card-body').click();
+  const bar = page.locator('#text-toolbar');
+  await expect(bar).toBeVisible();
+  const geom = () => page.evaluate(() => {
+    const c = document.querySelector('.node.card').getBoundingClientRect();
+    const t = document.getElementById('text-toolbar').getBoundingClientRect();
+    return { cardBottom: c.bottom, barTop: t.top, overlaps: t.top < c.bottom && t.bottom > c.top };
+  });
+  const before = await geom();
+  expect(before.overlaps).toBe(false);
+  expect(before.barTop).toBeGreaterThan(before.cardBottom);  // flipped below, clear of the card
+
+  for (let i = 0; i < 12; i++) await page.keyboard.type('a line of text to grow the card\n');
+  await expect.poll(async () => (await geom()).cardBottom).toBeGreaterThan(before.cardBottom + 200);
+  await expect.poll(async () => (await geom()).overlaps).toBe(false);
+  const after = await geom();
+  expect(after.barTop).toBeGreaterThan(after.cardBottom);    // still below the grown card
+});
+
 test('the link picker scrolls off with its card instead of hugging the edge', { tag: '@chrome' }, async ({ page }) => {
   await addCardAt(page, 400, 350);
   await page.locator('.node.card .card-body').first().click();
