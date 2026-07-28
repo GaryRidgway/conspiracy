@@ -1141,6 +1141,10 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
 }
 #status .save.dirty { color: var(--phase-60, #F8CF5F); }
 #status .save.saved { color: var(--accent); }
+/* "save failed" means this board is not on disk — the one status the strip
+   must not read as ambient telemetry. Tinted border, not a filled face. */
+#status:has(.save.error) { border-color: var(--danger); }
+#status .save.error { color: var(--danger); font-weight: 700; }
 
 /* ── Help (top-right): ? button opening the shortcuts panel ── */
 #help-wrap {

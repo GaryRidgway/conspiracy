@@ -703,6 +703,25 @@ test('undo restores a deleted card', { tag: '@undo' }, async ({ page }) => {
   await expect(page.locator('.card-title')).toHaveText('Restore me');
 });
 
+// A full localStorage quota is the one way an edit can fail to persist, and
+// pasted images are big enough to cause it. The indicator used to read "saved"
+// through it, so a reload silently rolled the board back to the last write
+// that fit — the failure has to be visible instead.
+test('a rejected local write reports "save failed", not "saved"', { tag: '@boards' }, async ({ page }) => {
+  await page.evaluate(() => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (k.startsWith('whiteboard:board:')) throw new DOMException('quota', 'QuotaExceededError');
+      return real.call(this, k, v);
+    };
+  });
+  await makeCardAt(page, 320, 300, { title: 'Unsaved' });
+  await expect(page.locator('#saveState')).toHaveText(/save failed/i);
+  await expect(page.locator('#saveState')).toHaveClass(/error/);
+  // and the live region says so, for anyone not watching the status strip
+  await expect(page.locator('.visually-hidden[aria-live="polite"]')).toContainText(/save failed/i);
+});
+
 test('board picker: create, switch, and isolate content between boards', { tag: '@boards' }, async ({ page }) => {
   // start with one board; put a card on it
   await makeCardAt(page, 350, 300, { title: 'On board one' });

@@ -503,8 +503,16 @@
     saveViewport(currentBoardId);
   }
 
+  // Returns false when the write failed — a full localStorage quota is the
+  // realistic cause (pasted images are the only content big enough to fill it).
+  // Callers on the editing path MUST surface that: swallowing it here reported
+  // "saved" for a board that no longer existed on disk, so a reload silently
+  // rolled back to the last write that fit. Incidental callers (migration,
+  // Drive's local cache) ignore the result — for them a lost write is
+  // re-derivable, not the user's only copy.
   function saveBoardContent(id, b) {
-    try { localStorage.setItem(boardKey(id), JSON.stringify(contentForStore(b))); } catch (e) { /* quota */ }
+    try { localStorage.setItem(boardKey(id), JSON.stringify(contentForStore(b))); return true; }
+    catch (e) { console.error('Save failed', e); return false; }
   }
 
   // Build/repair the library: migrate the legacy single-board key, then
@@ -548,7 +556,7 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        saveBoardContent(currentBoardId, board);
+        if (!saveBoardContent(currentBoardId, board)) { setSaveState('error'); return; }
         touchLibrary(currentBoardId);
         setSaveState('saved');
         // Drive is NOT pushed here — pushes are batched onto the sync tick
@@ -6385,8 +6393,10 @@
     flushViewport();                    // persist pan/zoom before leaving (local-only)
     if (saveTimer) {
       clearTimeout(saveTimer); saveTimer = null;
-      try { saveBoardContent(currentBoardId, board); touchLibrary(currentBoardId); setSaveState('saved'); }
-      catch (e) { console.error('Save failed', e); }
+      try {
+        if (saveBoardContent(currentBoardId, board)) { touchLibrary(currentBoardId); setSaveState('saved'); }
+        else setSaveState('error');   // the tab may be closing, but a switch-back must not read "saved"
+      } catch (e) { console.error('Save failed', e); setSaveState('error'); }
     }
     if (DRIVE.isConnected()) reconcileDriveBoard(currentBoardId);   // push this window's edits now
   }
