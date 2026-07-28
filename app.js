@@ -1972,12 +1972,17 @@
   //  one element and `nodeEls` stays a single map. Both windows
   //  share ONE world coordinate space — only the viewing
   //  transform differs — so gesture math stays uniform through
-  //  pointerWorld()/ctxToWorld(). Membership is geometric
-  //  (fully inside the frame rect, same rule as frameContents)
-  //  and recomputed at every commit/reconcile; crossing the
-  //  boundary just reparents the element. Dock state is a
-  //  per-DEVICE view preference (stored with the viewport,
-  //  never board content, never synced).
+  //  pointerWorld()/ctxToWorld(). Membership is STICKY, not
+  //  geometric: each docked frame carries an explicit member
+  //  list (`dockMembers`) on its own card record, seeded
+  //  center-in-rect at dock time and changed only by gestures —
+  //  geometry must never silently reassign. Crossing the
+  //  boundary reparents the element. Which frames are docked
+  //  and what they contain is board CONTENT (it syncs, it
+  //  undoes); only the arrangement — active tab, minimized,
+  //  width, each tab's pan/zoom — is per-device chrome stored
+  //  with the viewport. See ARCHITECTURE.md → Docked frame
+  //  window for the full rules.
   // ════════════════════════════════════════════════════════
   const dockPanel = document.getElementById('dock-panel');
   const dockViewport = document.getElementById('dock-viewport');
@@ -2267,14 +2272,18 @@
     if (!dock) return;
     fid = fid || dock.active;
     const d = board.cards[fid];
+    // The complete live member set. NOT the stored `dockMembers` array: that
+    // omits buttons attached to a member (they ride with their root, so they
+    // were never listed), and they have to be enclosed and moved like anything
+    // else. Captured before recomputeDockMembers clears the index.
+    const members = [...dockMembers.keys()].filter((id) => dockMembers.get(id) === fid);
     // members may live anywhere around the region (free surface) — grow the
     // frame to CONTAIN them all before they land back on the canvas, so an
     // undocked frame always fully encloses its contents
     if (d && d.kind === 'frame') {
       const pad = 24;
       let minX = d.x, minY = d.y, maxX = d.x + d.w, maxY = d.y + d.h;
-      for (const id of d.dockMembers || []) {
-        if (dockMembers.get(id) !== fid) continue;
+      for (const id of members) {
         const g = nodeGeom(id);
         if (!g) continue;
         minX = Math.min(minX, g.x - pad); minY = Math.min(minY, g.y - pad);
@@ -2288,7 +2297,10 @@
     }
     dock = deriveDockTabs(dock);
     recomputeDockMembers();            // that region's nodes go back to the canvas
-    syncDockPanel();
+    syncDockPanel();                   // …and the panel closes, if that was the last tab
+    // Bring the region to the user, not the camera to the region. Called AFTER
+    // syncDockPanel so visibleRect() knows whether the panel is still there.
+    if (d && d.kind === 'frame') landRegionInView(fid, members);
     if (board.cards[fid]) renderCard(fid);   // apply the (possibly grown) rect
     const f = nodeEls.get(fid);
     if (f) f.classList.remove('frame-docked');
@@ -2298,6 +2310,53 @@
     commit();                          // undocking is content now too
     flushViewport();
   }
+
+  // An undocking region has to arrive somewhere the user can see. The panel
+  // carries its own pan/zoom, so the frame's world position is usually nowhere
+  // near where the canvas happens to be looking — an undock that dropped it
+  // off screen read as the contents having vanished. Moving the region rather
+  // than the camera keeps the user's place on the board, and matches what
+  // unpinning a button already does (see unpinNode: "its old spot may be far
+  // off"). The move is content — it syncs and rides the caller's commit as one
+  // undo step with the rest of the undock. Any zoom change is view-only and
+  // commits separately through setMainViewport.
+  function landRegionInView(fid, members) {
+    const d = board.cards[fid];
+    if (!d) return;
+    const r = visibleRect();
+    const v = board.viewport;
+    // Already sitting fully in view? Leave both the board and the camera be —
+    // no sense dirtying content to nudge a frame the user is looking at.
+    const sx = d.x * v.zoom + v.x, sy = d.y * v.zoom + v.y;
+    if (sx >= r.x && sy >= r.y &&
+        sx + d.w * v.zoom <= r.x + r.w && sy + d.h * v.zoom <= r.y + r.h) return;
+
+    // Rigid translation: the frame and every member shift by one delta, so
+    // relative layout (and every arrow between them) is preserved exactly.
+    const dx = Math.round((r.x + r.w / 2 - v.x) / v.zoom - (d.x + d.w / 2));
+    const dy = Math.round((r.y + r.h / 2 - v.y) / v.zoom - (d.y + d.h / 2));
+    if (dx || dy) {
+      d.x += dx; d.y += dy;
+      for (const id of members) {
+        const n = getNode(id);
+        if (n) { n.data.x += dx; n.data.y += dy; }
+      }
+      for (const id of [fid, ...members]) renderNodeNow(id);
+      layoutAttachments();      // attached buttons re-derive from their moved host
+    }
+
+    // Too big for the view at this zoom? Pull back just far enough. Never
+    // zooms IN: a small region shouldn't commandeer the zoom the user chose.
+    const pad = 24;
+    const fit = Math.min(r.w / (d.w + pad * 2), r.h / (d.h + pad * 2));
+    if (fit >= v.zoom) return;
+    const zoom = Math.max(MIN_ZOOM, fit);
+    setMainViewport(
+      r.x + r.w / 2 - (d.x + d.w / 2) * zoom,
+      r.y + r.h / 2 - (d.y + d.h / 2) * zoom,
+      zoom);
+  }
+
   function setDockMinimized(min) {
     if (!dock || dock.minimized === !!min) return;
     dock.minimized = !!min;

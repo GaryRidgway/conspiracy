@@ -174,6 +174,21 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   contents); undock first. Deleting it (or losing it to undo/remote merge)
   closes its tab — `deriveDockTabs` just won't find `dockMembers` on it
   anymore; the last tab closing hides the panel.
+- **Undocking moves the region, not the camera** (`landRegionInView`). The
+  panel has its own pan/zoom, so a frame's world position is usually far
+  from wherever the canvas is looking; handing it back at those coordinates
+  put it off screen, which read as the contents vanishing. The frame grows
+  to enclose its members, then frame and members translate by ONE delta to
+  the centre of `visibleRect()` — rigid, so relative layout and every
+  internal arrow survive. It then zooms out if the region overflows the
+  view, never in. Skipped entirely when the frame is already fully visible:
+  no point dirtying content to nudge what the user is looking at. Same
+  bargain as `unpinNode`, and the same cost — position becomes a per-device
+  artifact that syncs, so another device sees the region jump. The move is
+  content and rides undock's own `commit()` as one undo step; the zoom is
+  view-only through `setMainViewport`. The member list comes from the
+  `dockMembers` INDEX, not the stored array: the array omits buttons
+  attached to a member, which still have to travel.
 - Main-canvas geometry consumers exclude members: fit, marquee (per-window
   via `ctx`), `findSnapTarget` (same-window only). `frameViewState`
   treats panel embeds as visible while open, far while minimized.

@@ -4,12 +4,14 @@
 //  second window (#dock-panel) into the same world. Exclusive model — while
 //  docked, the region's nodes live in #dock-world (the canvas shows only the
 //  frame's collapsed tab), so every node still has exactly one element.
-//  Both windows share world coordinates; membership is geometric and
-//  recomputed at every commit, which is what makes cross-window drags work.
-//  Dock state is per-device view preference (rides the viewport key).
+//  Both windows share world coordinates, which is what makes cross-window
+//  drags work. Membership is STICKY, not geometric: an explicit `dockMembers`
+//  list on the frame's own card record, so it's board content that syncs and
+//  undoes. Only the arrangement (active tab, minimized, width, per-tab
+//  pan/zoom) is per-device view state riding the viewport key.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { drag, addCardAt, nodePos, installErrorGuard } from './helpers.js';
+import { drag, addCardAt, nodePos, worldScale, installErrorGuard } from './helpers.js';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
 
@@ -631,4 +633,100 @@ test('an embed reparented by docking shows its placeholder until the reload pain
   await expect(embed).not.toHaveClass(/reloading/);
   await expect(embed.locator('.frame-placeholder')).toBeHidden();
   await expect(embed.locator('.ph-note')).toHaveText(/click to load/i);   // idle text restored
+});
+
+// The panel carries its own pan/zoom, so a frame's world position is usually
+// nowhere near where the canvas is looking. Undocking used to hand the region
+// back at those coordinates — off screen, reading as "my contents vanished".
+// It now comes to the user instead: the frame and every member translate
+// rigidly to the middle of the visible canvas.
+test('undocking lands the region in the middle of the current view', { tag: ['@dock', '@nav'] }, async ({ page }) => {
+  const frame = await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  const framePos = await nodePos(frame);
+  const before = await nodePos(card);
+  const offset = { x: before.x - framePos.x, y: before.y - framePos.y };
+  await dockViaMenu(page);
+
+  // wander the canvas away from the region's world coordinates
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 4; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 900, deltaY: 500, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+
+  // the whole frame is on screen…
+  const box = await frame.boundingBox();
+  const vp = page.viewportSize();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  // …and roughly centred horizontally (vertically the toolbar shifts it down)
+  expect(Math.abs(box.x + box.width / 2 - vp.width / 2)).toBeLessThan(40);
+
+  // the member travelled by the same delta — relative layout is preserved
+  const afterFrame = await nodePos(frame);
+  const after = await nodePos(card);
+  expect(after.x - afterFrame.x).toBe(offset.x);
+  expect(after.y - afterFrame.y).toBe(offset.y);
+
+  // and the whole undock, move included, is ONE undo step
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await nodePos(card)).toEqual(before);
+});
+
+// Centring alone isn't enough when the region is bigger than the window — at
+// 300% a default 640x400 frame is 1920x1200. Pull the camera back just far
+// enough, and never the other way: a small region must not commandeer the zoom
+// level the user picked.
+test('undocking zooms out only when the region overflows the view', { tag: ['@dock', '@nav'] }, async ({ page }) => {
+  const frame = await addFrame(page);
+  await addCardAt(page, 640, 360);
+  await dockViaMenu(page);
+  const zoomIn = (n) => page.evaluate((count) => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < count; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaY: -600, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
+  }, n);
+
+  await zoomIn(14);
+  const zoomed = await worldScale(page);
+  expect(zoomed).toBeGreaterThan(2);
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+
+  expect(await worldScale(page)).toBeLessThan(zoomed);      // pulled back
+  const box = await frame.boundingBox();                    // and it all fits
+  const vp = page.viewportSize();
+  expect(box.width).toBeLessThanOrEqual(vp.width);
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+});
+
+test('undocking a frame already in view moves nothing and leaves the camera alone', { tag: ['@dock', '@nav'] }, async ({ page }) => {
+  const frame = await addFrame(page);
+  const card = await addCardAt(page, 560, 300);             // well inside the region
+  // shrink the world so the default frame sits comfortably inside the view
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 6; i++) v.dispatchEvent(new WheelEvent('wheel',
+      { deltaY: 600, clientX: 600, clientY: 400, ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  const framePos = await nodePos(frame);
+  const cardPos = await nodePos(card);
+  const zoom = await worldScale(page);
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  await page.click('#dockUndockBtn');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  expect(await nodePos(frame)).toEqual(framePos);           // untouched content…
+  expect(await nodePos(card)).toEqual(cardPos);
+  expect(await worldScale(page)).toBeCloseTo(zoom, 5);      // …and untouched camera
 });

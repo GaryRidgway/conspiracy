@@ -310,6 +310,12 @@ main view.
   rectangle. The panel is a free work surface.
 - A docked frame **can't be moved or resized** — its rectangle anchors its
   tab's contents. Undock first.
+- **Undocking brings the frame to you**, rather than sending your view to
+  it. The frame first grows to enclose everything you put in the panel, then
+  the whole group lands in the middle of your current view, keeping its
+  internal layout. If it's too big for the window, the canvas zooms out far
+  enough to show all of it. A frame that's already fully on screen stays
+  exactly where it is.
 - Arrows draw when both ends are in the same window; an arrow spanning
   the boundary hides itself (the connection is not lost, and comes back
   when both ends are together again).
@@ -328,8 +334,9 @@ zoom. Useful for the two or three jumps you make constantly.
   their color.
 - Right-click a chip for *Unpin*, *Rename*, link options, *Duplicate*,
   *Copy*, *Cut*, colors, *Delete*.
-- Pinning remembers the button's canvas position, so unpinning puts it
-  back where it was.
+- Unpinning drops the button in the middle of your current view, not back
+  where it came from — after a while pinned, its old spot is usually
+  somewhere you're no longer looking.
 - A pinned button has no canvas presence: it's skipped by box-select,
   **Tab**, Fit, search results, and frame-carry.
 - Pins are part of the board, so they follow it to your other devices.
