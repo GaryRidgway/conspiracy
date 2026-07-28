@@ -82,6 +82,54 @@ image node.
 top-level collection — deployed clients' `mergeBoards` would silently drop
 it. See `ARCHITECTURE.md` → *Node kinds*.
 
+## Intent-based frame membership
+
+Replace `frameContents()` — which is purely geometric — with an explicit
+member list, so a frame carries what you *put* in it rather than whatever
+happens to be inside its rectangle.
+
+This is the last place in the app where geometry silently reassigns
+ownership. The docked panel already fixed the same flaw for itself:
+`ARCHITECTURE.md` → *Docked frame window* records membership as **sticky,
+not geometric**, an explicit `dockMembers` list on the frame's own card
+record, seeded once and changed only by gestures, with "the drop/creation
+position is law." Canvas frames never got the same treatment, so
+`moveContents` still means "drag whatever my rectangle encloses."
+
+The concrete bug: `landRegionInView` centres an undocking frame in your
+view, and it can land on unrelated cards. Those cards are now geometrically
+inside it, so the next drag of that frame carries them off. Nothing tells
+you it happened.
+
+**The design is already settled by precedent** — don't redesign it:
+
+- A member list array on the frame's own card record, exactly like
+  `dockMembers`. Its merge behavior is known and accepted: non-overlapping
+  edits to different frames both survive; the same frame edited on both
+  sides is a field conflict, local wins, shown in merge review.
+- Membership changes only by gesture. The dock enumerated the full set once
+  and it transfers: drop in joins, drop out leaves, create-inside joins,
+  paste joins, a duplicate follows its source, an attached-button assembly
+  follows its root — and undo/redo of every one of those.
+- Moving or resizing the *frame* changes nothing. That's the whole point.
+
+Two decisions are open, and both are one-way:
+
+- **Migration.** Do existing frames snapshot their current geometric
+  contents, permanently adopting any unrelated overlap, or start empty and
+  silently stop carrying on boards that rely on it? Snapshotting matches how
+  docking seeds membership center-in-rect, and `migrateLegacyDockMembers` is
+  the precedent for the upgrade path.
+- **The mixed-version window.** A deployed client without this change keeps
+  using geometric contents, so for a while an old client dragging a frame
+  carries different items than a new one. The field itself survives
+  per-record merge, so this is divergent behavior, not data loss — and
+  `main` auto-deploys, so the window is short.
+
+Worth deciding at the same time whether `moveContents` survives as a toggle
+at all. Once membership is deliberate, "carry my members" may just be what a
+frame does.
+
 ## Design pass
 
 Revisit the whole visual language as one piece rather than per-feature:
