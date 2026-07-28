@@ -160,7 +160,11 @@ network on open:
 - Far away, or shrunk very small → stays a **"click to load"**
   placeholder. Click it to force the load.
 
-Once loaded, an embed stays loaded.
+Once loaded, an embed stays loaded — with one exception. Docking or
+undocking a frame physically moves the embeds in its region between the two
+windows, and a moved embed always reloads from scratch, losing whatever was
+on the page (scroll position, a part-filled form). You'll see the
+placeholder return, reading **"reloading…"**, until it paints again.
 
 **Many sites refuse to be embedded** (`X-Frame-Options` / CSP) and will
 show a blank box. That's the site's choice, not a bug — the dialog warns
@@ -329,6 +333,8 @@ zoom. Useful for the two or three jumps you make constantly.
 - A pinned button has no canvas presence: it's skipped by box-select,
   **Tab**, Fit, search results, and frame-carry.
 - Pins are part of the board, so they follow it to your other devices.
+- The dock grows upward and stops short of the toolbar; past that it
+  scrolls, so pin as many as you like.
 - Only buttons can be pinned today.
 
 ## Undo, and how saving works
@@ -344,6 +350,11 @@ zoom. Useful for the two or three jumps you make constantly.
 - Saving is automatic and local, about a third of a second after you stop
   editing. The **status strip** shows `saving…` then `saved` — wait for
   `saved` before closing the tab.
+- If the strip turns red and reads `save failed`, the browser refused the
+  write and **this board is not on disk**. Running out of browser storage is
+  the realistic cause, and pasted images are what fills it. Export the board
+  to a file before reloading, or you'll lose everything since the last
+  successful save.
 
 ## Boards
 
