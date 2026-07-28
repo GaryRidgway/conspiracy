@@ -170,6 +170,7 @@
     const TOKEN_CACHE = 'whiteboard:drive:tok';
     let tokenClient = null, accessToken = null, tokenExpiry = 0;
     let gisLoaded = false;
+    let pendingAuth = null;   // resolver for the in-flight connect(); see connect()
 
     const configured = () => !!cfg.googleClientId;
     const tokenValid = () => !!accessToken && Date.now() < tokenExpiry - 60000;
@@ -212,18 +213,29 @@
       if (!configured()) throw new Error('Google Drive is not configured (missing client ID in config.js).');
       await ensureGis();
       return new Promise((resolve, reject) => {
+        // The token client is created ONCE but every connect() needs its own
+        // settlement, so the resolver lives in a slot the callbacks read at fire
+        // time. Closing over the first call's resolve/reject instead left every
+        // LATER connect() pending forever: one failed reconnect and the Connect
+        // button hung disabled for the rest of the page's life.
+        pendingAuth = { resolve, reject };
         if (!tokenClient) {
           tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: cfg.googleClientId,
             scope: SCOPE,
             callback: (resp) => {
-              if (resp && resp.error) { reject(new Error(resp.error)); return; }
+              const p = pendingAuth; pendingAuth = null;
+              if (!p) return;
+              if (resp && resp.error) { p.reject(new Error(resp.error)); return; }
               accessToken = resp.access_token;
               tokenExpiry = Date.now() + (resp.expires_in || 3600) * 1000;
               persistToken();
-              resolve(accessToken);
+              p.resolve(accessToken);
             },
-            error_callback: (err) => reject(new Error((err && err.type) || 'auth failed')),
+            error_callback: (err) => {
+              const p = pendingAuth; pendingAuth = null;
+              if (p) p.reject(new Error((err && err.type) || 'auth failed'));
+            },
           });
         }
         tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });

@@ -344,6 +344,12 @@ Invariants that took real bugs to learn — keep them:
    runs when the board menu opens, never on bare page load — Google's token
    flow opens a popup the browser blocks outside a gesture. Most reloads skip
    it anyway via the sessionStorage token cache.
+8. **One resolver slot per `connect()`, not a closure**: the GIS token client is
+   created once, so its `callback`/`error_callback` must read `pendingAuth` at
+   fire time. Closing over the first call's `resolve`/`reject` left every LATER
+   `connect()` pending forever: one failed silent reconnect and the Connect
+   button hung disabled for the rest of the page's life, which read as "Drive
+   just doesn't connect."
 
 ### Merge semantics (`mergeBoards`, pure, tested)
 
