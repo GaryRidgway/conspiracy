@@ -31,7 +31,9 @@ is everything around handing a board to somebody else:
   nothing in the UI tells you where the file actually is.
 
 Worth pairing with a **subtle syncing/synced affordance during background
-pushes**: the Drive bar reports state, but only if the board menu is open.
+pushes**. The status strip now surfaces the one state that can't wait for
+you to open a menu — `Drive: reconnect`, i.e. edits are not reaching Drive
+— but `syncing…`/`synced`/`changes pending…` are still board-menu-only.
 
 ## Board history
 

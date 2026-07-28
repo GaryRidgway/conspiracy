@@ -216,8 +216,9 @@
         // The token client is created ONCE but every connect() needs its own
         // settlement, so the resolver lives in a slot the callbacks read at fire
         // time. Closing over the first call's resolve/reject instead left every
-        // LATER connect() pending forever: one failed reconnect and the Connect
-        // button hung disabled for the rest of the page's life.
+        // LATER connect() pending forever — which is the state a user hit
+        // constantly: one failed silent reconnect, then the Connect button hangs
+        // disabled for the rest of the page's life.
         pendingAuth = { resolve, reject };
         if (!tokenClient) {
           tokenClient = google.accounts.oauth2.initTokenClient({
@@ -359,7 +360,14 @@
       });
     }
 
-    return { configured, isConnected: tokenValid, connect, signOut,
+    // Load the Google script WITHOUT asking for a token. Callers use this to get
+    // the network round-trip out of the way before a gesture arrives, so that
+    // connect() runs inside the gesture's activation window instead of after a
+    // cold script fetch. Never call it before the user has opted in — the app is
+    // network-clean until then.
+    const warmup = () => ensureGis().catch(() => { /* offline; connect() will report it */ });
+
+    return { configured, isConnected: tokenValid, connect, signOut, warmup,
              createFile, updateFile, renameFile, getFile, getMeta, pickFile };
   })();
 
@@ -6032,6 +6040,7 @@
   const driveSaveBtn = document.getElementById('driveSaveBtn');
   const driveSignoutBtn = document.getElementById('driveSignoutBtn');
   const openDriveBtn = document.getElementById('openDriveBtn');
+  const driveReconnectBtn = document.getElementById('driveReconnectBtn');   // in #status, not the board menu
 
   function setDriveState(cls, text) {
     if (!driveStateEl) return;
@@ -6080,6 +6089,18 @@
     else if (!onDrive) setDriveState('connected', 'Drive: connected');
     else if (currentBoardFullySynced()) setDriveState('connected', 'Drive: synced');
     else setDriveState('pending', 'Drive: changes pending…');
+    updateDriveChip();
+  }
+
+  // The always-visible half of the Drive status. Shown ONLY for a user who has
+  // connected before and isn't connected now — that's the state where edits are
+  // quietly not reaching Drive. A user who never opted in gets nothing, so the
+  // strip stays free of Drive noise for the local-only case.
+  function updateDriveChip() {
+    if (!driveReconnectBtn) return;
+    const stranded = DRIVE.configured() && !DRIVE.isConnected() &&
+                     localStorage.getItem(DRIVE_OPTED_KEY) === '1';
+    driveReconnectBtn.classList.toggle('hidden', !stranded);
   }
 
   // Remember that the user opted into Drive so we can silently reconnect on the
@@ -6521,20 +6542,68 @@
   }
 
   // Attempt a silent (popup-free) reconnect for a returning opted-in user.
-  // MUST run inside a user gesture (e.g. opening the board menu): Google's token
-  // flow can only suppress its popup when invoked from a gesture, and a token
-  // restored from sessionStorage means most reloads skip this entirely. We never
-  // call it on bare page load — that's what was triggering the blocked popup.
+  // MUST run inside a user gesture: Google's token flow can only suppress its
+  // popup when invoked from a gesture, and a token restored from sessionStorage
+  // means most reloads skip this entirely. We never call it on bare page load —
+  // that's what was triggering the blocked popup.
+  //
+  // These failures mean the request never reached Google, so they teach us
+  // nothing about the user's session — re-arm and retry on the next gesture.
+  // Every other error (login_required, consent_required, access_denied) IS an
+  // answer: only the Connect button can fix it, so stop asking.
+  const RETRYABLE_AUTH_ERRORS = new Set(['popup_failed_to_open', 'popup_closed', 'auth failed']);
+  const MAX_SILENT_ATTEMPTS = 3;           // a permanently popup-blocked page must not retry forever
   let autoConnectTried = false;
+  let autoConnectAttempts = 0;
   async function tryDriveSilentReconnect() {
-    if (autoConnectTried) return;          // once per session is enough
+    if (autoConnectTried) return;          // a definitive answer, or attempts exhausted
     if (!DRIVE.configured() || DRIVE.isConnected()) return;
     if (localStorage.getItem(DRIVE_OPTED_KEY) !== '1') return;
     autoConnectTried = true;
+    autoConnectAttempts++;
     try { await DRIVE.connect(false); }    // prompt:'none' → resolves via hidden iframe or fails quietly
-    catch (e) { /* session expired / consent revoked — show Connect */ }
+    catch (e) {
+      if (RETRYABLE_AUTH_ERRORS.has(String(e && e.message)) && autoConnectAttempts < MAX_SILENT_ATTEMPTS) {
+        autoConnectTried = false;
+        armDriveGestureHook();             // the gesture that got us here is spent; wait for the next
+      }
+    }
     updateDriveUI();
     if (DRIVE.isConnected()) maybeReconcileCurrent();   // catch up the open board
+  }
+
+  // Ride the FIRST user gesture of any kind. This used to hang off the board
+  // menu opening alone, which left a returning user's board silently unsynced
+  // (syncTick bails on !isConnected) until they thought to open a dropdown they
+  // had no reason to open.
+  //
+  // Only DISCRETE input grants transient activation. mousemove, wheel, scroll and
+  // focus are continuous and grant none, so hooking them would reproduce exactly
+  // the blocked popup that keeping this off page load was meant to avoid.
+  // Just these two: pointerdown already covers mouse, touch and pen, and a
+  // right-click fires its own pointerdown before contextmenu. Adding the
+  // redundant ones means ONE user action fires the hook twice, which after a
+  // failure spends two retries on a single click.
+  const DRIVE_GESTURE_EVENTS = ['pointerdown', 'keydown'];
+  // Chrome grants no activation for a modifier-only keydown, and Shift+Tab is a
+  // keyboard user's opening keystroke about as often as bare Tab — so the Shift
+  // half would spend an attempt on a press that cannot possibly succeed.
+  const BARE_MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+  function onDriveGesture(e) {
+    if (e.type === 'keydown' && BARE_MODIFIER_KEYS.has(e.key)) return;
+    disarmDriveGestureHook();
+    tryDriveSilentReconnect();
+  }
+  function armDriveGestureHook() {
+    // Passive + capture: this observes, it never intercepts. CLAUDE.md's
+    // onCanvas/editing rule guards handlers that CONSUME keys; this one doesn't
+    // preventDefault, so it can safely fire from a text field or chrome focus.
+    for (const ev of DRIVE_GESTURE_EVENTS)
+      window.addEventListener(ev, onDriveGesture, { capture: true, passive: true });
+  }
+  function disarmDriveGestureHook() {
+    for (const ev of DRIVE_GESTURE_EVENTS)
+      window.removeEventListener(ev, onDriveGesture, { capture: true });
   }
 
   if (driveConnectBtn) {
@@ -6548,6 +6617,26 @@
     driveSaveBtn.addEventListener('click', linkCurrentBoardToDrive);
     openDriveBtn.addEventListener('click', openFromDrive);
     driveSignoutBtn.addEventListener('click', () => { DRIVE.signOut(); forgetDriveOptIn(); updateDriveUI(); });
+  }
+
+  if (driveReconnectBtn) {
+    driveReconnectBtn.addEventListener('click', async () => {
+      // The pointerdown that opened this click already fired the first-gesture
+      // hook, which may have reconnected silently on the way here. Asking again
+      // would be a popup the user didn't need.
+      if (DRIVE.isConnected()) { updateDriveUI(); return; }
+      driveReconnectBtn.disabled = true;
+      disarmDriveGestureHook();
+      // Interactive: the chip is only reachable once the silent path has had its
+      // turn and failed, so suppressing the popup here would fail the same way.
+      try { await DRIVE.connect(true); rememberDriveOptIn(); }
+      catch (e) { console.error(e); }
+      finally {
+        driveReconnectBtn.disabled = false;
+        updateDriveUI();
+        if (DRIVE.isConnected()) maybeReconcileCurrent();
+      }
+    });
   }
 
   function updateBoardMenuLabel() {
@@ -6746,4 +6835,13 @@
   window.addEventListener('hashchange', onBoardHashChange);
   maybeReconcileCurrent();   // if connected (cached token) and the open board is Drive-backed, sync it
   startSyncPolling();        // keep the open Drive board fresh in the background
+  updateDriveChip();
+  // A returning opted-in user whose session token has expired. Warm the Google
+  // script NOW so the first-gesture reconnect calls for a token inside that
+  // gesture's activation window rather than after a cold cross-network fetch,
+  // which can outlast the window and fail for a reason that looks like consent.
+  if (DRIVE.configured() && !DRIVE.isConnected() && localStorage.getItem(DRIVE_OPTED_KEY) === '1') {
+    DRIVE.warmup();
+    armDriveGestureHook();
+  }
 })();

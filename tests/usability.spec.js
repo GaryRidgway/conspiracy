@@ -1762,6 +1762,120 @@ test('Drive bar is present and loads no Google scripts until Connect', { tag: '@
   expect(await page.locator('script[src*="google"]').count()).toBe(0);
 });
 
+// ── Silent reconnect for a returning opted-in user ──
+// Google's token flow only suppresses its popup inside a real user gesture, so
+// the reconnect rides the first discrete input. These boot the app as a user who
+// has connected before but whose session token is gone, with Google's script
+// replaced by a local stub that records what was asked of it — the route means
+// no request leaves the machine, so the suite stays network-clean.
+const GIS_URL = 'https://accounts.google.com/gsi/client';
+const GIS_STUB = `
+  window.__gis = { calls: [], grant: window.__gisGrant === true, refuse: window.__gisRefuse || null };
+  window.google = { accounts: { oauth2: {
+    initTokenClient(cfg) {
+      return { requestAccessToken(opts) {
+        // prompt:'' is our interactive ask; prompt:'none' is the silent one
+        window.__gis.calls.push((opts && opts.prompt) === 'none' ? 'silent' : 'interactive');
+        if (window.__gis.grant) cfg.callback({ access_token: 'stub-token', expires_in: 3600 });
+        // A definitive answer arrives on the normal callback as resp.error; a
+        // request that never got through arrives on error_callback as a type.
+        else if (window.__gis.refuse) cfg.callback({ error: window.__gis.refuse });
+        else cfg.error_callback({ type: 'popup_failed_to_open' });   // as a popup blocker looks
+      } };
+    },
+    revoke() {},
+  } } };
+`;
+
+// Boots as an opted-in-but-disconnected user and waits for the warmup to land.
+// `grant` hands out a token; `refuse` returns a definitive OAuth error instead
+// of the blocked-popup one, which is what stops the retry loop.
+async function bootOptedIn(page, { grant = false, refuse = null } = {}) {
+  await page.route(GIS_URL, (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: GIS_STUB }));
+  await page.addInitScript(([g, r]) => {
+    window.__gisGrant = g;
+    window.__gisRefuse = r;
+    localStorage.setItem('whiteboard:drive:opted', '1');
+  }, [grant, refuse]);
+  await page.reload();
+  // boot warms the script so the first gesture isn't racing a cold fetch
+  await page.waitForFunction(() => !!window.__gis);
+}
+const gisCalls = (page) => page.evaluate(() => window.__gis.calls);
+
+test('an opted-in user reconnects to Drive on the first click, without opening the board menu',
+  { tag: '@boards' }, async ({ page }) => {
+    await bootOptedIn(page, { grant: true });
+    // warming the script must NOT ask for a token on its own — that's the bare
+    // page-load request that the browser blocks
+    expect(await gisCalls(page)).toEqual([]);
+    await expect(page.locator('#driveReconnectBtn')).toBeVisible();
+
+    await page.mouse.click(600, 400);                       // anywhere on the canvas
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+    expect(await gisCalls(page)).toEqual(['silent']);
+    // and the board menu now reports it without a Connect button
+    await page.click('#boardMenuBtn');
+    await expect(page.locator('#drive-state')).toHaveText(/connected/i);
+    await expect(page.locator('#driveConnectBtn')).toBeHidden();
+  });
+
+test('a bare modifier keypress does not spend the Drive reconnect attempt',
+  { tag: ['@boards', '@a11y'] }, async ({ page }) => {
+    await bootOptedIn(page, { grant: true });
+    // Shift+Tab is a keyboard user's opening move; the Shift half grants no
+    // activation, so consuming the hook there would strand them offline.
+    await page.keyboard.down('Shift');
+    expect(await gisCalls(page)).toEqual([]);
+    await page.keyboard.up('Shift');
+
+    await page.keyboard.press('Tab');                       // a real activation-granting press
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+    expect(await gisCalls(page)).toEqual(['silent']);
+  });
+
+test('a blocked silent reconnect retries on the next gesture instead of giving up',
+  { tag: '@boards' }, async ({ page }) => {
+    await bootOptedIn(page, { grant: false });
+    await page.mouse.click(600, 400);
+    // refused for a reason that says nothing about the user's session, so the
+    // chip stays up and the hook stays armed
+    expect(await gisCalls(page)).toEqual(['silent']);
+    await expect(page.locator('#driveReconnectBtn')).toBeVisible();
+
+    await page.evaluate(() => { window.__gis.grant = true; });
+    await page.mouse.click(620, 420);
+    expect(await gisCalls(page)).toEqual(['silent', 'silent']);
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+  });
+
+test('a local-only user gets no Drive chip and no Google scripts',
+  { tag: ['@boards', '@chrome'] }, async ({ page }) => {
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+    expect(await page.locator('script[src*="google"]').count()).toBe(0);
+  });
+
+// The chip is the fallback for when silent reconnect CAN'T work — a revoked
+// consent, an expired Google session. Those refusals stop the retry loop, so the
+// chip is the only way back, and one click has to be enough.
+test('the Drive chip escalates to an interactive connect when the silent path is refused',
+  { tag: ['@boards', '@chrome'] }, async ({ page }) => {
+    await bootOptedIn(page, { refuse: 'consent_required' });
+    await page.mouse.click(600, 400);
+    expect(await gisCalls(page)).toEqual(['silent']);
+    await expect(page.locator('#driveReconnectBtn')).toBeVisible();
+
+    // a definitive refusal must NOT re-arm — otherwise every click re-asks
+    await page.mouse.click(620, 420);
+    expect(await gisCalls(page)).toEqual(['silent']);
+
+    await page.evaluate(() => { window.__gis.grant = true; });
+    await page.click('#driveReconnectBtn');
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+    expect(await gisCalls(page)).toEqual(['silent', 'interactive']);
+  });
+
 // ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
 //    Exercised directly via the pure window.__wb_mergeBoards hook (no OAuth). ──
 

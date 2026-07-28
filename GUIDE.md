@@ -406,6 +406,22 @@ leave the page. The Drive bar tells you where you stand: `synced`,
 `changes pending…`, `syncing…`, `merging…`. Local saves are always
 immediate regardless — Drive is the slower, batched layer on top.
 
+### Reconnecting on a later visit
+
+You only sign in once. After that, the first time you click or type on a
+new visit, the app reconnects on its own — you don't need to open the
+board menu, and there's no popup. Google's sign-in only lasts about an
+hour per browser session, which is why a reconnect is needed at all; it
+waits for a click or keypress because browsers only let a sign-in window
+open in response to something you did.
+
+If it can't reconnect silently — you signed out of Google, or revoked the
+app's access — a yellow **Drive: reconnect** button appears in the status
+strip at the bottom-left. That's the one Drive state visible without
+opening any menu, because it's the one that means *your edits aren't
+reaching Drive*. Clicking it signs you back in. Nothing appears there if
+you've never connected Drive.
+
 ### When two devices edited the same board
 
 The app merges automatically, field by field. Edits to different items,

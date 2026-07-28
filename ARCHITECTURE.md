@@ -341,9 +341,33 @@ Invariants that took real bugs to learn — keep them:
    the per-commit status refresh can't stomp the transient "syncing…/merging…"
    messages mid-reconcile.
 7. **Silent reconnect only inside a user gesture**: `tryDriveSilentReconnect`
-   runs when the board menu opens, never on bare page load — Google's token
-   flow opens a popup the browser blocks outside a gesture. Most reloads skip
-   it anyway via the sessionStorage token cache.
+   never runs on bare page load — Google's token flow opens a popup the browser
+   blocks outside a gesture. Most reloads skip it anyway via the sessionStorage
+   token cache. It rides the FIRST discrete input instead (`pointerdown` /
+   `keydown`, armed at boot for an opted-in user), because hanging it off the
+   board menu alone left a returning user's board silently unsynced —
+   `syncTick` bails on `!isConnected()` — until they opened a dropdown they had
+   no reason to open. Three constraints on any change here:
+   - Only **discrete** input grants transient activation. `mousemove`, `wheel`,
+     `scroll` and `focus` grant none, so widening to them would reproduce the
+     blocked popup this rule exists to avoid.
+   - Skip **modifier-only** keydowns (`Shift`, `Control`, …). Chrome grants no
+     activation for them, and Shift+Tab is a keyboard user's opening keystroke —
+     firing on the Shift half spends the attempt on a press that cannot succeed.
+   - Keep the event set **minimal**. `pointerdown` covers mouse, touch and pen,
+     and `contextmenu` is preceded by its own `pointerdown`; adding `pointerup`
+     or `contextmenu` makes one user action fire the hook twice, which after a
+     failure spends two retries on a single click.
+
+   `RETRYABLE_AUTH_ERRORS` separates "the request never reached Google"
+   (`popup_failed_to_open`, re-arm and retry, bounded by
+   `MAX_SILENT_ATTEMPTS`) from a definitive answer (`consent_required`,
+   `access_denied` — only the Connect button can fix it, so stop asking).
+   Boot also calls `DRIVE.warmup()` for an opted-in user: it loads the Google
+   script *without* asking for a token, so the gesture's ~5s activation window
+   isn't spent on a cold cross-network fetch. Warmup is gated on
+   `whiteboard:drive:opted`, which is what keeps the network-clean guarantee —
+   and the test asserting it — intact.
 8. **One resolver slot per `connect()`, not a closure**: the GIS token client is
    created once, so its `callback`/`error_callback` must read `pendingAuth` at
    fire time. Closing over the first call's `resolve`/`reject` left every LATER

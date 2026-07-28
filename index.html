@@ -100,6 +100,11 @@
   <div id="status">
     <span id="coords">x: 0  y: 0</span>
     <span class="save" id="saveState">saved</span>
+    <!-- Drive's real status lives in the board menu, which you have to open to
+         see. This is the one state worth surfacing without that: opted in, but
+         not connected, so nothing is syncing. Clicking it is itself the gesture
+         Google's token flow needs. -->
+    <button id="driveReconnectBtn" class="hidden">Drive: reconnect</button>
   </div>
 
   <!-- Settings: cog button (left of Help) opening board preferences -->

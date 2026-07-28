@@ -1159,6 +1159,21 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
    must not read as ambient telemetry. Tinted border, not a filled face. */
 #status:has(.save.error) { border-color: var(--danger); }
 #status .save.error { color: var(--danger); font-weight: 700; }
+/* The strip is pointer-events:none so it never eats canvas drags; the one
+   interactive thing in it has to opt back in. */
+#status #driveReconnectBtn {
+  pointer-events: auto;
+  font: inherit;
+  color: var(--phase-60, #F8CF5F);
+  background: transparent;
+  border: 1px solid var(--phase-60, #F8CF5F);
+  border-radius: 5px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+}
+#status #driveReconnectBtn.hidden { display: none; }
+#status #driveReconnectBtn:hover { background: rgba(248,207,95,0.14); }
+#status #driveReconnectBtn:disabled { opacity: 0.6; cursor: default; }
 
 /* ── Help (top-right): ? button opening the shortcuts panel ── */
 #help-wrap {
