@@ -396,9 +396,16 @@ opens the board menu.
 ## Google Drive sync
 
 Sync is **opt-in, per board**, and there's no server involved: each board
-becomes a single `.whiteboard.json` file in your own Google Drive, and the
+becomes a **folder** in your own Google Drive, holding a
+`.whiteboard.json` file and an `assets` folder of the board's pictures. The
 app requests only the narrow permission to manage files it created. Until
 you press Connect, the app makes no network requests at all.
+
+This is also what makes Drive the right home for an image-heavy board: the
+pictures live in your Drive rather than only in this browser's storage,
+which the browser is free to clear. Boards saved to Drive before this
+change were single files; they move into a folder of their own the next
+time they sync, keeping their history and their sync state.
 
 Open the board menu to find the Drive bar:
 

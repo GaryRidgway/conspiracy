@@ -2020,6 +2020,216 @@ test('the Drive chip escalates to an interactive connect when the silent path is
 // ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
 //    Exercised directly via the pure window.__wb_mergeBoards hook (no OAuth). ──
 
+// ── Drive folder layout: board JSON at the top, image bytes in assets/ ──
+// These replace Drive I/O with an in-page fake (window.__wb_drive is the app's
+// test seam) and boot with a cached token, which is exactly the path a reload
+// inside the token's hour takes. Nothing loads Google's scripts, so no request
+// leaves the machine and the network-clean guarantee holds.
+async function bootWithFakeDrive(page, { files = [], entry = null } = {}) {
+  await page.addInitScript(([seedFiles, seedEntry]) => {
+    // A live session without GIS: the app restores this token at startup.
+    sessionStorage.setItem('whiteboard:drive:tok', JSON.stringify({ t: 'stub-token', e: Date.now() + 3600e3 }));
+    localStorage.setItem('whiteboard:drive:opted', '1');
+    if (seedEntry) {
+      const lib = JSON.parse(localStorage.getItem('whiteboard:library') || '[]');
+      const e = lib.find((b) => b.id === localStorage.getItem('whiteboard:current'));
+      if (e) { Object.assign(e, seedEntry); localStorage.setItem('whiteboard:library', JSON.stringify(lib)); }
+    }
+    const D = window.__drive = { files: {}, next: 100, calls: [] };
+    for (const f of seedFiles) {
+      const rec = { version: 1, parents: [], ...f };
+      // Blobs can't cross into an init script, so image bytes arrive base64'd.
+      if (rec.blobBase64) {
+        const raw = atob(rec.blobBase64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        rec.blob = new Blob([bytes], { type: 'image/png' });
+        delete rec.blobBase64;
+      }
+      D.files[f.id] = rec;
+    }
+    const put = (f) => { const id = 'f' + (D.next++); D.files[id] = { id, version: 1, parents: [], ...f }; return D.files[id]; };
+    const kidsOf = (p) => Object.values(D.files).filter((f) => (f.parents || []).includes(p));
+
+    const install = (drive) => {
+      drive.createFolder = async (name, parent) => {
+        D.calls.push('createFolder:' + name);
+        return put({ name, folder: true, parents: parent ? [parent] : [] });
+      };
+      drive.renameFolder = async (id, name) => { D.files[id].name = name; return { id, name }; };
+      drive.listChildren = async (p) => kidsOf(p).map((f) => ({ id: f.id, name: f.name }));
+      drive.getParents = async (id) => (D.files[id].parents || []).slice();
+      drive.moveFile = async (id, add, remove) => {
+        const f = D.files[id];
+        const rm = String(remove || '').split(',').filter(Boolean);
+        f.parents = (f.parents || []).filter((p) => !rm.includes(p)).concat(add);
+        f.version++;                       // Drive bumps the version on a move
+        D.calls.push('moveFile');
+        return { id, version: f.version };
+      };
+      drive.createFile = async (name, content, parent) => {
+        D.calls.push('createFile');
+        return put({ name: name + '.whiteboard.json', json: JSON.stringify(content), parents: parent ? [parent] : [] });
+      };
+      drive.updateFile = async (id, content) => {
+        D.calls.push('updateFile');
+        const f = D.files[id];
+        f.json = JSON.stringify(content); f.version++;
+        return { id, name: f.name, version: f.version };
+      };
+      drive.renameFile = async (id, name) => {
+        const f = D.files[id];
+        f.name = name + '.whiteboard.json'; f.version++;
+        return { id, name: f.name, version: f.version };
+      };
+      drive.getMeta = async (id) => ({ id, name: D.files[id].name, version: D.files[id].version });
+      drive.getFile = async (id) => JSON.parse(D.files[id].json);
+      drive.uploadBlob = async (name, blob, parent) => {
+        D.calls.push('uploadBlob:' + name);
+        return put({ name, blob, parents: parent ? [parent] : [] });
+      };
+      drive.getBlob = async (id) => D.files[id].blob;
+    };
+    // The app assigns __wb_drive as it boots; patch it the moment it appears,
+    // so boot's own first reconcile already runs against the fake.
+    let real;
+    Object.defineProperty(window, '__wb_drive', {
+      configurable: true,
+      get: () => real,
+      set: (v) => { real = v; install(v); },
+    });
+  }, [files, entry]);
+  await page.reload();
+}
+// The fake's file tree, minus the blobs (which don't serialize).
+const driveTree = (page) => page.evaluate(() => Object.values(window.__drive.files)
+  .map((f) => ({ id: f.id, name: f.name, folder: !!f.folder, parents: f.parents, version: f.version, hasBlob: !!f.blob })));
+const driveCalls = (page) => page.evaluate(() => window.__drive.calls);
+const libEntry = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('whiteboard:library'))
+  .find((b) => b.id === localStorage.getItem('whiteboard:current')));
+
+test('saving an image board to Drive makes a folder, and the bytes go up before the JSON',
+  { tag: '@boards' }, async ({ page }) => {
+    await pasteImage(page);
+    await expect(page.locator('#saveState')).toHaveText('saved');
+    await bootWithFakeDrive(page);
+    await page.click('#boardMenuBtn');
+    await page.click('#driveSaveBtn');
+    await expect(page.locator('#driveSaveBtn')).toHaveText('Saved to Drive ✓');
+
+    const tree = await driveTree(page);
+    const folder = tree.find((f) => f.folder && f.name !== 'assets');
+    const assets = tree.find((f) => f.folder && f.name === 'assets');
+    expect(folder).toBeTruthy();
+    expect(assets.parents).toEqual([folder.id]);
+    // the board JSON sits at the folder's top level, the image inside assets/
+    const json = tree.find((f) => /\.whiteboard\.json$/.test(f.name));
+    expect(json.parents).toEqual([folder.id]);
+    const img = tree.find((f) => f.hasBlob);
+    expect(img.parents).toEqual([assets.id]);
+    expect(img.name).toMatch(/^a_[a-z0-9]+\.(webp|png)$/);
+
+    // Ordering is the invariant: Drive must never hold a board whose image
+    // references dangle, so the bytes land before the JSON that names them.
+    const calls = await driveCalls(page);
+    expect(calls.findIndex((c) => c.startsWith('uploadBlob'))).toBeLessThan(calls.indexOf('createFile'));
+  });
+
+// A board saved before the folder layout is a bare file. Opening it moves that
+// file into a new folder — same file id, so every sync watermark survives — and
+// the move's version bump has to be recorded or the next tick reads a phantom
+// remote change and pulls, which would clear the undo stacks for nothing.
+test('a legacy flat Drive file migrates into a folder without a phantom pull',
+  { tag: '@boards' }, async ({ page }) => {
+    const content = await page.evaluate(() => {
+      const raw = localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current'));
+      return JSON.parse(raw);
+    });
+    await bootWithFakeDrive(page, {
+      files: [
+        { id: 'root1', name: 'My Drive', folder: true, parents: [] },
+        { id: 'flat1', name: 'Old board.whiteboard.json', json: JSON.stringify(content), parents: ['root1'] },
+      ],
+      entry: { mode: 'drive', driveFileId: 'flat1', syncedLocalVersion: content.version, driveVersion: '1' },
+    });
+
+    await expect.poll(async () => (await libEntry(page)).driveFolderId).toBeTruthy();
+    const e = await libEntry(page);
+    expect(e.driveFileId).toBe('flat1');            // the file id is load-bearing
+    const tree = await driveTree(page);
+    const folder = tree.find((f) => f.id === e.driveFolderId);
+    expect(folder.parents).toEqual(['root1']);      // created where the file was
+    expect(tree.find((f) => f.id === 'flat1').parents).toEqual([folder.id]);
+    expect(tree.find((f) => f.id === e.driveAssetsFolderId).name).toBe('assets');
+    // the recorded watermark matches the post-move version, so no pull follows
+    expect(e.driveVersion).toBe(String(tree.find((f) => f.id === 'flat1').version));
+    expect(await driveCalls(page)).not.toContain('updateFile');
+  });
+
+// The payoff for the whole feature: a board whose images are on another device
+// fills its placeholders in from Drive.
+test('an image referenced by a synced board downloads from the assets folder',
+  { tag: '@boards' }, async ({ page }) => {
+    // real PNG bytes, encoded here so they can ride into the init script
+    const png = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 60; c.height = 40;
+      const x = c.getContext('2d');
+      x.fillStyle = '#5AD19A'; x.fillRect(0, 0, 60, 40);
+      return c.toDataURL('image/png').split(',')[1];
+    });
+    const content = await page.evaluate(() => {
+      const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+      const c = JSON.parse(localStorage.getItem(key));
+      c.cards['c_remoteimg'] = { x: 120, y: 140, title: 'from the other device',
+        body: '<img data-asset="a_remote0001" width="60" height="40">' };
+      c.version++;
+      localStorage.setItem(key, JSON.stringify(c));
+      return c;
+    });
+    await bootWithFakeDrive(page, {
+      files: [
+        { id: 'fold1', name: 'Board', folder: true, parents: [] },
+        { id: 'asst1', name: 'assets', folder: true, parents: ['fold1'] },
+        { id: 'json1', name: 'Board.whiteboard.json', json: JSON.stringify(content), parents: ['fold1'] },
+        // the bytes, as the device that pasted the image left them
+        { id: 'img1', name: 'a_remote0001.png', parents: ['asst1'], blobBase64: png },
+      ],
+      entry: { mode: 'drive', driveFileId: 'json1', driveFolderId: 'fold1', driveAssetsFolderId: 'asst1',
+               syncedLocalVersion: content.version, driveVersion: '1' },
+    });
+
+    // Version-wise this board is already in sync — the download is driven by the
+    // reference being unsatisfied locally, not by a pull.
+    const img = page.locator('.node.card[data-id="c_remoteimg"] .card-body img');
+    await expect.poll(() => img.getAttribute('src'), { timeout: 15000 }).toMatch(/^blob:/);
+    await expect(img).not.toHaveClass(/asset-missing/);
+    // and it's in the local store now, so a later load needs no network at all
+    expect(await assetExists(page, 'a_remote0001')).toBe(true);
+  });
+
+// Opening a board another device created must ADOPT its folder. Creating a
+// second one would strand every asset already uploaded there.
+test('a board already inside a folder adopts it instead of making another',
+  { tag: '@boards' }, async ({ page }) => {
+    const content = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current'))));
+    await bootWithFakeDrive(page, {
+      files: [
+        { id: 'fold9', name: 'Shared board', folder: true, parents: [] },
+        { id: 'asst9', name: 'assets', folder: true, parents: ['fold9'] },
+        { id: 'json9', name: 'Shared board.whiteboard.json', json: JSON.stringify(content), parents: ['fold9'] },
+      ],
+      // as openFromDrive leaves it when it couldn't inspect the parents itself
+      entry: { mode: 'drive', driveFileId: 'json9', syncedLocalVersion: content.version, driveVersion: '1' },
+    });
+    await expect.poll(async () => (await libEntry(page)).driveFolderId).toBe('fold9');
+    const e = await libEntry(page);
+    expect(e.driveAssetsFolderId).toBe('asst9');
+    expect(await driveCalls(page)).not.toContain('moveFile');
+    expect((await driveCalls(page)).filter((c) => c.startsWith('createFolder'))).toEqual([]);
+  });
+
 test('merge: edits to different nodes both survive', { tag: '@boards' }, async ({ page }) => {
   const base = boardOf({ a: cardRecordAt(0, 0, 'A'), b: cardRecordAt(10, 10, 'B') });
   const local = boardOf({ a: cardRecordAt(0, 0, 'A EDITED'), b: cardRecordAt(10, 10, 'B') });   // this device edited A

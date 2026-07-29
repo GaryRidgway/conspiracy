@@ -278,7 +278,7 @@ every toggle.
 
 | Key | Contents |
 |---|---|
-| `whiteboard:library` | array of `{id, name, mode:'device'\|'drive', driveFileId?, syncedLocalVersion?, driveVersion?, updatedAt}` |
+| `whiteboard:library` | array of `{id, name, mode:'device'\|'drive', driveFileId?, driveFolderId?, driveAssetsFolderId?, syncedLocalVersion?, driveVersion?, updatedAt}` |
 | `whiteboard:current` | id of the open board |
 | `whiteboard:board:<id>` | board content (viewport stripped) |
 | `whiteboard:viewport:<id>` | this device's pan/zoom for that board |
@@ -344,10 +344,49 @@ open the app in a second tab.
 
 ## Drive sync
 
-Opt-in per board (`drive.file` scope; each board is one `.whiteboard.json`
-in the user's own Drive; no server anywhere). Google scripts load lazily on
-first Connect — **the app and tests are network-clean until then**, and a
-test asserts it.
+Opt-in per board (`drive.file` scope; no server anywhere). Google scripts load
+lazily on first Connect — **the app and tests are network-clean until then**,
+and a test asserts it.
+
+### Folder layout
+
+A Drive board is a **folder**: the `.whiteboard.json` at its top level and an
+`assets` subfolder of image blobs. `driveFileId` still names the JSON file, and
+that is the point — every watermark, guarded write and merge path below is
+identical to what it was when a board was a bare file.
+
+- **A legacy flat board is migrated by moving its file**, not by copying it:
+  `ensureDriveLayout` creates the folder beside the file and re-parents it, so
+  the file id (and therefore every sync watermark) survives. The move **bumps
+  the file's Drive version**, which must be recorded — otherwise the next tick
+  reads a phantom remote change and pulls, and a pull clears the undo stacks.
+  Same reason a rename records its version now.
+- Layout resolution runs **before** the `getMeta` in `reconcileAttempt`, for
+  exactly that reason: a version read taken before the move is already void.
+- **Adopt an existing folder, never create a second one.** A board opened from
+  another device is already in a folder; the marker is an `assets` sibling.
+  `findBoardFolder` distinguishes `'none'` (listable, not ours — a move is
+  authorized) from `'blocked'` (couldn't see the parent, e.g. a file shared to
+  us alone — do nothing, since guessing would strand the other device's
+  assets).
+- **Assets go up before the JSON, and come down after it.** Uploading first
+  means Drive never holds a board whose references dangle; the worst case is an
+  orphan nobody points at. Downloading after means a placeholder fills in
+  instead of one slow image holding the whole board back.
+- **Assets need no merge.** An id's bytes never change, so "is it there yet" is
+  the only question. `pullDriveAssets` is therefore also called on the
+  *in-sync* branch — a board just opened from Drive is version-equal but has no
+  bytes yet, and that branch is where it lands.
+- **Nothing in asset sync may break content sync.** Every call site logs and
+  carries on. A board with missing images renders placeholders, which is
+  supported; a board that won't sync is not.
+- **Remote assets are never deleted.** Uploading before the JSON creates a
+  window where an asset on Drive is referenced by a board revision nobody has
+  pushed yet, so any eager "delete what's unreferenced" can destroy another
+  device's image. Unreferenced blobs accumulate in a folder the user rarely
+  opens; that's the accepted cost.
+- A board with no images makes **zero extra Drive calls** — both directions
+  compute their work set first and skip the folder listing when it's empty.
 
 ### Batched save model
 
@@ -471,6 +510,11 @@ silently overwrote newer synced content with no conflict raised for it.
   catches whatever was missed.
 - `saveBase` failing on quota is swallowed; a stale base degrades merges
   toward local-wins but loses nothing.
+- A board **shared** to another user grants `drive.file` on the picked JSON
+  only, so that user's app can't list the board's `assets` folder — their
+  images render as placeholders. Sharing the *folder* is the fix, and it needs
+  the Picker to offer folders (see `ROADMAP.md` → *Drive sharing*).
+- Unreferenced blobs are never reaped from Drive (see *Folder layout*).
 
 ## View layer
 

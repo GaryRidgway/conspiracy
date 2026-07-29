@@ -343,20 +343,26 @@
     return moved;
   }
 
-  // Every asset id any stored board still refers to. Matched against the raw
-  // JSON rather than parsed records: the attribute appears with escaped quotes
-  // there, and a substring scan costs nothing next to parsing every board.
-  //
-  // Merge bases count as references. A base is what lets a three-way merge
-  // resurrect a deleted card — reaping its image would turn "merged" into
-  // "merged, but the picture is gone".
+  // Asset ids referenced by a chunk of serialized board content. Matched against
+  // the raw text rather than parsed records: the attribute appears with escaped
+  // quotes inside JSON, and a substring scan costs nothing next to parsing every
+  // board on disk. (`matchAll` clones the regex, so the shared global is safe.)
+  const ASSET_REF_RE = /data-asset=\\?"(a_[a-z0-9]{4,64})/g;
+  function assetIdsIn(text) {
+    const out = new Set();
+    for (const m of String(text || '').matchAll(ASSET_REF_RE)) out.add(m[1]);
+    return out;
+  }
+
+  // Every asset id any stored board still refers to. Merge bases count: a base
+  // is what lets a three-way merge resurrect a deleted card, so reaping its
+  // image would turn "merged" into "merged, but the picture is gone".
   function referencedAssetIds() {
     const out = new Set();
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k || !(k.startsWith('whiteboard:board:') || k.startsWith('whiteboard:base:'))) continue;
-      const raw = localStorage.getItem(k) || '';
-      for (const m of raw.matchAll(/data-asset=\\?"(a_[a-z0-9]{4,64})/g)) out.add(m[1]);
+      for (const id of assetIdsIn(localStorage.getItem(k))) out.add(id);
     }
     return out;
   }
@@ -497,9 +503,10 @@
     }
 
     // Create a new Drive file holding the board JSON; returns { id, name }.
-    async function createFile(name, contentObj) {
+    async function createFile(name, contentObj, parentId) {
       const token = await authed();
       const meta = { name: name + '.whiteboard.json', mimeType: 'application/json' };
+      if (parentId) meta.parents = [parentId];
       const body =
         '--' + BOUNDARY + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
         JSON.stringify(meta) + '\r\n' +
@@ -553,6 +560,100 @@
       });
       if (!res.ok) throw new Error('Drive open failed (' + res.status + ')');
       return res.json();
+    }
+
+    // ── Folder layout ──────────────────────────────────────────────────────
+    // A Drive board is a FOLDER: the board JSON at its top level, image bytes
+    // in an `assets` subfolder. `driveFileId` still names the JSON file, which
+    // is what keeps every watermark, guarded write and merge path below
+    // untouched by any of this.
+    const FOLDER_MIME = 'application/vnd.google-apps.folder';
+    const API = 'https://www.googleapis.com/drive/v3/files';
+
+    async function createFolder(name, parentId) {
+      const token = await authed();
+      const meta = { name, mimeType: FOLDER_MIME };
+      if (parentId) meta.parents = [parentId];
+      const res = await fetch(API + '?fields=id,name', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(meta),
+      });
+      if (!res.ok) throw new Error('Drive folder create failed (' + res.status + ')');
+      return res.json();
+    }
+    // Rename a folder — no extension, unlike renameFile. A board's name is on
+    // both the folder and the JSON inside it, so a rename has to do both.
+    async function renameFolder(folderId, name) {
+      const token = await authed();
+      const res = await fetch(API + '/' + encodeURIComponent(folderId) + '?fields=id,name', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error('Drive folder rename failed (' + res.status + ')');
+      return res.json();
+    }
+    // A folder's children, id + name only — this is how the asset index is built.
+    async function listChildren(folderId) {
+      const token = await authed();
+      const q = encodeURIComponent("'" + folderId + "' in parents and trashed=false");
+      const res = await fetch(API + '?q=' + q + '&pageSize=1000&fields=files(id,name)', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error('Drive list failed (' + res.status + ')');
+      return (await res.json()).files || [];
+    }
+    async function getParents(fileId) {
+      const token = await authed();
+      const res = await fetch(API + '/' + encodeURIComponent(fileId) + '?fields=parents', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error('Drive parents failed (' + res.status + ')');
+      return (await res.json()).parents || [];
+    }
+    // Re-parent a file. Runs ONCE per legacy board, to move a flat board file
+    // into its new folder: the file ID survives, so every sync watermark does
+    // too. Returns { id, version } — the move bumps the version, and a caller
+    // that doesn't record it will see a phantom remote change next tick.
+    async function moveFile(fileId, addParents, removeParents) {
+      const token = await authed();
+      const url = API + '/' + encodeURIComponent(fileId) +
+        '?addParents=' + encodeURIComponent(addParents) +
+        (removeParents ? '&removeParents=' + encodeURIComponent(removeParents) : '') +
+        '&fields=id,version';
+      const res = await fetch(url, { method: 'PATCH', headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) throw new Error('Drive move failed (' + res.status + ')');
+      return res.json();
+    }
+    // Upload raw bytes (an image asset). multipart/related, hand-assembled as a
+    // Blob so the binary part isn't forced through a string.
+    async function uploadBlob(name, blob, parentId) {
+      const token = await authed();
+      const meta = { name };
+      if (parentId) meta.parents = [parentId];
+      const body = new Blob([
+        '--' + BOUNDARY + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+        JSON.stringify(meta) + '\r\n',
+        '--' + BOUNDARY + '\r\nContent-Type: ' + (blob.type || 'application/octet-stream') + '\r\n\r\n',
+        blob,
+        '\r\n--' + BOUNDARY + '--',
+      ], { type: 'multipart/related; boundary=' + BOUNDARY });
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': body.type },
+        body,
+      });
+      if (!res.ok) throw new Error('Drive asset upload failed (' + res.status + ')');
+      return res.json();
+    }
+    async function getBlob(fileId) {
+      const token = await authed();
+      const res = await fetch(API + '/' + encodeURIComponent(fileId) + '?alt=media', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) throw new Error('Drive asset download failed (' + res.status + ')');
+      return res.blob();
     }
 
     // Google Picker — lets the user choose a board file (including ones shared
@@ -610,8 +711,15 @@
     const warmup = () => ensureGis().catch(() => { /* offline; connect() will report it */ });
 
     return { configured, isConnected: tokenValid, connect, signOut, warmup,
-             createFile, updateFile, renameFile, getFile, getMeta, pickFile };
+             createFile, updateFile, renameFile, getFile, getMeta, pickFile,
+             createFolder, renameFolder, listChildren, getParents, moveFile,
+             uploadBlob, getBlob };
   })();
+
+  // Test seam, same spirit as __wb_mergeBoards: lets the suite replace Drive I/O
+  // with an in-page fake and exercise the real reconcile, folder-layout and
+  // asset-sync paths without OAuth or a network. Never read by the app itself.
+  window.__wb_drive = DRIVE;
 
   function isPlainBoardObject(d) {
     return !!d && typeof d === 'object' && !Array.isArray(d);
@@ -6484,12 +6592,25 @@
     try {
       const snapshot = JSON.parse(JSON.stringify(board));
       const body = contentForStore(snapshot);   // viewport is local-only, never written to Drive
+      // A Drive board is a folder: the JSON at its top level, image bytes in an
+      // `assets` subfolder. Build the folder and upload the bytes BEFORE the
+      // JSON, so Drive never holds a board whose image references dangle.
+      let layout = entry.driveFileId ? await ensureDriveLayout(currentBoardId) : null;
+      if (!entry.driveFileId) {
+        const folder = await DRIVE.createFolder(entry.name || 'Untitled board');
+        layout = { folderId: folder.id, assetsId: (await DRIVE.createFolder('assets', folder.id)).id };
+      }
+      await pushDriveAssets(layout, body).catch(assetSyncFailed);
       const res = entry.driveFileId
         ? await DRIVE.updateFile(entry.driveFileId, body)
-        : await DRIVE.createFile(entry.name || 'Untitled board', body);
+        : await DRIVE.createFile(entry.name || 'Untitled board', body, layout.folderId);
       const lib = loadLibrary();
       const e = lib.find((b) => b.id === currentBoardId);
-      if (e) { e.mode = 'drive'; e.driveFileId = res.id; saveLibrary(lib); }
+      if (e) {
+        e.mode = 'drive'; e.driveFileId = res.id;
+        if (layout) { e.driveFolderId = layout.folderId; e.driveAssetsFolderId = layout.assetsId; }
+        saveLibrary(lib);
+      }
       setDriveSyncMeta(currentBoardId, snapshot.version, res.version);
       saveBase(currentBoardId, snapshot);   // this pushed state is the merge base
       rememberDriveOptIn();
@@ -6528,6 +6649,10 @@
         entry = { id, name: stripBoardExt(picked.name), mode: 'drive', driveFileId: picked.id, updatedAt: Date.now() };
         lib.unshift(entry);
       }
+      // Adopt the folder the board already lives in rather than making a second
+      // one — that folder is where the other device put this board's images.
+      const found = await findBoardFolder(await DRIVE.getParents(picked.id).catch(() => []));
+      if (found.status === 'found') { entry.driveFolderId = found.folderId; entry.driveAssetsFolderId = found.assetsId; }
       saveLibrary(lib);
       saveBoardContent(id, content);     // cache the just-fetched Drive content locally
       setDriveSyncMeta(id, content.version, meta.version);   // we are now in sync with Drive
@@ -6781,6 +6906,135 @@
   // remote. This shrinks the clobber window to a single getMeta→PATCH gap (Drive
   // has no content-version precondition to close it fully) and never loses the
   // other device's edit — the retry merges it in.
+  // ── Drive asset sync ───────────────────────────────────────────────────
+  // The JSON carries references; the board's `assets` folder carries the bytes.
+  // Assets are immutable (a random id's bytes never change), so this needs no
+  // merge, no conflict handling and no watermark — only "is it there yet".
+  //
+  // Nothing here is allowed to break content sync. Every call site logs and
+  // carries on: a board whose images haven't arrived renders placeholders,
+  // which is a supported state, whereas a board that won't sync is not.
+
+  const ASSET_EXT = { 'image/webp': '.webp', 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif' };
+  const assetFileName = (rec) => rec.id + (ASSET_EXT[rec.type] || '.bin');
+  const assetIdFromName = (name) => (/^(a_[a-z0-9]{4,64})\./.exec(name || '') || [])[1];
+
+  // Is this file already inside a folder this app laid out? An `assets` sibling
+  // is the marker. Adopting an existing folder matters more than it looks:
+  // creating our own instead would strand every asset another device uploaded.
+  // 'blocked' means we couldn't see the parent (a shared file granted to us
+  // alone) — distinct from 'none', because 'none' authorizes a move and
+  // 'blocked' must not.
+  async function findBoardFolder(parents) {
+    for (const p of parents) {
+      const kids = await DRIVE.listChildren(p).catch(() => null);
+      if (!kids) return { status: 'blocked' };
+      const assets = kids.find((f) => f.name === 'assets');
+      if (assets) return { status: 'found', folderId: p, assetsId: assets.id };
+    }
+    return { status: 'none' };
+  }
+
+  // Resolve (creating or migrating as needed) the board's folder layout.
+  // Returns { folderId, assetsId }, or null when Drive wouldn't cooperate — the
+  // caller then syncs content exactly as before and skips assets this pass.
+  async function ensureDriveLayout(id) {
+    const entry = libraryEntry(id);
+    if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return null;
+    if (entry.driveFolderId && entry.driveAssetsFolderId)
+      return { folderId: entry.driveFolderId, assetsId: entry.driveAssetsFolderId };
+    try {
+      let folderId = entry.driveFolderId;
+      let assetsId = entry.driveAssetsFolderId;
+      if (!folderId) {
+        const parents = await DRIVE.getParents(entry.driveFileId);
+        const found = await findBoardFolder(parents);
+        if (found.status === 'blocked') return null;      // can't see enough to act safely
+        if (found.status === 'found') { folderId = found.folderId; assetsId = found.assetsId; }
+        else {
+          // A board from before the folder layout. Create the folder beside the
+          // file, then MOVE the file into it: the file id survives, so every
+          // watermark does. The move bumps the file's Drive version though —
+          // record it, or the next tick reads a phantom remote change and pulls
+          // (which would clear the undo stacks for nothing).
+          const folder = await DRIVE.createFolder(entry.name || 'Untitled board', parents[0]);
+          const moved = await DRIVE.moveFile(entry.driveFileId, folder.id, parents.join(','));
+          folderId = folder.id;
+          if (moved && moved.version) setDriveSyncMeta(id, null, moved.version);
+        }
+      }
+      if (!assetsId) {
+        // Look before creating: a half-finished setup (folder recorded, assets
+        // folder not) must not leave two `assets` folders behind.
+        const kids = await DRIVE.listChildren(folderId);
+        const found = kids.find((f) => f.name === 'assets');
+        assetsId = found ? found.id : (await DRIVE.createFolder('assets', folderId)).id;
+      }
+      const lib = loadLibrary();
+      const e = lib.find((b) => b.id === id);
+      if (e) { e.driveFolderId = folderId; e.driveAssetsFolderId = assetsId; saveLibrary(lib); }
+      return { folderId, assetsId };
+    } catch (err) {
+      console.error('Drive folder setup failed', err);
+      return null;
+    }
+  }
+
+  // Asset id → Drive file id for everything in the board's assets folder.
+  async function driveAssetIndex(layout) {
+    const out = new Map();
+    for (const f of await DRIVE.listChildren(layout.assetsId)) {
+      const aid = assetIdFromName(f.name);
+      if (aid && !out.has(aid)) out.set(aid, f.id);
+    }
+    return out;
+  }
+
+  // Upload every asset this content references that Drive doesn't have yet.
+  // Runs BEFORE the JSON goes up, deliberately: that way Drive never holds a
+  // board whose references dangle, and the worst case is an orphan nobody
+  // points at. (It's also why remote assets are never reaped — see
+  // ARCHITECTURE → Drive sync.)
+  async function pushDriveAssets(layout, content) {
+    if (!layout) return;
+    const want = assetIdsIn(JSON.stringify(content));
+    if (!want.size) return;                    // no images: no listing, no cost
+    const remote = await driveAssetIndex(layout);
+    for (const aid of want) {
+      if (remote.has(aid)) continue;
+      const rec = await ASSETS.get(aid);
+      if (!rec || !rec.blob) continue;          // referenced, but not on this device
+      await DRIVE.uploadBlob(assetFileName(rec), rec.blob, layout.assetsId);
+    }
+  }
+
+  // Fetch every referenced asset this device lacks. Runs AFTER the content is
+  // applied, also deliberately: a placeholder that fills in beats holding the
+  // whole board back on one slow image.
+  async function pullDriveAssets(layout, content) {
+    if (!layout) return;
+    const want = assetIdsIn(JSON.stringify(content));
+    if (!want.size) return;
+    const here = new Set(await ASSETS.ids());
+    const missing = [...want].filter((a) => !here.has(a));
+    if (!missing.length) return;               // nothing to fetch: still no listing
+    const remote = await driveAssetIndex(layout);
+    let got = 0;
+    for (const aid of missing) {
+      const fileId = remote.get(aid);
+      if (!fileId) continue;                   // not uploaded yet; a later tick retries
+      // Intrinsic size isn't stored remotely — the card body's width/height
+      // attributes already carry it, which is all the layout needs.
+      await ASSETS.store(aid, await DRIVE.getBlob(fileId), 0, 0);
+      got++;
+    }
+    // The URL cache held a null for each of these and store() replaced it, so a
+    // re-hydrate turns the placeholders into images — no re-render needed.
+    if (got) for (const el of document.querySelectorAll('.card-body')) hydrateAssets(el);
+  }
+
+  const assetSyncFailed = (err) => console.error('Drive asset sync failed', err);
+
   async function guardedUpdate(entry, content, basedOnVersion) {
     const fresh = await DRIVE.getMeta(entry.driveFileId);
     if (String(fresh.version) !== String(basedOnVersion)) return { stale: true };
@@ -6795,13 +7049,22 @@
     const isCurrent = id === currentBoardId;
     const localBoard = isCurrent ? board : loadBoardContent(id);
     const localVersion = localBoard.version;
+    // Folder layout BEFORE the version read: migrating a legacy flat board moves
+    // its file, and the move bumps the file's Drive version. Reading meta first
+    // would leave the guarded write comparing against a version the move voided.
+    const layout = await ensureDriveLayout(id);
     const meta = await DRIVE.getMeta(entry.driveFileId);
-    const localChanged = entry.syncedLocalVersion != null && localVersion !== entry.syncedLocalVersion;
-    const remoteChanged = entry.driveVersion == null || String(meta.version) !== String(entry.driveVersion);
+    // ensureDriveLayout may have rewritten the watermark, so read it back.
+    const synced = libraryEntry(id) || entry;
+    const localChanged = synced.syncedLocalVersion != null && localVersion !== synced.syncedLocalVersion;
+    const remoteChanged = synced.driveVersion == null || String(meta.version) !== String(synced.driveVersion);
 
     if (!remoteChanged && !localChanged) {           // already in sync
-      if (entry.driveVersion == null || entry.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
+      if (synced.driveVersion == null || synced.syncedLocalVersion == null) setDriveSyncMeta(id, localVersion, meta.version);
       if (!loadBase(id)) saveBase(id, localBoard);   // establish a base for future merges
+      // In sync by version, but this device may still be missing image bytes —
+      // a board just opened from Drive lands here, not in the pull branch.
+      await pullDriveAssets(layout, localBoard).catch(assetSyncFailed);
       return 'done';
     }
     // The user can keep editing while our Drive calls are in flight. Any branch
@@ -6818,6 +7081,7 @@
       saveBase(id, content);
       setDriveSyncMeta(id, content.version, meta.version);
       updateDriveUI();
+      await pullDriveAssets(layout, content).catch(assetSyncFailed);
       return 'done';
     }
     if (localChanged && !remoteChanged) {            // this device is ahead → push
@@ -6827,6 +7091,7 @@
       // then the saved base wouldn't match what Drive actually holds, which
       // makes a later merge resurrect stale remote values over our edit.
       const snapshot = JSON.parse(JSON.stringify(contentForStore(localBoard)));
+      await pushDriveAssets(layout, snapshot).catch(assetSyncFailed);
       const g = await guardedUpdate(entry, snapshot, meta.version);
       if (g.stale) return 'retry';                   // Drive moved under us → re-reconcile & merge
       saveBase(id, snapshot);
@@ -6840,6 +7105,7 @@
     if (base) {                                      // three-way merge: keep both sides' edits
       setDriveState('syncing', 'Drive: merging…');
       const { merged, conflicts, conflictItems } = mergeBoards(base, localBoard, remoteContent);
+      await pushDriveAssets(layout, merged).catch(assetSyncFailed);
       const g = await guardedUpdate(entry, merged, meta.version);
       if (g.stale) return 'retry';                   // don't apply locally either — retry re-merges
       if (editedMeanwhile()) return 'retry';         // edited during the write → re-merge those in
@@ -6851,6 +7117,9 @@
         ? 'Drive: merged (' + conflicts + ' kept this device)'
         : 'Drive: merged');
       if (conflicts && id === currentBoardId) showConflictNotice(conflictItems);
+      // the merge can adopt cards from the remote side, whose images are still
+      // only on the other device
+      await pullDriveAssets(layout, merged).catch(assetSyncFailed);
       return 'done';
     }
     // no base to merge against (first divergence / legacy board) → ask
@@ -6859,7 +7128,9 @@
       applyPulledBoard(id, remoteContent);
       saveBase(id, remoteContent);
       setDriveSyncMeta(id, remoteContent.version, meta.version);
+      await pullDriveAssets(layout, remoteContent).catch(assetSyncFailed);
     } else if (choice === 'local') {
+      await pushDriveAssets(layout, localBoard).catch(assetSyncFailed);
       const res = await DRIVE.updateFile(entry.driveFileId, contentForStore(localBoard));
       saveBase(id, localBoard);
       setDriveSyncMeta(id, localVersion, res.version);
@@ -7091,10 +7362,18 @@
     e.name = (name || '').trim() || 'Untitled board';
     saveLibrary(lib);
     updateBoardMenuLabel();
-    // keep the Drive file's name in sync for Drive-backed boards
+    // keep the Drive file's name in sync for Drive-backed boards — the board's
+    // name is on the folder as well as the JSON inside it
     if (e.mode === 'drive' && e.driveFileId && DRIVE.isConnected()) {
       setDriveState('syncing', 'Drive: renaming…');
       DRIVE.renameFile(e.driveFileId, e.name)
+        // A rename bumps the FILE's Drive version. Record it, or the next tick
+        // reads a phantom remote change and pulls — which clears the undo
+        // stacks, so renaming a board would quietly cost you your history.
+        .then((res) => {
+          if (res && res.version) setDriveSyncMeta(id, null, res.version);
+          return e.driveFolderId ? DRIVE.renameFolder(e.driveFolderId, e.name) : null;
+        })
         .then(() => updateDriveUI())
         .catch((err) => { console.error('Drive rename failed', err); setDriveState('error', 'Drive: rename failed'); });
     }

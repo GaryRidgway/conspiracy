@@ -23,7 +23,11 @@ is everything around handing a board to somebody else:
 
 - **Share through Drive's own dialog.** View vs. edit is enforced by
   Google, not by us — which is the whole appeal. A collaborator opens the
-  shared file in the app via the existing Picker path.
+  shared file in the app via the existing Picker path. **Share the folder,
+  not the file**: a board is a folder now, and `drive.file` on the JSON
+  alone leaves the collaborator's copy without its images
+  (`ARCHITECTURE.md` → *Known limitations*). That needs the Picker to offer
+  a folder view, which it currently doesn't.
 - **"Make a copy"** — duplicate the Drive file so a shared board can be
   forked instead of co-edited. Needs `files.copy` plus a new library entry.
 - **Make the ownership obvious** — an open-in-Drive link (`webViewLink`)
