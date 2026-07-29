@@ -290,6 +290,53 @@ every toggle.
 sessionStorage: `whiteboard:drive:tok` caches the OAuth access token so
 reloads within its ~1h life reconnect without a popup.
 
+IndexedDB `whiteboard` → object store `assets`: pasted image bytes, keyed by
+asset id (see *Image assets*). The only data the app keeps outside
+localStorage.
+
+### Image assets (IndexedDB `whiteboard` → `assets`)
+
+A pasted image's bytes live in IndexedDB as a Blob under a random `a_…` id.
+The card body stores `<img data-asset="ID">` with **no src**; `hydrateAssets()`
+supplies an object URL at render time and `sanitizeHtml()` strips it again on
+the way back into the record. That round trip is what lets the sanitizer's src
+allowlist stay `data:image/`-only even though every rendered image carries a
+`blob:` src — nothing but `data:` ever enters stored HTML.
+
+Why the bytes left the board JSON: base64 costs ~1.33 bytes per image byte
+against a ~5 MB localStorage quota, and a Drive board paid it twice (the local
+content cache plus the merge base). Three large screenshots could exhaust a
+board's whole storage, and it surfaced only as `save failed` at paste time.
+
+- **Ids are random, not content hashes.** Hashing would dedup identical pastes
+  but needs `crypto.subtle`, absent on a plain-http LAN origin. The only
+  property the merge depends on is that an id's bytes never change, which
+  random ids give for free. `extractInlineImages` dedups within its own pass.
+- **Writes settle on the transaction, not the request.** A quota failure aborts
+  the transaction *after* the request has reported success — resolving early
+  reports a stored image that isn't there.
+- **Object URLs are cached and never revoked.** A card body re-renders on every
+  pull, merge and undo, and a revoked URL renders as a broken image.
+- **A missing asset is a normal state, not an error**: a board can arrive
+  before its bytes, or the store can be evicted. It renders as
+  `.asset-missing`, sized from the img's `width`/`height` attributes so the
+  layout doesn't jump when the real image lands.
+- **Data URIs still exist at exactly two boundaries** — a board written before
+  the asset store (hoisted by `migrateInlineImages` *after* first paint,
+  version-bumped like `migrateLegacyDockMembers` and deliberately not a
+  `commit()`, since an undo step would put the base64 straight back), and JSON
+  export (`inlineAssetsForExport`, because an export is opened on a machine
+  with no store of ours). Import reverses it.
+- **GC runs only at boot** (`collectUnusedAssets`): undo history references
+  assets the live board has dropped, and the undo stacks are empty before the
+  first edit. It counts `whiteboard:base:*` as references too — a base is what
+  lets a merge resurrect a deleted card, so reaping its image would turn
+  "merged" into "merged, but the picture is gone" — and skips anything younger
+  than `ASSET_GC_GRACE_MS`.
+- Browser storage is **evictable** by default; `ASSETS.persist()` asks for an
+  exemption at boot. It's a request, not a guarantee, which is why a large
+  image library still wants its Drive copy.
+
 Deep links: `#board=<id>` opens a board, `#node=<id>` frames a node. A
 Copy-ID link pasted *back into the app* (card links, button links) is
 recognized by `deepLinkNodeId()` and navigates in place — it must never
@@ -585,12 +632,14 @@ surprise:
 
 - `sanitizeHtml()` allowlists tags for card bodies (paste and load paths).
   Disallowed tags are unwrapped (children kept), except `SCRIPT`/`STYLE`
-  which are dropped with their contents. `<img>` survives **only** with a
-  `data:image/` src — remote image URLs are stripped (they'd be tracking
-  pixels that fire on every render for every viewer of a shared board).
+  which are dropped with their contents. `<img>` survives **only** as a
+  `data-asset` reference or with a `data:image/` src — every other src,
+  including the `blob:` one the renderer puts on live images, is stripped.
+  Remote image URLs would be tracking pixels firing on every render for every
+  viewer of a shared board.
 - Pasted images are canvas-downscaled (longest edge 1600px, WebP 0.85 with
-  PNG fallback, halving until ≤ ~1.5MB) before becoming data URIs —
-  localStorage quota is the whole database.
+  PNG fallback, halving until ≤ ~1.5MB) before going to the asset store — see
+  *Image assets* for why they are not data URIs any more.
 - Embed and button URLs are untrusted (a shared/imported board is authored by
   someone else). **Every URL that reaches an `<iframe src>` or `window.open()`
   must pass `safeNavUrl()` (http/https only)**. The embed iframe's sandbox

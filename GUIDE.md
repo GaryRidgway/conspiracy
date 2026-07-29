@@ -103,10 +103,18 @@ Paste a screenshot (**⌘/Ctrl+V**) and:
   under your cursor;
 - **while editing a card body** — it lands inline at the caret.
 
-Images are downscaled before being stored (longest edge 1600px, WebP)
-because everything lives in your browser's storage quota. For the same
-reason, very large image-heavy boards are the one thing that can make a
-board feel heavy.
+Images are downscaled on the way in (longest edge 1600px, WebP), and the
+picture itself is stored separately from the board — the board only keeps
+a reference to it. That's why an image-heavy board no longer eats the
+same storage budget as the text and layout around it.
+
+An occasional consequence: if a picture shows as a dashed empty box, its
+bytes aren't on this device. That happens on a board you've just opened
+somewhere new, before its images have finished arriving. Everything else
+on the board works normally meanwhile.
+
+**Exporting** a board writes the pictures into the file, so an export is
+still a complete, portable backup.
 
 ## Frames
 
@@ -359,9 +367,8 @@ zoom. Useful for the two or three jumps you make constantly.
   `saved` before closing the tab.
 - If the strip turns red and reads `save failed`, the browser refused the
   write and **this board is not on disk**. Running out of browser storage is
-  the realistic cause, and pasted images are what fills it. Export the board
-  to a file before reloading, or you'll lose everything since the last
-  successful save.
+  the realistic cause. Export the board to a file before reloading, or you'll
+  lose everything since the last successful save.
 
 ## Boards
 
@@ -555,10 +562,11 @@ Known gaps, deliberately scoped rather than half-built:
 - **Boards live in this browser** unless you connect Drive. A different
   browser, a different machine, or cleared site data means a different set
   of boards. **Export** is your backup.
-- **Storage is finite.** Everything, images included, lives in your
-  browser's localStorage quota. Pasted images are downscaled
-  automatically, but a board of hundreds of screenshots will eventually
-  hit the ceiling.
+- **Storage is finite.** Boards live in your browser's storage, and the
+  browser is allowed to clear it under pressure. Pictures are kept in a
+  separate, much larger store than the board text, and they're downscaled
+  on the way in — but a big library of screenshots that exists only in one
+  browser is a library you could lose. Connect Drive, or export.
 - **Many web pages refuse to be embedded** and render blank.
 - **Re-parenting an embed reloads it** — moving one into or out of the
   side panel, or docking a region containing one, restarts that page.

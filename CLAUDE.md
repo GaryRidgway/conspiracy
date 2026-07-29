@@ -30,8 +30,9 @@ from real data-loss bugs and are invisible from any single code site.
 - Record fields must survive a JSON round-trip; remove fields with `delete`,
   never by assigning `undefined`.
 - Keep the app (and tests) network-clean until the user opts into Drive.
-- Card-body HTML goes through `sanitizeHtml()`; `<img>` only with
-  `data:image/` src.
+- Card-body HTML goes through `sanitizeHtml()`; `<img>` only as a
+  `data-asset` reference or with a `data:image/` src. Image *bytes* live in
+  IndexedDB, never in the board JSON.
 - Keyboard handlers must check `onCanvas` / `editing` before intercepting
   keys — chrome focus keeps native key behavior.
 - Tests: wait for `#saveState` = `saved` before reading stored content; pin

@@ -11,6 +11,7 @@
 //  Sourced from real user complaints — see the chat notes / commit message.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import { drag, addCardAt, worldScale, nodePos, boardOf, cardRecordAt, merge, installErrorGuard } from './helpers.js';
 
 const within = (b, w, h) => b && b.x + b.width > 0 && b.y + b.height > 0 && b.x < w && b.y < h;
@@ -867,8 +868,9 @@ test('arrow keys move the highlight in the button-link modal, and Enter follows 
   expect(stored).toEqual({ type: 'node', target: idC });
 });
 
-// Paste a screenshot on the canvas → it becomes a card holding the image as a
-// data URI (downscaled, no remote fetch), which persists like any card.
+// Paste a screenshot on the canvas → it becomes a card referencing the image
+// (downscaled into the asset store, no remote fetch), which persists like any
+// card. The bytes never enter the board JSON — see the IMAGE ASSETS banner.
 async function pasteImage(page) {
   await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
@@ -886,12 +888,19 @@ test('pasting an image on the canvas creates an image card that persists', { tag
   await pasteImage(page);
   const img = page.locator('.node.card .card-body img');
   await expect(img).toHaveCount(1);
-  const src = await img.getAttribute('src');
-  expect(src.startsWith('data:image/')).toBe(true);
+  await expect(img).toHaveAttribute('data-asset', /^a_[a-z0-9]+$/);
+  await expect.poll(() => img.getAttribute('src')).toMatch(/^blob:/);   // resolved from the store
 
   await expect(page.locator('#saveState')).toHaveText('saved');
+  const stored = await page.evaluate(() =>
+    localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+  expect(stored).toContain('data-asset=');
+  expect(stored).not.toContain('data:image/');   // the whole point: no base64 in localStorage
+
   await page.reload();
-  await expect(page.locator('.node.card .card-body img')).toHaveCount(1);
+  const after = page.locator('.node.card .card-body img');
+  await expect(after).toHaveCount(1);
+  await expect.poll(() => after.getAttribute('src')).toMatch(/^blob:/);   // re-resolved from IndexedDB
 });
 
 // A pasted screenshot lands under the cursor (not the viewport centre) — the
@@ -926,9 +935,141 @@ test('image pastes inline into a card being edited; remote images are stripped',
     localStorage.setItem(key, JSON.stringify(content));
   });
   await page.reload();
-  const srcs = await page.locator('.card-body img').evaluateAll((els) => els.map((el) => el.getAttribute('src')));
-  expect(srcs.length).toBe(1);                       // remote img dropped
-  expect(srcs[0].startsWith('data:image/')).toBe(true);
+  const imgs = await page.locator('.card-body img').evaluateAll((els) =>
+    els.map((el) => el.getAttribute('data-asset')));
+  expect(imgs.length).toBe(1);                       // remote img dropped
+  expect(imgs[0]).toMatch(/^a_[a-z0-9]+$/);          // the pasted one survives, as a reference
+});
+
+// ── Image assets: the bytes live in IndexedDB, the record holds a reference ──
+
+// A 4×3 solid PNG, built in the page so it's a genuinely valid encoding.
+const makeDataUri = (page) => page.evaluate(() => {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 3;
+  const x = c.getContext('2d');
+  x.fillStyle = '#6BA6FF'; x.fillRect(0, 0, 4, 3);
+  return c.toDataURL('image/png');
+});
+const storedBoard = (page) => page.evaluate(() =>
+  localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+// Read one asset record straight out of IndexedDB, bypassing the app.
+const assetExists = (page, id) => page.evaluate((aid) => new Promise((res) => {
+  const req = indexedDB.open('whiteboard', 1);
+  req.onsuccess = () => {
+    const g = req.result.transaction('assets', 'readonly').objectStore('assets').get(aid);
+    g.onsuccess = () => res(!!g.result);
+    g.onerror = () => res(false);
+  };
+  req.onerror = () => res(false);
+}), id);
+
+// The rendered image carries a blob: URL, and that URL must never reach a
+// record — otherwise the sanitizer's data:-only src rule would be a fiction and
+// a reload would show a dead reference to a previous page's object URL.
+test('a blob URL from a rendered image never reaches storage', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const body = page.locator('.node.card .card-body');
+  await expect.poll(() => body.locator('img').getAttribute('src')).toMatch(/^blob:/);
+  // typing runs the live DOM (blob src and all) back through sanitizeHtml
+  await body.click();
+  await page.keyboard.type('caption');
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  const stored = await storedBoard(page);
+  expect(stored).toContain('data-asset=');
+  expect(stored).not.toContain('blob:');
+  expect(stored).not.toContain('data:image/');
+});
+
+// A board written before the asset store existed holds base64 in its JSON.
+// Opening it moves the bytes out and rewrites the reference, without the user
+// doing anything — and the image keeps rendering throughout.
+test('a legacy inline image migrates out of the board JSON on open', { tag: '@boards' }, async ({ page }) => {
+  const uri = await makeDataUri(page);
+  await page.evaluate((u) => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const content = JSON.parse(localStorage.getItem(key));
+    content.cards['c_legacyimg'] = { x: 120, y: 140, title: 'shot', body: '<img src="' + u + '">' };
+    localStorage.setItem(key, JSON.stringify(content));
+  }, uri);
+  await page.reload();
+
+  await expect.poll(() => storedBoard(page)).toContain('data-asset=');
+  const stored = await storedBoard(page);
+  expect(stored).not.toContain('data:image/');       // the base64 is gone from localStorage
+  const img = page.locator('.node.card[data-id="c_legacyimg"] .card-body img');
+  await expect(img).toHaveCount(1);
+  // the intrinsic size was recovered on the way through, so the box is right
+  await expect(img).toHaveAttribute('width', '4');
+  await expect(img).toHaveAttribute('height', '3');
+  await expect.poll(() => img.getAttribute('src')).toMatch(/^blob:/);
+});
+
+// An export has to be self-contained — it's opened on a machine with no store
+// of ours — so it inlines the bytes again, and importing one unpacks them.
+test('export inlines image bytes; importing one puts them back in the store', { tag: '@boards' }, async ({ page }) => {
+  await pasteImage(page);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#exportBtn')]);
+  const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
+  const bodies = Object.values(exported.cards).map((c) => c.body || '');
+  expect(bodies.join('')).toContain('data:image/');   // portable: bytes travel with the file
+  expect(bodies.join('')).not.toContain('data-asset=');
+
+  // import it back into a cleared board; the reference form must return
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.setInputFiles('#importFile', {
+    name: 'board.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(exported)),
+  });
+  await expect(page.locator('.node.card .card-body img')).toHaveCount(1);
+  await expect.poll(() => storedBoard(page)).toContain('data-asset=');
+  expect(await storedBoard(page)).not.toContain('data:image/');
+});
+
+// An asset no board refers to any more is dead weight in a store whose whole
+// purpose is headroom. Reaped at boot — the only point where undo history
+// can't still be holding a reference.
+test('an unreferenced asset is reaped at boot', { tag: '@boards' }, async ({ page }) => {
+  await page.evaluate(() => new Promise((res, rej) => {
+    const req = indexedDB.open('whiteboard', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
+    };
+    req.onsuccess = () => {
+      const t = req.result.transaction('assets', 'readwrite');
+      // added:0 puts it far outside the grace window that protects a fresh paste
+      t.objectStore('assets').put({ id: 'a_orphan01', blob: new Blob(['x'], { type: 'image/png' }), w: 1, h: 1, added: 0 });
+      t.oncomplete = () => res();
+      t.onerror = () => rej(t.error);
+    };
+    req.onerror = () => rej(req.error);
+  }));
+  expect(await assetExists(page, 'a_orphan01')).toBe(true);
+  await page.reload();
+  await expect.poll(() => assetExists(page, 'a_orphan01'), { timeout: 15000 }).toBe(false);
+});
+
+// The bytes can be absent legitimately — a Drive board opened on a second
+// device before its assets arrive, or an evicted store. That has to read as a
+// placeholder holding the image's box, not as a collapsed empty card.
+test('a reference with no bytes renders a sized placeholder', { tag: '@cards' }, async ({ page }) => {
+  await page.evaluate(() => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const content = JSON.parse(localStorage.getItem(key));
+    content.cards['c_ghostimg'] = { x: 120, y: 140, title: 'shot',
+      body: '<img data-asset="a_nothere01" width="120" height="80">' };
+    localStorage.setItem(key, JSON.stringify(content));
+  });
+  await page.reload();
+  const img = page.locator('.node.card[data-id="c_ghostimg"] .card-body img');
+  await expect(img).toHaveClass(/asset-missing/);
+  const box = await img.boundingBox();
+  expect(box.width).toBeCloseTo(120, 0);
+  expect(box.height).toBeGreaterThan(31);       // reserves a box instead of collapsing
 });
 
 // A table pasted from GitHub/docs keeps its structure: the sanitizer lets

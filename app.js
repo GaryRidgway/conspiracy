@@ -157,6 +157,248 @@
   function clearBase(id) { try { localStorage.removeItem(baseKey(id)); } catch (e) { /* ignore */ } }
 
   // ════════════════════════════════════════════════════════
+  //  IMAGE ASSETS — a pasted image's bytes live in IndexedDB as a Blob, NOT
+  //  as a data URI inside the board JSON. A card body holds
+  //  `<img data-asset="ID">` with no src at all; hydrateAssets() fills in an
+  //  object URL at render time and sanitizeHtml() strips it again on the way
+  //  back to storage.
+  //
+  //  Why the bytes moved out: base64 costs ~1.33 bytes per image byte against
+  //  a ~5 MB localStorage quota, and a Drive board paid that twice — once for
+  //  the local content cache, once for the merge base. Three big screenshots
+  //  could exhaust a board's entire storage, and the failure surfaced as a
+  //  bare "Save failed" at paste time.
+  //
+  //  Asset ids are RANDOM, not content hashes. Hashing would dedup identical
+  //  pastes, but it needs crypto.subtle — absent on a plain-http LAN origin —
+  //  and the only property the three-way merge depends on is that an id's
+  //  bytes never change, which random ids give for free. (The one place dedup
+  //  actually paid was one image repeated across many cards in a legacy
+  //  board; extractInlineImages handles that with a per-pass map.)
+  //
+  //  Every failure here degrades to "no asset". IndexedDB is unavailable in
+  //  private-mode Firefox and can be blocked outright in Chrome, and an image
+  //  that won't load must never take the board down with it.
+  // ════════════════════════════════════════════════════════
+  const ASSETS = (() => {
+    const DB_NAME = 'whiteboard';
+    const DB_VERSION = 1;
+    const STORE = 'assets';
+    const newAssetId = () => 'a_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+    let dbPromise = null;
+    function open() {
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise((resolve, reject) => {
+        if (!window.indexedDB) { reject(new Error('no indexedDB')); return; }
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+      });
+      // Don't cache a rejection: a blocked-then-allowed store (or a first call
+      // that raced a version change) should get another chance.
+      dbPromise.catch(() => { dbPromise = null; });
+      return dbPromise;
+    }
+
+    // Every op here is a single request, but the promise settles on the
+    // TRANSACTION, not the request: a quota failure aborts the transaction
+    // after the request has already reported success, and a swallowed quota
+    // error is exactly how you end up reporting "saved" for an image that
+    // isn't there.
+    function run(mode, fn) {
+      return open().then((db) => new Promise((resolve, reject) => {
+        const t = db.transaction(STORE, mode);
+        const req = fn(t.objectStore(STORE));
+        t.oncomplete = () => resolve(req.result);
+        t.onerror = () => reject(t.error || new Error('asset write failed'));
+        t.onabort = () => reject(t.error || new Error('asset write aborted'));
+      }));
+    }
+
+    // Object URLs are per-document, so they're cached here rather than stored.
+    // They are never revoked: a card body re-renders on every pull, merge and
+    // undo, and a revoked URL renders as a broken image. The ceiling is one URL
+    // per distinct image per page life — the same bytes the images cost anyway.
+    const urls = new Map();          // id → object URL, or null for "not here"
+    const inflight = new Map();
+
+    function cache(id, blob) {
+      const u = blob ? URL.createObjectURL(blob) : null;
+      urls.set(id, u);
+      return u;
+    }
+    // Resolves to an object URL, or null when this device doesn't have the
+    // bytes. The null is cached too, so a missing asset doesn't re-query
+    // IndexedDB on every render — store() clears it when the bytes arrive.
+    function url(id) {
+      if (urls.has(id)) return Promise.resolve(urls.get(id));
+      if (inflight.has(id)) return inflight.get(id);
+      const p = run('readonly', (s) => s.get(id))
+        .then((rec) => cache(id, rec && rec.blob))
+        .catch(() => cache(id, null))
+        .finally(() => inflight.delete(id));
+      inflight.set(id, p);
+      return p;
+    }
+
+    // Store bytes under a KNOWN id — the Drive download path, where the id came
+    // from the folder listing and must be preserved.
+    async function store(id, blob, w, h) {
+      const rec = { id, blob, type: blob.type || 'image/png', w: w || 0, h: h || 0, added: Date.now() };
+      await run('readwrite', (s) => s.put(rec));
+      cache(id, blob);
+      return rec;
+    }
+    // Store new bytes; returns the record, whose id is the reference a card
+    // body will hold. w/h ride along so a body can reserve the right box before
+    // the blob resolves — and so a MISSING asset still renders at its real size
+    // instead of collapsing the layout around it.
+    const put = (blob, w, h) => store(newAssetId(), blob, w, h);
+
+    const get = (id) => run('readonly', (s) => s.get(id)).catch(() => null);
+    const remove = (id) => run('readwrite', (s) => s.delete(id)).then(() => { urls.delete(id); });
+    const ids = () => run('readonly', (s) => s.getAllKeys()).catch(() => []);
+    // Total stored bytes — the honest denominator for the storage meter.
+    const usage = () => run('readonly', (s) => s.getAll())
+      .then((recs) => recs.reduce((n, r) => n + ((r.blob && r.blob.size) || 0), 0))
+      .catch(() => 0);
+
+    // Ask the browser not to evict us. Chrome auto-grants on engagement,
+    // Firefox prompts. It's a REQUEST, not a guarantee — which is precisely
+    // why a large image library still wants the Drive copy.
+    const persist = () => (navigator.storage && navigator.storage.persist
+      ? navigator.storage.persist().catch(() => false)
+      : Promise.resolve(false));
+
+    return { put, store, get, remove, ids, url, usage, persist };
+  })();
+
+  // ── Asset ↔ data-URI bridges. Data URIs still exist at two boundaries: a
+  // board written before the asset store, and a JSON export (which has to be
+  // self-contained). Both directions live here; the sanitizer keeps accepting
+  // the inline form so a board that fails to migrate still renders. ──
+
+  // Decoded by hand rather than through fetch(), so nothing on the image path
+  // ever issues a request — however local that request would have been.
+  function dataUriToBlob(uri) {
+    const m = /^data:([^;,]+)(;base64)?,([\s\S]*)$/.exec(uri || '');
+    if (!m) return null;
+    try {
+      const raw = m[2] ? atob(m[3]) : decodeURIComponent(m[3]);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      return new Blob([bytes], { type: m[1] });
+    } catch (e) { return null; }
+  }
+  const imageSize = (src) => new Promise((res) => {
+    const i = new Image();
+    i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight });
+    i.onerror = () => res({ w: 0, h: 0 });
+    i.src = src;
+  });
+  async function dataUriToAsset(uri) {
+    const blob = dataUriToBlob(uri);
+    if (!blob) throw new Error('bad data URI');
+    const { w, h } = await imageSize(uri);
+    return ASSETS.put(blob, w, h);
+  }
+
+  // Hoist inline data URIs out of a board's card bodies into the asset store,
+  // rewriting each `<img>` to a reference. Mutates `content`; returns how many
+  // moved. Callers: the boot migration, and JSON import.
+  //
+  // The per-URI map is what makes a legacy board cheap to migrate: duplicating
+  // a card duplicated its whole base64 payload, so those copies collapse to one
+  // asset here instead of one per occurrence.
+  async function extractInlineImages(content) {
+    let moved = 0;
+    const byUri = new Map();
+    for (const card of Object.values((content && content.cards) || {})) {
+      if (!card.body || !/<img/i.test(card.body)) continue;
+      const tmp = document.createElement('div');
+      tmp.innerHTML = card.body;
+      const imgs = [...tmp.querySelectorAll('img[src^="data:image/"]')];
+      if (!imgs.length) continue;
+      for (const img of imgs) {
+        const uri = img.getAttribute('src');
+        if (!byUri.has(uri)) byUri.set(uri, await dataUriToAsset(uri).catch(() => null));
+        const rec = byUri.get(uri);
+        // Couldn't store it — no IndexedDB, or already full. Leave the data URI
+        // exactly where it is: a board that renders beats a board that's tidy,
+        // and the sanitizer still accepts the inline form.
+        if (!rec) continue;
+        img.setAttribute('data-asset', rec.id);
+        img.removeAttribute('src');
+        if (rec.w) img.setAttribute('width', String(rec.w));
+        if (rec.h) img.setAttribute('height', String(rec.h));
+        moved++;
+      }
+      card.body = tmp.innerHTML;
+    }
+    return moved;
+  }
+
+  // Every asset id any stored board still refers to. Matched against the raw
+  // JSON rather than parsed records: the attribute appears with escaped quotes
+  // there, and a substring scan costs nothing next to parsing every board.
+  //
+  // Merge bases count as references. A base is what lets a three-way merge
+  // resurrect a deleted card — reaping its image would turn "merged" into
+  // "merged, but the picture is gone".
+  function referencedAssetIds() {
+    const out = new Set();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !(k.startsWith('whiteboard:board:') || k.startsWith('whiteboard:base:'))) continue;
+      const raw = localStorage.getItem(k) || '';
+      for (const m of raw.matchAll(/data-asset=\\?"(a_[a-z0-9]{4,64})/g)) out.add(m[1]);
+    }
+    return out;
+  }
+
+  // Reap asset bytes nothing references. Runs ONLY at boot: undo history also
+  // references assets the live board has dropped, and the undo stacks are empty
+  // by definition before the first edit.
+  const ASSET_GC_GRACE_MS = 60 * 60 * 1000;   // never reap an asset a paste hasn't committed yet
+  // Move a board's inline images into the asset store. Runs AFTER the board is
+  // on screen — the data URIs render perfectly well meanwhile — so a board
+  // carrying fifty screenshots doesn't hold up first paint.
+  //
+  // Deliberately NOT a commit(): this is a storage-format change, not an edit,
+  // and an undo step for it would put the base64 straight back. Same shape as
+  // migrateLegacyDockMembers instead — bump the version so Drive picks up the
+  // new form, write it, re-baseline undo.
+  async function migrateInlineImages(id, content) {
+    const moved = await extractInlineImages(content).catch(() => 0);
+    if (!moved) return;
+    // Board switched while we were decoding: that content object is orphaned
+    // (a switch back re-reads localStorage), so drop it. The next open retries,
+    // and the assets already written get reaped as unreferenced.
+    if (id !== currentBoardId || content !== board) return;
+    board.version++;
+    saveBoardContent(id, board);
+    lastContent = contentSnapshot();   // a migration is not an undoable edit
+    touchLibrary(id);
+    renderAll();
+  }
+
+  async function collectUnusedAssets() {
+    const referenced = referencedAssetIds();
+    const now = Date.now();
+    for (const id of await ASSETS.ids()) {
+      if (referenced.has(id)) continue;
+      const rec = await ASSETS.get(id);
+      if (rec && rec.added && now - rec.added < ASSET_GC_GRACE_MS) continue;
+      await ASSETS.remove(id).catch(() => { /* it stays; next boot tries again */ });
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
   //  GOOGLE DRIVE — opt-in per board. Auth is the Google Identity
   //  Services token flow (drive.file scope). Nothing is stored on a
   //  server; the access token lives only in memory for the session.
@@ -1373,7 +1615,10 @@
     const titleEl = el.querySelector('.card-title');
     const bodyEl = el.querySelector('.card-body');
     if (document.activeElement !== titleEl) titleEl.textContent = data.title || '';
-    if (document.activeElement !== bodyEl) bodyEl.innerHTML = sanitizeHtml(data.body || '');
+    if (document.activeElement !== bodyEl) {
+      bodyEl.innerHTML = sanitizeHtml(data.body || '');
+      hydrateAssets(bodyEl);          // stored images carry a reference, not a src
+    }
     return el;
   }
 
@@ -3566,41 +3811,57 @@
   // ════════════════════════════════════════════════════════
   //  IMAGE PASTE — a screenshot pasted on the canvas becomes a card holding
   //  the image; pasted while editing a card it lands inline at the caret.
-  //  Images are downscaled and stored as data URIs in the card body, so they
-  //  merge/undo/copy like any other card content (and never touch a server).
+  //  Images are downscaled, stored in the asset store (see IMAGE ASSETS), and
+  //  referenced from the card body — so they merge/undo/copy like any other
+  //  card content without putting megabytes of base64 in the board JSON.
   // ════════════════════════════════════════════════════════
   const MAX_IMG_DIM = 1600;                 // px, longest edge after downscale
-  const MAX_IMG_CHARS = 1.5 * 1024 * 1024;  // ~data-URI budget per image
+  const MAX_IMG_BYTES = 1.5 * 1024 * 1024;  // per-image budget after re-encode
 
   // Last known cursor position — a pasted screenshot lands under the cursor
   // (which may be outside the current viewport centre, or over the panel).
   let lastClient = null;
   document.addEventListener('pointermove', (e) => { lastClient = { x: e.clientX, y: e.clientY }; }, { passive: true });
 
-  function imageFileToDataUri(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        let uri = '';
-        // Re-encode small (WebP where the browser can, else PNG); if the result
-        // is still huge, halve the dimensions and try again.
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const scale = Math.min(1, MAX_IMG_DIM / Math.max(img.naturalWidth, img.naturalHeight)) / 2 ** attempt;
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-          uri = canvas.toDataURL('image/webp', 0.85);
-          if (!uri.startsWith('data:image/webp')) uri = canvas.toDataURL('image/png');
-          if (uri.length <= MAX_IMG_CHARS) break;
-        }
-        resolve(uri);
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
-      img.src = url;
-    });
+  const canvasToBlob = (canvas, type, q) => new Promise((res) => canvas.toBlob(res, type, q));
+
+  // Build the `<img>` a record stores for an asset: a reference plus its
+  // intrinsic size, and never a src (hydrateAssets supplies that).
+  function assetImgEl(rec) {
+    const img = document.createElement('img');
+    img.setAttribute('data-asset', rec.id);
+    if (rec.w) img.setAttribute('width', String(rec.w));
+    if (rec.h) img.setAttribute('height', String(rec.h));
+    return img;
+  }
+
+  // Downscale, re-encode, hand the bytes to the asset store. Resolves to the
+  // asset record; rejects if the image is unreadable or the store is full.
+  async function imageFileToAsset(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('unreadable image'));
+        i.src = url;
+      });
+      let blob = null, w = 0, h = 0;
+      // Re-encode small (WebP where the browser can, else PNG); if the result
+      // is still huge, halve the dimensions and try again.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const scale = Math.min(1, MAX_IMG_DIM / Math.max(img.naturalWidth, img.naturalHeight)) / 2 ** attempt;
+        const canvas = document.createElement('canvas');
+        canvas.width = w = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = h = Math.max(1, Math.round(img.naturalHeight * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        blob = await canvasToBlob(canvas, 'image/webp', 0.85);
+        if (!blob || blob.type !== 'image/webp') blob = await canvasToBlob(canvas, 'image/png');
+        if (blob && blob.size <= MAX_IMG_BYTES) break;
+      }
+      if (!blob) throw new Error('could not encode image');
+      return await ASSETS.put(blob, w, h);
+    } finally { URL.revokeObjectURL(url); }
   }
 
   document.addEventListener('paste', (e) => {
@@ -3636,14 +3897,14 @@
       }
     }
 
-    imageFileToDataUri(file).then((uri) => {
+    imageFileToAsset(file).then((rec) => {
       if (inCardBody) {
         const cardId = ae.closest('.node').dataset.id;
         if (!board.cards[cardId]) return;
-        const imgEl = document.createElement('img');
-        imgEl.src = uri;
+        const imgEl = assetImgEl(rec);
         if (range) { range.deleteContents(); range.insertNode(imgEl); }
         else ae.appendChild(imgEl);
+        hydrateAssets(ae);            // the live element still needs its src
         saveCardBody(cardId, ae);
       } else {
         const r = visibleRect();
@@ -3651,14 +3912,20 @@
         board.cards[id] = {
           x: drop ? Math.round(drop.x) : Math.round(r.x + r.w / 2 - 130),
           y: drop ? Math.round(drop.y) : Math.round(r.y + r.h / 2 - 90),
-          title: '', body: '<img src="' + uri + '">',
+          title: '', body: assetImgEl(rec).outerHTML,
         };
         renderCard(id);
         if (drop && drop.intoDock) addToDockTab([id]);
         selectNode(id);
         commit();
       }
-    }, () => { /* unreadable image: leave the board untouched */ });
+    }, (err) => {
+      // A full asset store must not fail silently: the image is simply gone,
+      // and the board itself saved fine, so nothing else would ever say so.
+      console.error('Image paste failed', err);
+      if (String(err && err.message) === 'unreadable image') return;   // not the user's problem
+      showStorageNotice('That image could not be stored — this device’s browser storage is full.');
+    });
   });
 
   // ════════════════════════════════════════════════════════
@@ -4995,8 +5262,45 @@
            !Object.keys(board.connections).length;
   }
 
-  function exportBoard() {
-    const blob = new Blob([JSON.stringify(board, null, 2)], { type: 'application/json' });
+  const blobToDataUri = (blob) => new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.onerror = () => rej(fr.error || new Error('unreadable blob'));
+    fr.readAsDataURL(blob);
+  });
+
+  // Inline every asset reference back into a data URI. An export is a PORTABLE
+  // backup — the file is the whole board, opened on a machine that has no
+  // IndexedDB store of ours — so it can't ship bare references. This is the one
+  // place data URIs are still generated, and importBoardFromFile reverses it.
+  async function inlineAssetsForExport(content) {
+    const cache = new Map();
+    for (const card of Object.values(content.cards || {})) {
+      if (!card.body || !/data-asset=/.test(card.body)) continue;
+      const tmp = document.createElement('div');
+      tmp.innerHTML = card.body;
+      for (const img of tmp.querySelectorAll('img[data-asset]')) {
+        const id = img.dataset.asset;
+        if (!cache.has(id)) {
+          const rec = await ASSETS.get(id);
+          cache.set(id, rec && rec.blob ? await blobToDataUri(rec.blob).catch(() => null) : null);
+        }
+        const uri = cache.get(id);
+        // No bytes for it here: drop the reference rather than exporting a
+        // pointer into a store the importing device doesn't have.
+        if (!uri) { img.remove(); continue; }
+        img.removeAttribute('data-asset');
+        img.removeAttribute('data-asset-loaded');
+        img.setAttribute('src', uri);
+      }
+      card.body = tmp.innerHTML;
+    }
+    return content;
+  }
+
+  async function exportBoard() {
+    const content = await inlineAssetsForExport(JSON.parse(JSON.stringify(board)));
+    const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -5017,12 +5321,15 @@
 
   function importBoardFromFile(file) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       let data;
       try { data = JSON.parse(reader.result); }
       catch { alert('Import failed: that file is not valid JSON.'); return; }
       if (!isPlainBoardObject(data)) { alert('Import failed: not a whiteboard file.'); return; }
       if (!boardIsEmpty() && !confirm('Replace the current board with the imported file?')) return;
+      // An export file carries its images inline; unpack them before the board
+      // lands, so the imported board is in the same shape as any other.
+      await extractInlineImages(data);
       replaceBoard(data);
     };
     reader.onerror = () => alert('Import failed: could not read the file.');
@@ -5426,15 +5733,27 @@
         if (n.nodeType === 3) {
           to.appendChild(document.createTextNode(n.nodeValue));
         } else if (n.nodeType === 1 && ALLOWED_TAGS.has(n.tagName)) {
-          // Images: embedded data URIs only — a remote src would leak views
-          // (and break offline), so anything else is dropped outright.
+          // Images: an asset reference, or an embedded data URI. A remote src
+          // would leak views (and break offline), so anything else is dropped.
+          //
+          // The blob: URL that hydrateAssets() puts on a live image is dropped
+          // right here on its way back into a record — which is what lets the
+          // src whitelist stay data:-only even though rendered images now carry
+          // a blob src. Nothing but data: ever earns its way into stored HTML.
           if (n.tagName === 'IMG') {
+            const asset = n.getAttribute('data-asset') || '';
             const src = n.getAttribute('src') || '';
-            if (/^data:image\//.test(src)) {
-              const img = document.createElement('img');
-              img.setAttribute('src', src);
-              to.appendChild(img);
+            const img = document.createElement('img');
+            if (/^a_[a-z0-9]{4,64}$/.test(asset)) img.setAttribute('data-asset', asset);
+            else if (/^data:image\//.test(src)) img.setAttribute('src', src);   // legacy inline, or pasted HTML
+            else return;
+            // Intrinsic size, so an image that hasn't resolved yet (or whose
+            // bytes are on another device) holds its box instead of collapsing.
+            for (const attr of ['width', 'height']) {
+              const v = n.getAttribute(attr);
+              if (v && /^\d{1,5}$/.test(v)) img.setAttribute(attr, v);
             }
+            to.appendChild(img);
             return;
           }
           const el = document.createElement(n.tagName.toLowerCase());
@@ -5469,6 +5788,27 @@
     };
     copy(src, out);
     return out.innerHTML;
+  }
+
+  // The other half of the sanitizer's image contract: a stored `<img
+  // data-asset>` has no src, so give it one from the asset store. Idempotent —
+  // renderCard calls it on every render, and a card re-renders constantly.
+  //
+  // Async by nature (IndexedDB), so it re-checks the element before writing:
+  // a pull can replace the whole body between the query and its answer.
+  function hydrateAssets(root) {
+    for (const img of root.querySelectorAll('img[data-asset]')) {
+      const id = img.dataset.asset;
+      if (img.dataset.assetLoaded === id) continue;
+      ASSETS.url(id).then((u) => {
+        if (!img.isConnected || img.dataset.asset !== id) return;
+        if (u) { img.src = u; img.dataset.assetLoaded = id; img.classList.remove('asset-missing'); }
+        // No bytes on this device: a board synced before its images arrived, or
+        // an evicted store. Show a sized placeholder rather than nothing, and
+        // leave assetLoaded unset so a later render tries again.
+        else img.classList.add('asset-missing');
+      });
+    }
   }
 
   // Follow a link inside a card body: node links frame their target;
@@ -6223,7 +6563,7 @@
   // the affected nodes and offers to select/center them for review.
   const conflictNotice = document.createElement('div');
   conflictNotice.id = 'conflict-notice';
-  conflictNotice.className = 'hidden';
+  conflictNotice.className = 'app-notice hidden';
   conflictNotice.setAttribute('role', 'status');   // screen readers announce the merge notice
   conflictNotice.innerHTML =
     '<span class="notice-text"></span>' +
@@ -6246,6 +6586,33 @@
     conflictNotice.classList.remove('hidden');
     clearTimeout(conflictNoticeTimer);
     conflictNoticeTimer = setTimeout(hideConflictNotice, 15000);
+  }
+
+  // Storage pressure, same non-blocking shape as the merge notice. Separate
+  // element so the two can be up at once — a merge report shouldn't be evicted
+  // by "your images didn't fit", nor the reverse. No auto-dismiss: unlike a
+  // merge report, nothing about this resolves itself by being ignored.
+  const storageNotice = document.createElement('div');
+  storageNotice.id = 'storage-notice';
+  storageNotice.className = 'app-notice hidden';
+  storageNotice.setAttribute('role', 'status');
+  storageNotice.innerHTML =
+    '<span class="notice-text"></span>' +
+    '<button class="notice-show hidden" type="button"></button>' +
+    '<button class="notice-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>';
+  document.body.appendChild(storageNotice);
+  const hideStorageNotice = () => storageNotice.classList.add('hidden');
+  storageNotice.querySelector('.notice-dismiss').addEventListener('click', hideStorageNotice);
+  // `action` = { label, run } adds a button; omit it for a bare statement.
+  function showStorageNotice(text, action) {
+    storageNotice.querySelector('.notice-text').textContent = text;
+    const btn = storageNotice.querySelector('.notice-show');
+    btn.classList.toggle('hidden', !action);
+    if (action) {
+      btn.textContent = action.label;
+      btn.onclick = () => { hideStorageNotice(); action.run(); };
+    }
+    storageNotice.classList.remove('hidden');
   }
 
   // ── Merge review: the notice's "Review" opens this panel. The merge keeps
@@ -6693,6 +7060,7 @@
     updateBoardMenuLabel();
     renderBoardMenu();
     closeBoardMenu();
+    migrateInlineImages(id, board);   // legacy inline images → asset store (async, post-paint)
     reconcileDriveBoard(id);    // if it's a Drive board, pull/push/resolve against Drive
   }
   function saveCurrent() {
@@ -6859,6 +7227,11 @@
   maybeReconcileCurrent();   // if connected (cached token) and the open board is Drive-backed, sync it
   startSyncPolling();        // keep the open Drive board fresh in the background
   updateDriveChip();
+  migrateInlineImages(currentBoardId, board);   // legacy inline images → asset store
+  ASSETS.persist();          // ask not to be evicted; a request, never a guarantee
+  // Reap orphaned image bytes once, off the boot path. Boot is the only safe
+  // moment (see collectUnusedAssets), and it's never urgent.
+  requestIdle(() => collectUnusedAssets());
   // A returning opted-in user whose session token has expired. Warm the Google
   // script NOW so the first-gesture reconnect calls for a token inside that
   // gesture's activation window rather than after a cold cross-network fetch,

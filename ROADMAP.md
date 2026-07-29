@@ -144,9 +144,11 @@ styling, toolbar. The original plan called the gold-on-slate palette
 Two size ceilings that haven't been hit yet, recorded so the reasoning
 isn't lost:
 
-- **Browser storage.** localStorage is the whole database, and pasted
-  images are the realistic way to exhaust it (they're already downscaled
-  on the way in). A board of hundreds of screenshots is the failure case.
+- **Browser storage.** localStorage holds the board JSON; image bytes moved
+  to IndexedDB (`ARCHITECTURE.md` → *Image assets*), which raised the image
+  ceiling by orders of magnitude. What's left is that both stores are
+  **evictable** — a big local-only image library is one the browser may
+  discard — so the remaining ceiling is durability, not size.
 - **Splitting a board across files.** The original plan proposed
   per-node documents for this; its stated 1 MiB trigger was Firestore's
   limit, and doesn't transfer to a Drive file, so the premise needs

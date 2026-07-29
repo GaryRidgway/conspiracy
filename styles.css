@@ -492,8 +492,8 @@ body.space-pan #viewport.panning,
 #empty-hint .empty-sub { font-size: 0.85rem; font-weight: 400; color: var(--text-3); }
 #empty-hint strong { color: var(--accent); font-weight: 600; }
 
-/* ── Non-blocking merge-conflict notice ── */
-#conflict-notice {
+/* ── Non-blocking notices (merge conflicts, storage pressure) ── */
+.app-notice {
   position: fixed;
   left: 50%;
   bottom: 1.5rem;
@@ -513,23 +513,26 @@ body.space-pan #viewport.panning,
   font-size: 0.82rem;
   color: var(--text);
 }
-#conflict-notice.hidden { display: none; }
-#conflict-notice .notice-text { flex: 1; line-height: 1.35; }
-#conflict-notice .notice-show {
+.app-notice.hidden { display: none; }
+.app-notice .notice-text { flex: 1; line-height: 1.35; }
+.app-notice .notice-show {
   flex: none;
   font: inherit; font-weight: 600;
   color: #1a1205; background: var(--accent);
   border: none; border-radius: 6px;
   padding: 0.3rem 0.6rem; cursor: pointer;
 }
-#conflict-notice .notice-show.hidden { display: none; }
-#conflict-notice .notice-dismiss {
+.app-notice .notice-show.hidden { display: none; }
+.app-notice .notice-dismiss {
   flex: none;
   font-size: 1.1rem; line-height: 1;
   color: var(--text-3); background: transparent;
   border: none; cursor: pointer; padding: 0 0.2rem;
 }
-#conflict-notice .notice-dismiss:hover { color: var(--text); }
+.app-notice .notice-dismiss:hover { color: var(--text); }
+/* Storage pressure sits above a merge notice rather than on top of it — both
+   can be up at once, and the storage one is the more urgent read. */
+#storage-notice { bottom: 5rem; }
 
 /* ── Docked frame window — one frame's region as a second window on the
    right edge. #dock-world carries its own pan/zoom transform (same world
@@ -959,8 +962,19 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
 .card-body img {
   display: block;
   max-width: 100%;
+  height: auto;          /* the width/height attributes are intrinsic size, not layout */
   border-radius: 6px;
   margin: 0.25rem 0;
+}
+
+/* An image whose bytes aren't on this device: a board opened before its assets
+   downloaded, or an evicted store. The width/height attributes keep the box,
+   so the layout doesn't jump when the real image lands. */
+.card-body img.asset-missing {
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px dashed var(--border2);
+  background: rgba(255,255,255,0.03);
 }
 
 /* Pasted tables (GitHub, docs) — no table editing UI, but the structure
