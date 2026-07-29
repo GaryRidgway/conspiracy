@@ -348,6 +348,35 @@ board's whole storage, and it surfaced only as `save failed` at paste time.
   menu's preview chips. Two consumers, one definition — a chip can't advertise a
   shape the node won't draw. `IMAGE_SHAPES` is the closed set of keys allowed to
   reach the DOM, since board content is untrusted.
+
+#### Crop: two rects, one derived field
+
+`crop` is a source rect in 0..1 of the asset (absent = the whole picture). It
+maps onto the node box, so the `<img>` is sized as a multiple of that box and
+offset by the rect's origin — all percentages, which is why a later resize
+rescales the framing with no JS at all.
+
+Crop *mode* is modelled as two rects: the node box is a **window**, and the
+**ghost** (`cropGhost`, runtime-only) is where the whole picture would sit if the
+window showed all of it. `crop` is re-derived from the pair on every frame, and
+each gesture moves exactly one of them:
+
+| Gesture | Moves | So that |
+|---|---|---|
+| handle drag | the box (clamped inside the ghost) | the edge you pull is the edge that moves |
+| drag inside / arrow keys | the ghost | the picture slides, the node stays put on the board |
+
+There is deliberately **no accept step**: every crop drag is an ordinary
+`commit()`, so undo walks back through them and nothing is provisional. Escape,
+Enter and a click away only leave the mode. The ghost is derived *once* on entry
+— re-deriving per frame would chase the box being dragged — so any wholesale
+content replacement invalidates it, and `exitCrop()` sits at the top of
+`reconcileToBoard()` to cover undo, import, pull, merge and board switch at once.
+
+The image node has **no CSS border** for this reason: a border insets the clip
+box (and with it the `<img>` the crop positions) by a pixel per side, which both
+skews the crop and leaves a visible seam between the ghost and the window. Every
+ring on it is a `box-shadow`, painted outside the box.
 - **Data URIs still exist at exactly two boundaries** — a board written before
   the asset store (hoisted by `migrateInlineImages` *after* first paint,
   version-bumped like `migrateLegacyDockMembers` and deliberately not a
@@ -659,10 +688,15 @@ silently overwrote newer synced content with no conflict raised for it.
   (`openMenuForSelection`) reuses `onCanvasContextMenu` via a synthetic
   event, so menu items live in exactly one place regardless of trigger.
 - Escape is a priority chain: open modal → board menu → blur editing → blur
-  chrome → exit iframe interact mode → clear selection.
+  chrome → exit image crop → exit iframe interact mode → clear selection.
 - Iframe "interact mode" (`interactiveId`) is runtime-only state and must
   never trap the user: every canvas gesture (pan, wheel, zoom controls, ⌘K
   jump) calls `exitInteract()`. Any new gesture must too.
+- Image "crop mode" (`cropId`) is the other runtime-only mode, and it is entered
+  by **Enter** — so the keys that do something else inside it have to be worth
+  it: the arrows pan the crop rather than nudging the node, which is both the
+  only pointer-free way to crop and the only way to stop a nudge from sliding
+  the box out from under the ghost its crop is measured against.
 
 ### Accessibility: known limitations (deliberate, scoped)
 

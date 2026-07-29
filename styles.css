@@ -253,14 +253,16 @@ body.space-pan #viewport.panning,
    sized/offset by the crop rect (percentages of the clip, so the whole thing
    scales with a resize and needs no per-frame JS). Chrome lives outside the
    box so it never covers the picture. ── */
+/* No border, deliberately: a border would inset the clip box (and with it the
+   <img> the crop rect positions) by a pixel on each side, so the crop would be
+   fractionally off and the ghost wouldn't line up with the window during a crop.
+   Every ring here is a box-shadow instead, painted outside the box. */
 .image-node {
   position: absolute;
-  box-sizing: border-box;
-  border: 1px solid transparent;      /* the ring, kept off the picture itself */
   border-radius: 8px;
   box-shadow: 0 6px 22px rgba(0,0,0,0.35);
   cursor: grab;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: box-shadow 0.12s;
 }
 .image-node.dragging { cursor: grabbing; }
 .image-node .image-clip {
@@ -296,21 +298,56 @@ body.space-pan #viewport.panning,
                   50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
 }
 .image-node .image-clip { clip-path: var(--clip, none); }
-.image-node.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
-}
-.image-node.colored { border-color: var(--node-color); }
+.image-node.selected { box-shadow: 0 0 0 2px var(--accent), 0 8px 26px rgba(0,0,0,0.45); }
+.image-node.colored { box-shadow: 0 0 0 2px var(--node-color), 0 6px 22px rgba(0,0,0,0.35); }
 .image-node.colored.selected {
-  border-color: var(--node-color-hi);
-  box-shadow: 0 0 0 1px var(--node-color-hi), 0 8px 26px rgba(0,0,0,0.45);
+  box-shadow: 0 0 0 2px var(--node-color-hi), 0 8px 26px rgba(0,0,0,0.45);
 }
 /* Bytes not on this device (synced ahead of its images, or an evicted store).
    The stored box holds the layout, so nothing jumps when they land. */
 .image-node.asset-missing .image-clip {
-  border: 1px dashed var(--border2);
+  outline: 1px dashed var(--border2);
+  outline-offset: -1px;
   background: rgba(255,255,255,0.03);
 }
+
+/* Crop mode: the whole picture (the "ghost") is pinned behind the box and
+   dimmed; the box is the bright window onto it, and its handles move the window
+   instead of scaling the picture. The layer takes no pointer events, so dragging
+   only ever grabs the window and a click on the dimmed surround counts as
+   clicking away — which is exactly what it looks like. */
+.image-node .crop-layer {
+  position: absolute;
+  pointer-events: none;
+  /* outline, not border: a border would inset the ghost image by a pixel and
+     leave a visible seam against the bright window it's meant to align with */
+  outline: 1px dashed var(--accent-soft);
+}
+.image-node .crop-ghost {
+  width: 100%; height: 100%;
+  object-fit: fill;
+  opacity: 0.3;
+}
+.image-node .crop-hint {
+  position: absolute;
+  left: -1px; top: calc(100% + 5px);
+  padding: 0.1rem 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* While cropping, the bar and the ports would both be lies: the bar's actions
+   don't apply mid-crop, and a port drag can't reach anything. */
+.image-node.cropping .image-bar,
+.image-node.cropping .port { display: none; }
+/* You crop the picture, not the silhouette — the mask comes back on exit. */
+.image-node.cropping .image-clip { clip-path: none; }
+/* No cursor to derive nearness from during a crop: light every handle. */
+.image-node.cropping .image-corner { opacity: 1; }
 
 /* Bar above the box: label + actions, revealed on hover or selection (tap to
    select is the touch route — there is no hover there). */

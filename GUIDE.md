@@ -117,11 +117,28 @@ give it a name, which is also what screen readers and **⌘K** search see.
 holds its proportions, or an **edge** to stretch one dimension on its own.
 Hold **Shift** while pulling a corner to break the proportions there too.
 
+**Cropping**: double-click an image (or right-click → *Crop*). The whole
+picture appears dimmed around it, and the bright part is the window you're
+keeping:
+
+- **drag a handle** to move that edge of the window — the picture holds
+  still while the window closes in on it;
+- **drag the picture** to slide it under the window — the window stays
+  exactly where it sits on the board;
+- **arrow keys** pan it too, so cropping works without a mouse.
+- **Esc** (or **Enter**, or a click anywhere else) finishes.
+
+There is nothing to confirm: each drag is a normal edit, so **⌘/Ctrl+Z**
+walks back through them like anything else. Afterwards, resizing scales
+what you framed rather than re-cropping it, and right-click → *Reset crop*
+brings the whole picture back — cropping never removes anything from the
+stored image.
+
 **Shapes**: right-click an image for a row of shape chips — rectangle,
-rounded, circle, triangle, diamond, hexagon, star. These are *masks*, so
-nothing is thrown away: choosing rectangle again brings the whole picture
-back, whenever you like. The bounding box (and its handles) stays
-rectangular so a circular image is still easy to grab and resize.
+rounded, circle, triangle, diamond, hexagon, star. These are *masks* too,
+so nothing is thrown away: choosing rectangle again brings the whole
+picture back, whenever you like. The bounding box (and its handles) stays
+rectangular, so a circular image is still easy to grab and resize.
 
 Images are downscaled on the way in (longest edge 1600px, WebP), and the
 picture itself is stored separately from the board — the board only keeps

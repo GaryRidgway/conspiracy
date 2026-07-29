@@ -1249,6 +1249,153 @@ test('an image can be masked to a circle, and back again', { tag: '@cards' }, as
   expect('shape' in await imageRecord(page)).toBe(false);
 });
 
+// Crop is non-destructive: a source rect over untouched bytes. The invariant
+// that makes it feel right is that a handle drag moves the WINDOW while the
+// picture holds still — which is checkable, because the bright window and the
+// dimmed ghost are then the same picture in the same place.
+test('cropping an image moves the window, not the picture', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(320, 300);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const saved = page.locator('#saveState');
+  await expect(saved).toHaveText('saved');
+  const before = await imageRecord(page);
+
+  await node.dblclick();
+  await expect(node).toHaveClass(/cropping/);
+  const ghost = node.locator('.crop-ghost');
+  await expect(ghost).toBeVisible();
+
+  // pull the west edge in: the window's left edge moves, the picture does not
+  let box = await node.boundingBox();
+  await drag(page, { x: box.x, y: box.y + box.height / 2 },
+    { x: box.x + 20, y: box.y + box.height / 2 });
+  await expect(saved).toHaveText('saved');
+
+  const cropped = await imageRecord(page);
+  expect(cropped.crop.x).toBeGreaterThan(0.2);
+  expect(cropped.crop.w).toBeLessThan(0.8);
+  expect(cropped.crop.h).toBe(1);                    // only the one edge moved
+  expect(cropped.asset).toBe(before.asset);          // the bytes are never touched
+  expect(cropped.w).toBeCloseTo(before.w - 20, 0);   // the box shrank by the drag
+  // the picture in the window and the picture in the ghost are the same picture
+  // in the same place — i.e. it did not slide under the cursor
+  const [shown, whole] = await Promise.all([node.locator('.image-src').boundingBox(), ghost.boundingBox()]);
+  expect(shown.x).toBeCloseTo(whole.x, 0);
+  expect(shown.y).toBeCloseTo(whole.y, 0);
+  expect(shown.width).toBeCloseTo(whole.width, 0);
+
+  // Escape leaves the mode, keeping the edit (it was never provisional)
+  await page.keyboard.press('Escape');
+  await expect(node).not.toHaveClass(/cropping/);
+  await expect(node.locator('.crop-ghost')).toHaveCount(0);
+  await expect(saved).toHaveText('saved');
+  await page.reload();
+  const after = await imageRecord(page);
+  expect(after.crop).toEqual(cropped.crop);
+});
+
+// Dragging inside the window is the other half: there the picture slides and the
+// node stays exactly where it sits on the board.
+test('panning inside a crop slides the picture, not the node', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(360, 320);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const saved = page.locator('#saveState');
+  await expect(saved).toHaveText('saved');
+
+  // crop in from the east first, so there's room left to pan into
+  await node.dblclick();
+  let box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height / 2 },
+    { x: box.x + box.width - 24, y: box.y + box.height / 2 });
+  await expect(saved).toHaveText('saved');
+  const cropped = await imageRecord(page);
+  const where = await nodePos(node);
+
+  box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    { x: box.x + box.width / 2 - 12, y: box.y + box.height / 2 });
+  await expect(saved).toHaveText('saved');
+
+  const panned = await imageRecord(page);
+  expect(panned.crop.x).toBeGreaterThan(cropped.crop.x);   // looking further right
+  expect(panned.crop.w).toBeCloseTo(cropped.crop.w, 3);    // same amount of picture
+  const stillThere = await nodePos(node);
+  expect([stillThere.x, stillThere.y, stillThere.w]).toEqual([where.x, where.y, where.w]);
+});
+
+// Enter puts a keyboard user into crop mode, so the arrows have to crop there —
+// otherwise the only thing they could do in the mode is leave it. (And nudging
+// the node would slide the box out from under the ghost the crop measures
+// against, quietly corrupting the framing.)
+test('keyboard: Enter crops an image and the arrows pan it', { tag: '@a11y' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+
+  // crop in from the east with the pointer, so there's room to pan into
+  await node.dblclick();
+  const box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height / 2 },
+    { x: box.x + box.width - 24, y: box.y + box.height / 2 });
+  await page.keyboard.press('Escape');
+  await expect(saved).toHaveText('saved');
+  const cropped = await imageRecord(page);
+  const where = await nodePos(node);
+
+  await page.keyboard.press('Enter');
+  await expect(node).toHaveClass(/cropping/);
+  await page.keyboard.press('ArrowRight');
+  await expect(saved).toHaveText('saved');
+  const panned = await imageRecord(page);
+  expect(panned.crop.x).toBeGreaterThan(cropped.crop.x);      // looking further right
+  expect(panned.crop.w).toBeCloseTo(cropped.crop.w, 3);
+  expect(await nodePos(node)).toEqual(where);                 // the node itself never moved
+
+  await page.keyboard.press('Enter');                         // reads as "apply"
+  await expect(node).not.toHaveClass(/cropping/);
+});
+
+// Resizing a cropped image scales the framing rather than re-cropping it, and
+// Reset crop takes the field back out rather than storing a full-image default.
+test('a cropped image scales its framing, and the crop can be reset', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+
+  await node.dblclick();
+  let box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width - 18, y: box.y + box.height - 12 });
+  await page.keyboard.press('Escape');
+  await expect(saved).toHaveText('saved');
+  const cropped = await imageRecord(page);
+  expect(cropped.crop.w).toBeLessThan(1);
+
+  // out of crop mode, a corner drag is an ordinary proportional resize
+  box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width + 80, y: box.y + box.height + 80 });
+  await expect(saved).toHaveText('saved');
+  const scaled = await imageRecord(page);
+  expect(scaled.w).toBeGreaterThan(cropped.w + 40);
+  expect(scaled.crop).toEqual(cropped.crop);          // scaled the framing, not re-cropped
+
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Reset crop' }).click();
+  await expect(saved).toHaveText('saved');
+  const reset = await imageRecord(page);
+  expect('crop' in reset).toBe(false);
+  expect(reset.asset).toBe(scaled.asset);
+});
+
 // An image node is a card underneath, so everything cards get for free has to
 // actually work on it: connections, undo, and a reload.
 test('an image node connects, undoes and reloads like any card', { tag: '@connections' }, async ({ page }) => {

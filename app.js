@@ -2898,7 +2898,7 @@
           // Where the caller asked for it, corners hold the proportions the user
           // can see (Shift frees them) and edges are the deliberate stretch —
           // between them that's "custom dims" without a modifier key to learn.
-          if (opts.aspect && dir.length === 2 && !ev.shiftKey) {
+          if (opts.aspect && opts.aspect() && dir.length === 2 && !ev.shiftKey) {
             if (Math.abs(w - o.w) >= Math.abs(h - o.h)) h = w / aspect; else w = h * aspect;
           }
           data.w = Math.max(opts.minW, Math.round(w));
@@ -2907,6 +2907,7 @@
           // pinned (a frame's contents keep their world positions).
           if (dir.includes('w')) data.x = o.x + o.w - data.w;
           if (dir.includes('n')) data.y = o.y + o.h - data.h;
+          if (opts.clamp) opts.clamp(data, o, dir);
           el.style.left = data.x + 'px';
           el.style.top = data.y + 'px';
           el.style.width = data.w + 'px';
@@ -3057,7 +3058,9 @@
     applyNodeZ(el, data);
     const labelEl = el.querySelector('.image-label');
     if (document.activeElement !== labelEl) labelEl.textContent = data.title || '';
+    applyCropStyle(el, data);
     hydrateImageNode(el, data);
+    if (cropId === id) layoutCrop(id);
     return el;
   }
 
@@ -3091,7 +3094,15 @@
     el.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, .image-handle')) return;
       if (el.querySelector('.image-label').isContentEditable) return;
-      startNodeDrag(id, el, e);
+      if (cropId === id) startCropPan(id, el, e);   // the window pans; the node stays put
+      else startNodeDrag(id, el, e);
+    });
+    // Double-click to crop, matching "double-click an embed to use it": the
+    // gesture for "work inside this node" rather than with it.
+    el.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, .image-handle')) return;
+      e.stopPropagation();
+      if (cropId !== id) enterCrop(id);
     });
 
     const labelEl = el.querySelector('.image-label');
@@ -3113,10 +3124,209 @@
     makeBoxResizable(id, el, {
       selector: '.image-handle',
       minW: IMAGE_MIN_SIZE, minH: IMAGE_MIN_SIZE,
-      aspect: true,
-      onResize: () => redrawConnectionsFor(id),
+      // Cropping is a free rect by definition — locking the aspect there would
+      // make most of the crops anyone wants unreachable.
+      aspect: () => cropId !== id,
+      clamp: (data, o, dir) => { if (cropId === id) clampCropBox(data, o, dir); },
+      onResize: () => {
+        if (cropId === id) updateCrop(id);
+        redrawConnectionsFor(id);
+      },
     });
   }
+
+  // ── Crop. Non-destructive, like the shape masks: `crop` is a source rect in
+  // 0..1 of the asset and the bytes are never touched.
+  //
+  // The whole model is two rects. The node box is a WINDOW; the GHOST is where
+  // the whole picture would sit if the window showed all of it. `crop` is
+  // re-derived from the pair on every frame, and each gesture moves exactly one
+  // of them: a handle drag moves the box (the edge you pull is the edge you meant
+  // to move), a drag inside moves the ghost (the picture slides, the node stays
+  // put on the board). Nothing else to keep in step, no accept step to get wrong,
+  // and every crop drag is an ordinary undoable edit like any other. ──
+  const FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
+  let cropId = null;      // which image node is in crop mode (runtime only)
+  let cropGhost = null;   // its whole-picture rect in world px, fixed while cropping
+  const round4 = (n) => Math.round(n * 1e4) / 1e4;
+
+  // Board content is untrusted, and a `w` of 0 (or of "0") divides into an
+  // infinitely wide image — so read the rect defensively rather than trust it.
+  function cropRect(data) {
+    const c = data && data.crop;
+    if (!c || typeof c !== 'object') return FULL_CROP;
+    const num = (v, dflt) => (typeof v === 'number' && isFinite(v) ? v : dflt);
+    const w = Math.min(1, Math.max(0.01, num(c.w, 1)));
+    const h = Math.min(1, Math.max(0.01, num(c.h, 1)));
+    return {
+      w, h,
+      x: Math.min(1 - w, Math.max(0, num(c.x, 0))),
+      y: Math.min(1 - h, Math.max(0, num(c.y, 0))),
+    };
+  }
+
+  // The crop rect maps onto the node box, so the <img> is sized as a multiple of
+  // that box and offset by the rect's origin. Percentages throughout, which is
+  // what lets a later resize rescale the framing with no JS at all.
+  function applyCropStyle(el, data) {
+    const img = el.querySelector('.image-src');
+    const c = cropRect(data);
+    img.style.width = round4(100 / c.w) + '%';
+    img.style.height = round4(100 / c.h) + '%';
+    img.style.left = round4(-100 * c.x / c.w) + '%';
+    img.style.top = round4(-100 * c.y / c.h) + '%';
+  }
+
+  function enterCrop(id) {
+    const data = board.cards[id];
+    if (!data || data.kind !== 'image') return;
+    exitCrop();
+    const el = nodeEls.get(id);
+    if (!el) return;
+    const c = cropRect(data);
+    // Derived ONCE and then held: re-deriving per frame would chase the very box
+    // the user is dragging, and the picture would slide out from under them.
+    const gw = data.w / c.w, gh = data.h / c.h;
+    cropGhost = { x: data.x - c.x * gw, y: data.y - c.y * gh, w: gw, h: gh };
+    cropId = id;
+    selectNode(id);
+    el.classList.add('cropping');
+    el.style.zIndex = '60';        // the ghost spills outside the box; keep it above
+    layoutCrop(id);
+  }
+
+  function exitCrop() {
+    if (!cropId) return;
+    const el = nodeEls.get(cropId);
+    const data = board.cards[cropId];
+    cropId = null;
+    cropGhost = null;
+    if (!el) return;
+    el.classList.remove('cropping');
+    const layer = el.querySelector('.crop-layer');
+    if (layer) layer.remove();
+    if (data) applyNodeZ(el, data); else el.style.zIndex = '';   // stacking back to the record
+  }
+
+  // Place the ghost layer behind the box. Re-run on every frame of a crop
+  // gesture: the layer is positioned relative to a box that is itself moving.
+  function layoutCrop(id) {
+    const el = nodeEls.get(id);
+    const data = board.cards[id];
+    if (!el || !data || !cropGhost) return;
+    let layer = el.querySelector('.crop-layer');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.className = 'crop-layer';
+      layer.innerHTML = '<img class="crop-ghost" alt="" draggable="false">' +
+        '<span class="crop-hint">drag to crop · Esc when done</span>';
+      el.insertBefore(layer, el.firstChild);      // painted UNDER the bright window
+    }
+    const ghostImg = layer.querySelector('.crop-ghost');
+    const src = el.querySelector('.image-src').getAttribute('src');
+    if (src && ghostImg.getAttribute('src') !== src) ghostImg.src = src;
+    layer.style.left = (cropGhost.x - data.x) + 'px';
+    layer.style.top = (cropGhost.y - data.y) + 'px';
+    layer.style.width = cropGhost.w + 'px';
+    layer.style.height = cropGhost.h + 'px';
+  }
+
+  // Box vs. the pinned ghost IS the crop rect, by definition — so a gesture only
+  // has to move the box and call this.
+  function updateCrop(id) {
+    const data = board.cards[id];
+    if (!data || !cropGhost) return;
+    const x = round4((data.x - cropGhost.x) / cropGhost.w);
+    const y = round4((data.y - cropGhost.y) / cropGhost.h);
+    const w = round4(data.w / cropGhost.w);
+    const h = round4(data.h / cropGhost.h);
+    // "The whole picture" is the ABSENCE of the field, not {0,0,1,1}: one less
+    // thing in the JSON, and one less field for a merge to conflict over.
+    if (x <= 0 && y <= 0 && w >= 1 && h >= 1) delete data.crop;
+    else data.crop = { x, y, w, h };
+    applyCropStyle(nodeEls.get(id), data);
+    layoutCrop(id);
+  }
+
+  // Keep a crop gesture inside the ghost. Runs after the generic resize has
+  // written the box, so it clamps the edge that MOVED and leaves the anchored
+  // one alone. (It can't undershoot the minimum size: the box started inside the
+  // ghost, so the room from an anchored edge to the far side is at least as big
+  // as the box was.)
+  function clampCropBox(data, o, dir) {
+    const g = cropGhost;
+    if (!g) return;
+    if (dir.includes('e')) data.w = Math.min(data.w, g.x + g.w - data.x);
+    if (dir.includes('s')) data.h = Math.min(data.h, g.y + g.h - data.y);
+    if (dir.includes('w') && data.x < g.x) { data.w -= g.x - data.x; data.x = g.x; }
+    if (dir.includes('n') && data.y < g.y) { data.h -= g.y - data.y; data.y = g.y; }
+    data.w = Math.round(data.w);
+    data.h = Math.round(data.h);
+    data.x = Math.round(data.x);
+    data.y = Math.round(data.y);
+  }
+
+  // Slide the picture under the window — what dragging means while cropping.
+  //
+  // This moves the GHOST, not the box: the node stays exactly where the user put
+  // it on the board while they reframe what's inside it. (A handle drag is the
+  // other way round — there the box moves and the picture holds still, because
+  // the edge you pull is the edge you meant to move.)
+  function startCropPan(id, el, e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const data = board.cards[id];
+    const g = cropGhost;
+    if (!data || !g) return;
+    const start = pointerWorld(e);
+    const pid = e.pointerId;
+    const o = { x: g.x, y: g.y };
+    let moved = false;
+    const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
+      const now = pointerWorld(ev);
+      // The window has to stay over the picture: the ghost can't slide past the
+      // box's near edge, nor pull its far edge inside it.
+      g.x = Math.min(data.x, Math.max(data.x + data.w - g.w, o.x + now.x - start.x));
+      g.y = Math.min(data.y, Math.max(data.y + data.h - g.h, o.y + now.y - start.y));
+      updateCrop(id);
+      moved = true;
+    };
+    const onUp = (ev) => {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      if (moved) commit();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
+  // Keyboard pan: the arrows' step, applied to the ghost. The sign is inverted
+  // because the arrow names what you want to SEE more of — press Right and the
+  // window looks further right, so the picture under it slides left.
+  function nudgeCrop(dx, dy) {
+    const data = board.cards[cropId];
+    const g = cropGhost;
+    if (!data || !g) return;
+    g.x = Math.min(data.x, Math.max(data.x + data.w - g.w, g.x - dx));
+    g.y = Math.min(data.y, Math.max(data.y + data.h - g.h, g.y - dy));
+    updateCrop(cropId);
+    commit({ coalesce: true, affects: { ids: [cropId], color: false } });   // a burst is one step
+  }
+
+  // Clicking away is "done", the same as every other in-place editor here. The
+  // ghost layer takes no pointer events, so a click on the dimmed surround
+  // counts as away — which is what it looks like.
+  document.addEventListener('pointerdown', (e) => {
+    if (!cropId) return;
+    const el = nodeEls.get(cropId);
+    const inMenu = e.target.closest && e.target.closest('#context-menu');
+    if (inMenu || (el && el.contains(e.target))) return;
+    exitCrop();
+  }, true);
 
   function createImageNode(worldX, worldY, rec) {
     const id = newId('c_');
@@ -3958,6 +4168,7 @@
   //  DELETE (any node) — also removes attached connections
   // ════════════════════════════════════════════════════════
   function deleteNode(id) {
+    if (cropId === id) exitCrop();            // a mode can't outlive its node
     if (isDockedFrame(id)) undockFrame(id);   // a tab can't outlive its frame
     // deleting a dock orphans its buttons in place (buttons that were ALSO
     // selected get their own deleteNode call in the same sweep)
@@ -4427,6 +4638,10 @@
   // page — no reload), only added/removed nodes are created/destroyed.
   // Used by undo/redo and import. Viewport is left as-is.
   function reconcileToBoard() {
+    // Every caller here replaces content wholesale — undo, import, a Drive pull,
+    // a merge, a board switch. A crop session's ghost was derived from a box that
+    // may no longer exist, so the mode can't survive any of them.
+    exitCrop();
     for (const id of [...nodeEls.keys()]) {
       // gone from the data, or pinned (undo/remote can flip the flag): either
       // way the node no longer belongs on the canvas
@@ -4962,6 +5177,13 @@
         // The label is the image's alt text as well as its search name, so it
         // needs a route that doesn't depend on finding a hover-only target.
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.image-label')) });
+        items.push({ label: 'Crop', hint: '2×click', action: () => enterCrop(id) });
+        if (gn0.data.crop) {
+          items.push({
+            label: 'Reset crop',
+            action: () => { delete gn0.data.crop; renderImageNode(id); commit(); },
+          });
+        }
         items.push({ shapes: true, current: imageShape(gn0.data), onPick: (key) => setImagesShape([...selectedNodes], key) });
         items.push('sep');
       }
@@ -5958,14 +6180,19 @@
       e.preventDefault();
       const step = e.shiftKey ? 1 : 10;
       const [ax, ay] = ARROW_DELTA[e.key];
-      nudgeSelection(ax * step, ay * step);
+      // Mid-crop the arrows pan the crop instead of moving the node — moving it
+      // would slide the box out from under the ghost the crop is measured
+      // against, and it's also the only way to crop without a pointer at all.
+      if (cropId) nudgeCrop(ax * step, ay * step);
+      else nudgeSelection(ax * step, ay * step);
       return;
     }
     // Enter opens the selected item: edit a card, press a button, zoom to a
     // frame, activate an embed. (Escape backs out of each.)
     if (e.key === 'Enter' && onCanvas && selectedNodes.size === 1) {
       e.preventDefault();
-      openSelectedNode([...selectedNodes][0]);
+      if (cropId) exitCrop();        // reads as "apply" — the edits are already in
+      else openSelectedNode([...selectedNodes][0]);
       return;
     }
     // Enter on a keyboard-selected connection edits its label (the pointer
@@ -6008,6 +6235,7 @@
     if (e.key === 'Escape') {
       if (editing) ae.blur();
       else if (!onCanvas && ae.blur) ae.blur();   // step out of the chrome, back to the canvas
+      else if (cropId) exitCrop();
       else if (interactiveId) setInteractive(interactiveId, false);
       // stepping out of a connection cycle lands back on the node it began
       // from, not all the way to an empty selection
@@ -6063,6 +6291,7 @@
     const data = board.cards[id];
     if (data && data.kind === 'button') { runButtonAction(id); return; }
     if (data && data.kind === 'frame') { frameNode(id); return; }
+    if (data && data.kind === 'image') { enterCrop(id); return; }
     if (data) {                                    // plain card → edit its body
       const el = nodeEls.get(id);
       const bodyEl = el && el.querySelector('.card-body');
