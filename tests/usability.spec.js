@@ -1214,6 +1214,41 @@ test('the Image tool adds pictures from a file', { tag: '@cards' }, async ({ pag
   await expect(page.locator('#saveState')).toHaveText('saved');
 });
 
+// Shapes are a MASK: the box and the bytes are untouched, so Rectangle brings
+// the whole picture back. The record carries only a key — the geometry is CSS,
+// shared with the menu's preview chips.
+test('an image can be masked to a circle, and back again', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const saved = page.locator('#saveState');
+  await expect(saved).toHaveText('saved');
+  const before = await imageRecord(page);
+
+  await node.click({ button: 'right' });
+  // the chip standing for the current shape is the one marked active
+  await expect(page.locator('#context-menu .ctx-shape[data-shape="rect"]')).toHaveClass(/active/);
+  await page.locator('#context-menu .ctx-shape[data-shape="circle"]').click();
+
+  await expect(node).toHaveAttribute('data-shape', 'circle');
+  const clip = () => node.locator('.image-clip').evaluate((el) => getComputedStyle(el).clipPath);
+  expect(await clip()).not.toBe('none');
+  await expect(saved).toHaveText('saved');
+  const circled = await imageRecord(page);
+  expect(circled.shape).toBe('circle');
+  expect([circled.w, circled.h, circled.asset]).toEqual([before.w, before.h, before.asset]);
+
+  await page.reload();
+  await expect(page.locator('.node.image-node')).toHaveAttribute('data-shape', 'circle');
+
+  // back to Rectangle: the field goes away rather than storing a default
+  await page.locator('.node.image-node').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="rect"]').click();
+  await expect(page.locator('.node.image-node')).toHaveAttribute('data-shape', 'rect');
+  await expect(saved).toHaveText('saved');
+  expect('shape' in await imageRecord(page)).toBe(false);
+});
+
 // An image node is a card underneath, so everything cards get for free has to
 // actually work on it: connections, undo, and a reload.
 test('an image node connects, undoes and reloads like any card', { tag: '@connections' }, async ({ page }) => {

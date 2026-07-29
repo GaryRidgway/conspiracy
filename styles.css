@@ -278,6 +278,24 @@ body.space-pan #viewport.panning,
   user-select: none;
   -webkit-user-drag: none;
 }
+
+/* Shape masks. One --clip per shape, inherited from whatever carries
+   data-shape: the image node (where .image-clip consumes it) or the context
+   menu's preview chip. Two consumers, one definition — a chip can't disagree
+   with the shape it's advertising. data-shape appears nowhere else, which is
+   why these can be bare attribute selectors.
+   A mask, not a crop: the bytes and the box are untouched, so Rectangle always
+   brings the whole picture back. */
+[data-shape="round"]    { --clip: inset(0 round 14%); }
+[data-shape="circle"]   { --clip: inset(0 round 50%); }
+[data-shape="triangle"] { --clip: polygon(50% 0%, 100% 100%, 0% 100%); }
+[data-shape="diamond"]  { --clip: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+[data-shape="hexagon"]  { --clip: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+[data-shape="star"]     {
+  --clip: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%,
+                  50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+.image-node .image-clip { clip-path: var(--clip, none); }
 .image-node.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
@@ -949,6 +967,26 @@ body.docked #help-wrap { right: calc(var(--dock-w, 420px) + 1rem); }
   /* a diagonal strike to read as "no color" */
   background-image: linear-gradient(135deg, transparent 44%, var(--danger) 44%, var(--danger) 56%, transparent 56%);
 }
+
+/* Image shape row: a filled chip clipped by the shape it selects, so the
+   preview IS the rule the node will use (see the --clip table). The clip goes on
+   an inner span, not the button — a clipped button can't paint a focus ring, and
+   the shared :focus-visible rule is the only thing keyboard users have here. */
+.ctx-shape {
+  display: inline-flex;
+  width: 20px; height: 20px; padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ctx-shape .shape-fill {
+  width: 100%; height: 100%;
+  background: var(--text-3);
+  clip-path: var(--clip, none);
+  transition: background 0.12s, transform 0.1s;
+}
+.ctx-shape:hover .shape-fill { background: var(--text); transform: scale(1.14); }
+.ctx-shape.active .shape-fill { background: var(--accent); }
 
 /* ── Left tool palette: add items to the board ── */
 #tools {

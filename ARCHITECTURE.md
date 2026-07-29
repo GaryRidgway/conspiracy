@@ -338,9 +338,16 @@ board's whole storage, and it surfaced only as `save failed` at paste time.
   `.asset-missing`, sized from the image node's stored box (or the img's
   `width`/`height` attributes) so the layout doesn't jump when the bytes land.
 - **Nothing the user does re-encodes stored bytes.** An image node's `w`/`h` are
-  a display box, independent of the asset's pixels. Since an id's bytes are
-  immutable and Drive copies are never reaped, a resize that re-encoded would
-  have to mint a new id and strand the old bytes on every device that has them.
+  a display box, independent of the asset's pixels, and `shape` is a mask over
+  it. Since an id's bytes are immutable and Drive copies are never reaped, a
+  resize or crop that re-encoded would have to mint a new id and strand the old
+  bytes on every device that has them. So every image edit is presentational,
+  and reversible for free.
+- **Shape geometry lives in CSS, not JS**: one `--clip` per shape keyed on
+  `data-shape`, inherited by both the node's `.image-clip` and the context
+  menu's preview chips. Two consumers, one definition — a chip can't advertise a
+  shape the node won't draw. `IMAGE_SHAPES` is the closed set of keys allowed to
+  reach the DOM, since board content is untrusted.
 - **Data URIs still exist at exactly two boundaries** — a board written before
   the asset store (hoisted by `migrateInlineImages` *after* first paint,
   version-bumped like `migrateLegacyDockMembers` and deliberately not a

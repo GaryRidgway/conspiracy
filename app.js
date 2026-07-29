@@ -2985,6 +2985,36 @@
   const IMAGE_MIN_SIZE = 24;
   const ASSET_ID_RE = /^a_[a-z0-9]{4,64}$/;
 
+  // Shape masks. A mask, emphatically — nothing is removed from the picture, so
+  // switching back to Rectangle restores all of it. The geometry lives in CSS
+  // (one `--clip` per shape, keyed on data-shape), which is what lets the
+  // context menu's preview chips and the node itself share one definition
+  // instead of drifting apart. This list is the closed set of valid keys:
+  // board content is untrusted, and only a key from here reaches the DOM.
+  const IMAGE_SHAPES = [
+    { key: 'rect', label: 'Rectangle' },
+    { key: 'round', label: 'Rounded' },
+    { key: 'circle', label: 'Circle' },
+    { key: 'triangle', label: 'Triangle' },
+    { key: 'diamond', label: 'Diamond' },
+    { key: 'hexagon', label: 'Hexagon' },
+    { key: 'star', label: 'Star' },
+  ];
+  const imageShape = (data) =>
+    (IMAGE_SHAPES.some((s) => s.key === data.shape) ? data.shape : 'rect');
+
+  function setImagesShape(ids, key) {
+    let changed = false;
+    for (const id of ids) {
+      const d = board.cards[id];
+      if (!d || d.kind !== 'image' || imageShape(d) === key) continue;
+      if (key === 'rect') delete d.shape; else d.shape = key;
+      renderImageNode(id);
+      changed = true;
+    }
+    if (changed) commit();
+  }
+
   // Starting box for an asset, never upscaling: a 16×16 favicon should arrive
   // at 16×16, not blown up to 360 wide.
   function imageBox(rec) {
@@ -3022,6 +3052,7 @@
     el.style.top = data.y + 'px';
     el.style.width = (data.w || IMAGE_MAX_DISPLAY) + 'px';
     el.style.height = (data.h || IMAGE_MAX_DISPLAY) + 'px';
+    el.dataset.shape = imageShape(data);
     applyNodeColor(el, data.color);
     applyNodeZ(el, data);
     const labelEl = el.querySelector('.image-label');
@@ -4753,7 +4784,7 @@
   // Arrow-key navigation between items when the menu holds focus (opened by
   // keyboard). Enter/Space already activate a focused button natively, and
   // Escape closes via the window handler in openContextMenu.
-  const ctxFocusables = () => [...contextMenu.querySelectorAll('.ctx-item, .ctx-swatch')];
+  const ctxFocusables = () => [...contextMenu.querySelectorAll('.ctx-item, .ctx-swatch, .ctx-shape')];
   contextMenu.addEventListener('keydown', (e) => {
     const foci = ctxFocusables();
     if (!foci.length) return;
@@ -4806,6 +4837,27 @@
           sw.style.setProperty('--sw', c.hex);
           sw.addEventListener('click', () => { closeContextMenu(); it.onPick(c.key); });
           row.appendChild(sw);
+        }
+        contextMenu.appendChild(row);
+        continue;
+      }
+      // Shape row: same grammar as the swatches, previewing each mask with a
+      // chip clipped by the very rule the node uses.
+      if (it.shapes) {
+        const row = document.createElement('div');
+        row.className = 'ctx-swatches';
+        for (const s of IMAGE_SHAPES) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'ctx-shape' + (it.current === s.key ? ' active' : '');
+          chip.dataset.shape = s.key;
+          chip.innerHTML = '<span class="shape-fill"></span>';
+          chip.title = s.label;
+          chip.setAttribute('aria-label', s.label);
+          chip.setAttribute('role', 'menuitemradio');
+          chip.setAttribute('aria-checked', String(it.current === s.key));
+          chip.addEventListener('click', () => { closeContextMenu(); it.onPick(s.key); });
+          row.appendChild(chip);
         }
         contextMenu.appendChild(row);
         continue;
@@ -4910,6 +4962,7 @@
         // The label is the image's alt text as well as its search name, so it
         // needs a route that doesn't depend on finding a hover-only target.
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.image-label')) });
+        items.push({ shapes: true, current: imageShape(gn0.data), onPick: (key) => setImagesShape([...selectedNodes], key) });
         items.push('sep');
       }
       // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for

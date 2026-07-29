@@ -117,6 +117,12 @@ give it a name, which is also what screen readers and **⌘K** search see.
 holds its proportions, or an **edge** to stretch one dimension on its own.
 Hold **Shift** while pulling a corner to break the proportions there too.
 
+**Shapes**: right-click an image for a row of shape chips — rectangle,
+rounded, circle, triangle, diamond, hexagon, star. These are *masks*, so
+nothing is thrown away: choosing rectangle again brings the whole picture
+back, whenever you like. The bounding box (and its handles) stays
+rectangular so a circular image is still easy to grab and resize.
+
 Images are downscaled on the way in (longest edge 1600px, WebP), and the
 picture itself is stored separately from the board — the board only keeps
 a reference to it. That's why an image-heavy board no longer eats the
