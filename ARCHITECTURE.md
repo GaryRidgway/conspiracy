@@ -363,8 +363,16 @@ each gesture moves exactly one of them:
 
 | Gesture | Moves | So that |
 |---|---|---|
-| handle drag | the box (clamped inside the ghost) | the edge you pull is the edge that moves |
+| handle drag | the box | the edge you pull is the *only* edge that moves |
 | drag inside / arrow keys | the ghost | the picture slides, the node stays put on the board |
+
+`clampCropBox` keeps a handle drag inside the picture by bounding the **size** to
+the room left between the *anchored* edge and the ghost, then placing the box from
+that anchor. Bounding against the ghost's full width instead lets the box grow
+past the anchor and be shoved back inside — so overshooting the picture dragged
+the opposite edge out with the cursor and walked it home on the way back, which
+reads as the crop snapping to where it started and can't be undone without
+releasing the button.
 
 **The modifier does opposite things in the two modes, because the defaults are
 opposite.** Resizing holds the proportions and Shift/Ctrl/Cmd releases them;

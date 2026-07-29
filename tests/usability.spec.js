@@ -1459,6 +1459,57 @@ test('a crop drag stays a crop even if the mode is dropped mid-gesture', { tag: 
   await expect(node).not.toHaveClass(/cropping/);
 });
 
+// Overshooting the picture must not drag the edge you AREN'T holding. Bounding
+// the size against the whole picture instead of the room from the anchored edge
+// let the box grow past that anchor and get shoved back inside, so the opposite
+// edge travelled out with the cursor and walked home as it came back — which
+// reads as the crop snapping to where it started, unfixable without releasing.
+test('overshooting a crop keeps the anchored edge still and stays draggable', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(340, 300);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+
+  // grow it first, so there's room to crop from both sides and still clear the
+  // minimum box size
+  let box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width + 180, y: box.y + box.height + 180 });
+  await expect(saved).toHaveText('saved');
+
+  // crop in from the west, then the east: the window now sits inside the picture
+  await node.dblclick();
+  box = await node.boundingBox();
+  await drag(page, { x: box.x, y: box.y + box.height / 2 },
+    { x: box.x + 60, y: box.y + box.height / 2 });
+  box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height / 2 },
+    { x: box.x + box.width - 40, y: box.y + box.height / 2 });
+  await expect(saved).toHaveText('saved');
+  const start = await nodePos(node);
+
+  // One gesture: pull the east edge far past the picture, then come back inside.
+  box = await node.boundingBox();
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width + 400, y, { steps: 6 });
+  const out = await nodePos(node);
+  expect(out.x).toBe(start.x);                      // the west edge never asked to move
+  expect(out.w).toBeGreaterThan(start.w);           // grew as far as the picture allows
+  expect(out.w).toBeLessThan(start.w + 400);        // and no further
+
+  await page.mouse.move(box.x + box.width - 30, y, { steps: 6 });
+  const back = await nodePos(node);
+  expect(back.x).toBe(start.x);                     // still anchored
+  expect(back.w).toBeCloseTo(start.w - 30, 0);      // and tracking the cursor again
+  await page.mouse.up();
+  await expect(saved).toHaveText('saved');
+  expect((await imageRecord(page)).w).toBeCloseTo(start.w - 30, 0);
+});
+
 // The shape is what you're framing, so it has to be visible while you frame it.
 test('a shape mask stays visible while cropping', { tag: '@cards' }, async ({ page }) => {
   await pasteImage(page);

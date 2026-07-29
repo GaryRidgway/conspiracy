@@ -3290,33 +3290,37 @@
     layoutCrop(id);
   }
 
-  // Keep a crop gesture inside the ghost. Runs after the generic resize has
-  // written the box, and deliberately re-derives the whole rect rather than
-  // clamping the dragged edge: with a ratio locked, the drag changes the
-  // dimension it wasn't given, so there is no "untouched" edge to trust.
+  // Keep a crop gesture inside the ghost.
   //
-  // Size first, then the origin from the anchored edge, then slide back inside.
-  // (It can't undershoot the minimum: the ghost is at least as big as the box
-  // was, and the box was at least the minimum.)
+  // The whole job is to bound the SIZE by the room left between the ANCHORED
+  // edge and the picture, then place the box from that anchor. The anchor is the
+  // edge the user isn't dragging, and it must never travel: bounding against the
+  // ghost's full width instead lets the box grow past the anchor and get shoved
+  // back inside, so overshooting the picture dragged the opposite edge along with
+  // it — and pulling back walked it home again, which reads exactly like the crop
+  // snapping to where it started.
+  //
+  // (It can't undershoot the minimum size: the box began inside the ghost, so the
+  // room from an anchored edge is at least the box's own size.)
   function clampCropBox(data, o, dir, lock) {
     const g = cropGhost;
     if (!g) return;
+    const maxW = dir.includes('w') ? o.x + o.w - g.x : g.x + g.w - o.x;
+    const maxH = dir.includes('n') ? o.y + o.h - g.y : g.y + g.h - o.y;
     if (lock) {
-      // Shrink both together — clamping one dimension alone would silently break
-      // the very ratio the user is holding a key to keep.
-      const s = Math.min(1, g.w / data.w, g.h / data.h);
+      // Shrink both by one factor — capping the overshooting side alone would
+      // break the very ratio the user is holding a key to keep.
+      const s = Math.min(1, maxW / data.w, maxH / data.h);
       data.w *= s;
       data.h *= s;
     } else {
-      data.w = Math.min(data.w, g.w);
-      data.h = Math.min(data.h, g.h);
+      data.w = Math.min(data.w, maxW);
+      data.h = Math.min(data.h, maxH);
     }
     data.w = Math.round(data.w);
     data.h = Math.round(data.h);
     data.x = Math.round(dir.includes('w') ? o.x + o.w - data.w : o.x);
     data.y = Math.round(dir.includes('n') ? o.y + o.h - data.h : o.y);
-    data.x = Math.min(Math.max(data.x, Math.ceil(g.x)), Math.floor(g.x + g.w - data.w));
-    data.y = Math.min(Math.max(data.y, Math.ceil(g.y)), Math.floor(g.y + g.h - data.h));
   }
 
   // Slide the picture under the window — what dragging means while cropping.
