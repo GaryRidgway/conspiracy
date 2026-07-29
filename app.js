@@ -308,9 +308,9 @@
     return ASSETS.put(blob, w, h);
   }
 
-  // Hoist inline data URIs out of a board's card bodies into the asset store,
-  // rewriting each `<img>` to a reference. Mutates `content`; returns how many
-  // moved. Callers: the boot migration, and JSON import.
+  // Hoist inline data URIs out of a board's card bodies and image nodes into the
+  // asset store, rewriting each to a reference. Mutates `content`; returns how
+  // many moved. Callers: the boot migration, and JSON import.
   //
   // The per-URI map is what makes a legacy board cheap to migrate: duplicating
   // a card duplicated its whole base64 payload, so those copies collapse to one
@@ -319,6 +319,24 @@
     let moved = 0;
     const byUri = new Map();
     for (const card of Object.values((content && content.cards) || {})) {
+      // An exported image node carries its bytes inline as `assetData`.
+      if (card.kind === 'image' && card.assetData) {
+        // Re-importing on the device that exported it: the bytes are already
+        // here under the id the record still names, so don't store a copy.
+        const have = card.asset ? await ASSETS.get(card.asset) : null;
+        if (have) { delete card.assetData; moved++; continue; }
+        if (!byUri.has(card.assetData)) {
+          byUri.set(card.assetData, await dataUriToAsset(card.assetData).catch(() => null));
+        }
+        const rec = byUri.get(card.assetData);
+        // Couldn't store it: leave the data URI alone, same as a card body's.
+        // A node whose `asset` still dangles renders as a sized placeholder.
+        if (!rec) continue;
+        card.asset = rec.id;
+        delete card.assetData;
+        moved++;
+        continue;
+      }
       if (!card.body || !/<img/i.test(card.body)) continue;
       const tmp = document.createElement('div');
       tmp.innerHTML = card.body;
@@ -344,10 +362,13 @@
   }
 
   // Asset ids referenced by a chunk of serialized board content. Matched against
-  // the raw text rather than parsed records: the attribute appears with escaped
-  // quotes inside JSON, and a substring scan costs nothing next to parsing every
-  // board on disk. (`matchAll` clones the regex, so the shared global is safe.)
-  const ASSET_REF_RE = /data-asset=\\?"(a_[a-z0-9]{4,64})/g;
+  // the raw text rather than parsed records: a substring scan costs nothing next
+  // to parsing every board on disk. Both spellings of a reference have to match
+  // or the boot GC reaps live images — an image node's own `asset` field, and
+  // `data-asset` on an `<img>` inside a card body, where the quotes arrive
+  // escaped because the body is itself a JSON string value.
+  // (`matchAll` clones the regex, so the shared global is safe.)
+  const ASSET_REF_RE = /(?:data-asset=|"asset":\s*)\\?"(a_[a-z0-9]{4,64})/g;
   function assetIdsIn(text) {
     const out = new Set();
     for (const m of String(text || '').matchAll(ASSET_REF_RE)) out.add(m[1]);
@@ -1693,10 +1714,11 @@
   function renderCard(id) {
     const data = board.cards[id];
     if (!data) return;
-    // Buttons and frames live in the cards collection (so they merge/undo/copy
-    // like any card) but render and behave as their own node types.
+    // Buttons, frames and images live in the cards collection (so they
+    // merge/undo/copy like any card) but render and behave as their own types.
     if (data.kind === 'button') return renderButton(id);
     if (data.kind === 'frame') return renderFrameNode(id);
+    if (data.kind === 'image') return renderImageNode(id);
 
     let el = nodeEls.get(id);
     if (!el) {
@@ -2841,39 +2863,55 @@
       copyNodeLink(id, e.currentTarget);
     });
 
-    // Any edge or corner resizes; west/north sides move x/y with the size so
-    // the opposite edge stays pinned (contents keep their world positions).
-    for (const handle of el.querySelectorAll('.frame-edge, .frame-resize')) {
+    makeBoxResizable(id, el, {
+      selector: '.frame-edge, .frame-resize',
+      minW: 200, minH: 140,
+      blocked: () => isDockedFrame(id),   // docked: rect is the panel's anchor
+    });
+  }
+
+  // ── 8-way box resize, shared by frames and image nodes. (The embed node's
+  // single-corner makeResizable stays separate: it re-lays out a live page on
+  // every move, and it resizes a board.iframes record, not a card.) ──
+  function makeBoxResizable(id, el, opts) {
+    for (const handle of el.querySelectorAll(opts.selector)) {
       handle.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
-        if (isDockedFrame(id)) return;   // docked: rect is the panel's anchor
+        if (opts.blocked && opts.blocked()) return;
         e.preventDefault();
         e.stopPropagation();
         selectNode(id);
         const dir = handle.dataset.dir;
         const data = board.cards[id];
+        if (!data) return;
         const start = pointerWorld(e);
         const pid = e.pointerId;
         const o = { x: data.x, y: data.y, w: data.w, h: data.h };
+        const aspect = o.w / Math.max(1, o.h);
         let moved = false;
         const onMove = (ev) => {
           if (ev.pointerId !== pid) return;
           const now = pointerWorld(ev);
           const dx = now.x - start.x, dy = now.y - start.y;
-          if (dir.includes('e')) data.w = Math.max(200, Math.round(o.w + dx));
-          if (dir.includes('s')) data.h = Math.max(140, Math.round(o.h + dy));
-          if (dir.includes('w')) {
-            data.w = Math.max(200, Math.round(o.w - dx));
-            data.x = o.x + o.w - data.w;
+          let w = dir.includes('e') ? o.w + dx : dir.includes('w') ? o.w - dx : o.w;
+          let h = dir.includes('s') ? o.h + dy : dir.includes('n') ? o.h - dy : o.h;
+          // Where the caller asked for it, corners hold the proportions the user
+          // can see (Shift frees them) and edges are the deliberate stretch —
+          // between them that's "custom dims" without a modifier key to learn.
+          if (opts.aspect && dir.length === 2 && !ev.shiftKey) {
+            if (Math.abs(w - o.w) >= Math.abs(h - o.h)) h = w / aspect; else w = h * aspect;
           }
-          if (dir.includes('n')) {
-            data.h = Math.max(140, Math.round(o.h - dy));
-            data.y = o.y + o.h - data.h;
-          }
+          data.w = Math.max(opts.minW, Math.round(w));
+          data.h = Math.max(opts.minH, Math.round(h));
+          // West/north sides move x/y with the size so the opposite edge stays
+          // pinned (a frame's contents keep their world positions).
+          if (dir.includes('w')) data.x = o.x + o.w - data.w;
+          if (dir.includes('n')) data.y = o.y + o.h - data.h;
           el.style.left = data.x + 'px';
           el.style.top = data.y + 'px';
           el.style.width = data.w + 'px';
           el.style.height = data.h + 'px';
+          if (opts.onResize) opts.onResize(data);
           moved = true;
         };
         const onUp = (ev) => {
@@ -2926,6 +2964,140 @@
       if (g && g.x >= fg.x && g.y >= fg.y && g.x + g.w <= fg.x + fg.w && g.y + g.h <= fg.y + fg.h) out.push(nid);
     }
     return out;
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  IMAGE NODE — a picture as a node in its own right, rather than a card that
+  //  happens to contain one. A `kind` on the cards collection like buttons and
+  //  frames (never a new collection — see ARCHITECTURE.md → Node kinds).
+  //  data: { kind:'image', x, y, w, h, asset, title? }.
+  //
+  //  w/h are the DISPLAY box in world px, independent of the asset's own pixels.
+  //  That independence is not laziness: an asset id's bytes are immutable —
+  //  every device that has them keeps them, and Drive copies are never reaped —
+  //  so re-encoding on resize would mint a new id and strand the old bytes.
+  //  Nothing the user does to an image node ever touches the stored bytes.
+  //
+  //  A card body can still hold an inline `<img>` (paste while editing text);
+  //  the two paths share the asset store and nothing else.
+  // ════════════════════════════════════════════════════════
+  const IMAGE_MAX_DISPLAY = 360;      // world px, longest edge of a fresh image
+  const IMAGE_MIN_SIZE = 24;
+  const ASSET_ID_RE = /^a_[a-z0-9]{4,64}$/;
+
+  // Starting box for an asset, never upscaling: a 16×16 favicon should arrive
+  // at 16×16, not blown up to 360 wide.
+  function imageBox(rec) {
+    const w = rec.w || IMAGE_MAX_DISPLAY, h = rec.h || IMAGE_MAX_DISPLAY;
+    const scale = Math.min(1, IMAGE_MAX_DISPLAY / Math.max(w, h));
+    return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+  }
+
+  function renderImageNode(id) {
+    const data = board.cards[id];
+    let el = nodeEls.get(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'node image-node';
+      el.dataset.id = id;
+      // The bar sits outside the box (above it), so it stays legible on a
+      // 24px-tall image and never covers the picture it describes.
+      el.innerHTML = `
+        <div class="image-clip"><img class="image-src" alt="" draggable="false"></div>
+        <div class="image-bar">
+          <span class="image-label" title="Double-click to rename" spellcheck="false"></span>
+          <button class="copy-link icon-btn" title="Copy link to this image" aria-label="Copy link to this image"><span class="icon icon-tag"></span></button>
+          <button class="card-delete icon-btn" title="Delete image" aria-label="Delete image"><span class="icon icon-delete"></span></button>
+        </div>
+        ${['n', 's', 'e', 'w'].map((d) =>
+          `<div class="image-handle handle-${d}" data-dir="${d}"></div>`).join('')}
+        ${['nw', 'ne', 'sw', 'se'].map((d) =>
+          `<div class="image-handle image-corner corner-${d}" data-dir="${d}"></div>`).join('')}`;
+      worldFor(id).appendChild(el);
+      nodeEls.set(id, el);
+      wireImageNode(id, el);
+      addPorts(el, id);
+    }
+    el.style.left = data.x + 'px';
+    el.style.top = data.y + 'px';
+    el.style.width = (data.w || IMAGE_MAX_DISPLAY) + 'px';
+    el.style.height = (data.h || IMAGE_MAX_DISPLAY) + 'px';
+    applyNodeColor(el, data.color);
+    applyNodeZ(el, data);
+    const labelEl = el.querySelector('.image-label');
+    if (document.activeElement !== labelEl) labelEl.textContent = data.title || '';
+    hydrateImageNode(el, data);
+    return el;
+  }
+
+  // The image node's half of the asset contract — hydrateAssets() does this job
+  // for images inside card bodies. Idempotent: a node re-renders on every pull,
+  // merge and undo, and the record only ever holds the id.
+  function hydrateImageNode(el, data) {
+    const img = el.querySelector('.image-src');
+    img.alt = data.title || '';
+    const aid = ASSET_ID_RE.test(data.asset || '') ? data.asset : '';
+    if (img.dataset.assetLoaded && img.dataset.assetLoaded !== aid) {
+      img.removeAttribute('src');                 // a merge repointed the node
+      delete img.dataset.assetLoaded;
+    }
+    if (!aid) { el.classList.add('asset-missing'); return; }
+    if (img.dataset.assetLoaded === aid) return;
+    ASSETS.url(aid).then((u) => {
+      if (!img.isConnected || (board.cards[el.dataset.id] || {}).asset !== aid) return;
+      if (u) { img.src = u; img.dataset.assetLoaded = aid; el.classList.remove('asset-missing'); }
+      // No bytes on this device: a board synced ahead of its images, or an
+      // evicted store. The box is stored, so the placeholder holds the layout —
+      // and assetLoaded stays unset so a later render tries again.
+      else el.classList.add('asset-missing');
+    });
+  }
+
+  function wireImageNode(id, el) {
+    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+    // No header: there's no text to place a caret in, so the picture itself is
+    // the drag surface. Handles and bar buttons opt out.
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, .image-handle')) return;
+      if (el.querySelector('.image-label').isContentEditable) return;
+      startNodeDrag(id, el, e);
+    });
+
+    const labelEl = el.querySelector('.image-label');
+    makeRenamable(labelEl, {
+      onInput: (v) => { board.cards[id].title = v; commit({ coalesce: true, affects: { ids: [id], color: false } }); },
+      onCommit: (v) => {
+        // Absent, not empty: the label doubles as the image's alt text, and an
+        // empty string is the correct alt for a decorative image.
+        if (v) board.cards[id].title = v; else delete board.cards[id].title;
+        renderImageNode(id);
+        commit();
+      },
+    });
+
+    const copyBtn = el.querySelector('.copy-link');
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyNodeLink(id, copyBtn); });
+    el.querySelector('.card-delete').addEventListener('click', (e) => { e.stopPropagation(); deleteNode(id); });
+
+    makeBoxResizable(id, el, {
+      selector: '.image-handle',
+      minW: IMAGE_MIN_SIZE, minH: IMAGE_MIN_SIZE,
+      aspect: true,
+      onResize: () => redrawConnectionsFor(id),
+    });
+  }
+
+  function createImageNode(worldX, worldY, rec) {
+    const id = newId('c_');
+    const box = imageBox(rec);
+    board.cards[id] = {
+      kind: 'image', x: Math.round(worldX), y: Math.round(worldY),
+      w: box.w, h: box.h, asset: rec.id,
+    };
+    commit();
+    renderCard(id);
+    selectNode(id);
+    return id;
   }
 
   // ════════════════════════════════════════════════════════
@@ -4010,33 +4182,67 @@
         const cardId = ae.closest('.node').dataset.id;
         if (!board.cards[cardId]) return;
         const imgEl = assetImgEl(rec);
-        if (range) { range.deleteContents(); range.insertNode(imgEl); }
-        else ae.appendChild(imgEl);
+        if (range) {
+          range.deleteContents();
+          range.insertNode(imgEl);
+          // Collapse the caret after the image. insertNode leaves the range
+          // SPANNING what it inserted, so the next keystroke would replace the
+          // picture with a letter — but only touch the selection if the body
+          // still has it (the encode is async; the user may have clicked away).
+          if (document.activeElement === ae) {
+            const after = document.createRange();
+            after.setStartAfter(imgEl);
+            after.collapse(true);
+            const s = window.getSelection();
+            s.removeAllRanges();
+            s.addRange(after);
+          }
+        } else ae.appendChild(imgEl);
         hydrateAssets(ae);            // the live element still needs its src
         saveCardBody(cardId, ae);
       } else {
+        const box = imageBox(rec);
         const r = visibleRect();
-        const id = newId('c_');
-        board.cards[id] = {
-          x: drop ? Math.round(drop.x) : Math.round(r.x + r.w / 2 - 130),
-          y: drop ? Math.round(drop.y) : Math.round(r.y + r.h / 2 - 90),
-          title: '', body: assetImgEl(rec).outerHTML,
-        };
-        renderCard(id);
+        const id = createImageNode(
+          drop ? drop.x : r.x + r.w / 2 - box.w / 2,
+          drop ? drop.y : r.y + r.h / 2 - box.h / 2, rec);
         if (drop && drop.intoDock) addToDockTab([id]);
-        selectNode(id);
-        commit();
       }
       // The moment the number moved, and the moment the advice is most useful.
       checkStoragePressure();
-    }, (err) => {
-      // A full asset store must not fail silently: the image is simply gone,
-      // and the board itself saved fine, so nothing else would ever say so.
-      console.error('Image paste failed', err);
-      if (String(err && err.message) === 'unreadable image') return;   // not the user's problem
-      showStorageNotice('That image could not be stored — this device’s browser storage is full.');
-    });
+    }, imageStoreFailed);
   });
+
+  // A full asset store must not fail silently: the image is simply gone, and the
+  // board itself saved fine, so nothing else would ever say so.
+  function imageStoreFailed(err) {
+    console.error('Image could not be stored', err);
+    if (String(err && err.message) === 'unreadable image') return;   // not the user's problem
+    showStorageNotice('That image could not be stored — this device’s browser storage is full.');
+  }
+
+  // Add images from disk — the palette's Image tool and the canvas menu's "Add
+  // image here". The drop point is captured before the dialog opens: it's modal,
+  // and the view may well have moved by the time it resolves.
+  function pickImageFile(at, opts) {
+    const input = document.getElementById('imageFile');
+    input.value = '';                     // re-picking the same file must still fire
+    input.onchange = async () => {
+      let n = 0;
+      for (const file of [...input.files]) {
+        const rec = await imageFileToAsset(file).catch((err) => { imageStoreFailed(err); return null; });
+        if (!rec) continue;
+        const box = imageBox(rec);
+        // Centred on the chosen point, like every other "add here"; a multi-file
+        // pick cascades instead of stacking every image on one spot.
+        const id = createImageNode(at.x - box.w / 2 + n * 28, at.y - box.h / 2 + n * 28, rec);
+        if (opts && opts.intoDock) addToDockTab([id]);
+        n++;
+      }
+      if (n) checkStoragePressure();
+    };
+    input.click();
+  }
 
   // ════════════════════════════════════════════════════════
   //  RENDER ALL
@@ -4668,9 +4874,9 @@
       if (!selectedNodes.has(id)) selectNode(id);     // right-click grabs the node it's on
       const many = selectedNodes.size > 1;
       const gn0 = getNode(id);
-      const isFrame = gn0 && gn0.type === 'iframe';
       const isButton = gn0 && gn0.type === 'card' && gn0.data.kind === 'button';
       const isFrameRegion = gn0 && gn0.type === 'card' && gn0.data.kind === 'frame';
+      const isImage = gn0 && gn0.type === 'card' && gn0.data.kind === 'image';
       if (isFrameRegion) {
         const on = !!gn0.data.moveContents;
         items.push({
@@ -4700,6 +4906,12 @@
         items.push(...buttonMenuItems(id, nodeEl.querySelector('.btn-node-label')));
         items.push('sep');
       }
+      if (isImage) {
+        // The label is the image's alt text as well as its search name, so it
+        // needs a route that doesn't depend on finding a hover-only target.
+        items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.image-label')) });
+        items.push('sep');
+      }
       // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for
       // more node types with no further menu work
       if (gn0 && gn0.type === 'card' && PINNABLE_KINDS.has(gn0.data.kind) && !gn0.data.pinned) {
@@ -4720,7 +4932,7 @@
       const curColor = (gn && gn.data.color) || null;   // reflects the right-clicked node
       items.push({ swatches: true, current: curColor, onPick: (key) => setNodesColor([...selectedNodes], key) });
       items.push('sep');
-      items.push({ label: many ? 'Delete selection' : (isFrame ? 'Delete embed' : isButton ? 'Delete button' : isFrameRegion ? 'Delete frame' : 'Delete card'), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
+      items.push({ label: many ? 'Delete selection' : 'Delete ' + nodeKind(id).toLowerCase(), hint: 'Del', danger: true, action: () => { for (const nid of [...selectedNodes]) deleteNode(nid); } });
     } else if (connG) {
       const id = connG.dataset.id;
       selectConn(id);
@@ -5034,6 +5246,7 @@
     { btn: 'addCard', menu: 'Add card here', at: (w) => createCard(w.x - 120, w.y - 24) },
     { btn: 'addFrameNode', menu: 'Add frame here', at: (w) => createFrameNode(w.x - 320, w.y - 200) },
     { btn: 'addFrame', menu: 'Add embed here', at: (w, o) => openFrameModal({ type: 'create', at: w, intoDock: o && o.intoDock }), center: () => openFrameModal({ type: 'create' }) },
+    { btn: 'addImage', menu: 'Add image here', at: (w, o) => pickImageFile(w, { intoDock: o && o.intoDock }) },
     { btn: 'addButton', menu: 'Add button here', at: (w) => createButton(w.x - 60, w.y - 18) },
   ];
   for (const t of ADD_TOOLS) {
@@ -5385,17 +5598,28 @@
   // place data URIs are still generated, and importBoardFromFile reverses it.
   async function inlineAssetsForExport(content) {
     const cache = new Map();
+    const inline = async (id) => {
+      if (!cache.has(id)) {
+        const rec = await ASSETS.get(id);
+        cache.set(id, rec && rec.blob ? await blobToDataUri(rec.blob).catch(() => null) : null);
+      }
+      return cache.get(id);
+    };
     for (const card of Object.values(content.cards || {})) {
+      if (card.kind === 'image') {
+        // The reference stays even when the bytes don't: dropping the node
+        // instead would take its position and its connections with it, silently,
+        // whereas a dangling reference arrives as a placeholder that says so.
+        const uri = card.asset ? await inline(card.asset) : null;
+        if (uri) card.assetData = uri;
+        continue;
+      }
       if (!card.body || !/data-asset=/.test(card.body)) continue;
       const tmp = document.createElement('div');
       tmp.innerHTML = card.body;
       for (const img of tmp.querySelectorAll('img[data-asset]')) {
         const id = img.dataset.asset;
-        if (!cache.has(id)) {
-          const rec = await ASSETS.get(id);
-          cache.set(id, rec && rec.blob ? await blobToDataUri(rec.blob).catch(() => null) : null);
-        }
-        const uri = cache.get(id);
+        const uri = await inline(id);
         // No bytes for it here: drop the reference rather than exporting a
         // pointer into a store the importing device doesn't have.
         if (!uri) { img.remove(); continue; }
@@ -5955,14 +6179,18 @@
     if (n.type === 'card') {
       if (n.data.kind === 'button') return n.data.title || 'Button';
       if (n.data.kind === 'frame') return n.data.title || 'Frame';
+      if (n.data.kind === 'image') return n.data.title || '(image)';
       return cardSnippet(n.data);
     }
     return n.data.title || labelFor(n.data.src);
   }
+  // One label per kind, shared by the node picker, ⌘K, and the context menu's
+  // Delete item — a new kind that forgets one of those reads as a bug.
+  const CARD_KIND_LABEL = { button: 'Button', frame: 'Frame', image: 'Image' };
   function nodeKind(id) {
     const n = getNode(id);
     if (!n) return '';
-    if (n.type === 'card') return n.data.kind === 'button' ? 'Button' : n.data.kind === 'frame' ? 'Frame' : 'Card';
+    if (n.type === 'card') return CARD_KIND_LABEL[n.data.kind] || 'Card';
     return 'Embed';
   }
 
@@ -7127,7 +7355,13 @@
     }
     // The URL cache held a null for each of these and store() replaced it, so a
     // re-hydrate turns the placeholders into images — no re-render needed.
-    if (got) for (const el of document.querySelectorAll('.card-body')) hydrateAssets(el);
+    if (got) {
+      for (const el of document.querySelectorAll('.card-body')) hydrateAssets(el);
+      for (const el of document.querySelectorAll('.image-node')) {
+        const d = board.cards[el.dataset.id];
+        if (d) hydrateImageNode(el, d);
+      }
+    }
   }
 
   const assetSyncFailed = (err) => console.error('Drive asset sync failed', err);

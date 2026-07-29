@@ -79,9 +79,8 @@ every URL still has to pass `safeNavUrl()` at the sink.
 
 ## More node types
 
-Code blocks and sticky notes. Images are half-done already — a pasted
-screenshot becomes a card holding the image, but there's no first-class
-image node.
+Code blocks and sticky notes. (Images landed: `kind:'image'` — see
+`ARCHITECTURE.md` → *Image assets*.)
 
 **The shape of this work is fixed, not open**: a new node type is a new
 `kind` on the cards collection, dispatched in `renderCard()`. Never a new

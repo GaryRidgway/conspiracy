@@ -248,6 +248,136 @@ body.space-pan #viewport.panning,
   box-shadow: 0 0 0 1px var(--node-color-hi);
 }
 
+/* ── Image node — a picture as its own node. The node box IS the visible
+   frame: .image-clip fills it and hides the overflow, and the <img> inside is
+   sized/offset by the crop rect (percentages of the clip, so the whole thing
+   scales with a resize and needs no per-frame JS). Chrome lives outside the
+   box so it never covers the picture. ── */
+.image-node {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;      /* the ring, kept off the picture itself */
+  border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  cursor: grab;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.image-node.dragging { cursor: grabbing; }
+.image-node .image-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.image-node .image-src {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  /* the crop rect already decided the framing — don't let object-fit re-crop */
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.image-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
+}
+.image-node.colored { border-color: var(--node-color); }
+.image-node.colored.selected {
+  border-color: var(--node-color-hi);
+  box-shadow: 0 0 0 1px var(--node-color-hi), 0 8px 26px rgba(0,0,0,0.45);
+}
+/* Bytes not on this device (synced ahead of its images, or an evicted store).
+   The stored box holds the layout, so nothing jumps when they land. */
+.image-node.asset-missing .image-clip {
+  border: 1px dashed var(--border2);
+  background: rgba(255,255,255,0.03);
+}
+
+/* Bar above the box: label + actions, revealed on hover or selection (tap to
+   select is the touch route — there is no hover there). */
+.image-node .image-bar {
+  position: absolute;
+  left: 0; bottom: calc(100% + 6px);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.15rem 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.image-node:hover .image-bar, .image-node.selected .image-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.image-node .image-label {
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 0.15rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  outline: none;
+  border-radius: 4px;
+}
+.image-node .image-label:empty::before { content: 'Add a label'; color: var(--text-3); }
+.image-node .image-label[contenteditable] {
+  cursor: text;
+  overflow: visible;
+  background: var(--surface2);
+}
+
+/* Resize handles: invisible edge strips (the cursor is the affordance) plus
+   four corner brackets, same grammar as a frame's. */
+.image-node .image-handle { position: absolute; pointer-events: auto; }
+.image-node .handle-n { top: -5px; left: 12px; right: 12px; height: 10px; cursor: ns-resize; }
+.image-node .handle-s { bottom: -5px; left: 12px; right: 12px; height: 10px; cursor: ns-resize; }
+.image-node .handle-e { right: -5px; top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
+.image-node .handle-w { left: -5px; top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
+.image-node .image-corner {
+  width: 16px; height: 16px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.image-node .corner-nw {
+  top: -7px; left: -7px;
+  border-left: 3px solid var(--border2);
+  border-top: 3px solid var(--border2);
+  border-radius: 8px 0 0 0;
+  cursor: nwse-resize;
+}
+.image-node .corner-ne {
+  top: -7px; right: -7px;
+  border-right: 3px solid var(--border2);
+  border-top: 3px solid var(--border2);
+  border-radius: 0 8px 0 0;
+  cursor: nesw-resize;
+}
+.image-node .corner-sw {
+  bottom: -7px; left: -7px;
+  border-left: 3px solid var(--border2);
+  border-bottom: 3px solid var(--border2);
+  border-radius: 0 0 0 8px;
+  cursor: nesw-resize;
+}
+.image-node .corner-se {
+  bottom: -7px; right: -7px;
+  border-right: 3px solid var(--border2);
+  border-bottom: 3px solid var(--border2);
+  border-radius: 0 0 8px 0;
+  cursor: nwse-resize;
+}
+.image-node:hover .image-corner, .image-node.selected .image-corner { opacity: 1; }
+
 /* ── Button node — a chip: fully-round token with the icon in a tinted
    disc. Press is a subtle scale-down (drag still moves it). ── */
 .btn-node {
@@ -1870,6 +2000,7 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
 .icon-format_list_numbered { --icon: url("icons/format_list_numbered.svg"); }
 .icon-link                 { --icon: url("icons/link.svg"); }
 .icon-card                 { --icon: url("icons/card.svg"); }
+.icon-image                { --icon: url("icons/image.svg"); }
 .icon-button               { --icon: url("icons/button.svg"); }
 .icon-help                 { --icon: url("icons/help.svg"); }
 .icon-settings             { --icon: url("icons/settings.svg"); }
@@ -1930,6 +2061,11 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   .frame-node .edge-w { left: -12px; top: 26px; bottom: 26px; width: 24px; }
   .frame-node .frame-resize,
   .frame-node .edge-nw, .frame-node .edge-ne, .frame-node .edge-sw { width: 28px; height: 28px; }
+  .image-node .handle-n { top: -12px; left: 26px; right: 26px; height: 24px; }
+  .image-node .handle-s { bottom: -12px; left: 26px; right: 26px; height: 24px; }
+  .image-node .handle-e { right: -12px; top: 26px; bottom: 26px; width: 24px; }
+  .image-node .handle-w { left: -12px; top: 26px; bottom: 26px; width: 24px; }
+  .image-node .image-corner { width: 28px; height: 28px; }
   .resize-handle { width: 28px; height: 28px; }
   .ctx-item { padding: 0.6rem 0.7rem; font-size: 0.9rem; }
   .pin-chip { padding: 0.55rem 0.8rem 0.55rem 0.65rem; font-size: 0.9rem; }

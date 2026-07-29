@@ -34,10 +34,11 @@ Node ids must be unique **across devices**, not just within a session — the
 merge treats same-id as the same record and would fuse two unrelated nodes —
 so `newId()` ends in a random tail. Don't "simplify" it away.
 
-### Node kinds: buttons and frames are cards
+### Node kinds: buttons, frames and images are cards
 
-Button nodes (`kind:'button'`, with `action:{type:'node'|'url', target}`) and
-frame nodes (`kind:'frame'`, with `title`, `w`, `h`, `moveContents?`) live in
+Button nodes (`kind:'button'`, with `action:{type:'node'|'url', target}`), frame
+nodes (`kind:'frame'`, with `title`, `w`, `h`, `moveContents?`) and image nodes
+(`kind:'image'`, with `asset`, `w`, `h`, `title?`) live in
 the **cards collection**, not their own collections. This is deliberate:
 `mergeBoards` iterates the fixed list `['cards','iframes','connections']`, and
 so do export/import, undo snapshots, clipboard, and color coding. A new
@@ -49,6 +50,13 @@ The same applies to any new **top-level field**: `mergeBoards` rebuilds the
 document from a fixed field list (`schema`, `version`, `viewport`, the three
 collections), so new persistent data must live on records *inside* those
 collections, never beside them.
+
+Adding a kind means touching more than `renderCard()`. `CARD_KIND_LABEL` is the
+one place that names a kind for the node picker, ⌘K and the context menu's
+Delete item, so a kind that forgets it reads as "Card" everywhere. What a kind
+does NOT need is a place in `mergeBoards`, undo, clipboard, color coding, dock
+membership or `frameContents` — those are all kind-blind, which is the whole
+payoff for staying inside the cards collection.
 
 ### Docked buttons: derived x/y, still stored
 
@@ -296,12 +304,20 @@ localStorage.
 
 ### Image assets (IndexedDB `whiteboard` → `assets`)
 
-A pasted image's bytes live in IndexedDB as a Blob under a random `a_…` id.
-The card body stores `<img data-asset="ID">` with **no src**; `hydrateAssets()`
-supplies an object URL at render time and `sanitizeHtml()` strips it again on
-the way back into the record. That round trip is what lets the sanitizer's src
-allowlist stay `data:image/`-only even though every rendered image carries a
-`blob:` src — nothing but `data:` ever enters stored HTML.
+An image's bytes live in IndexedDB as a Blob under a random `a_…` id. Two things
+reference one: an **image node** (`kind:'image'`) holds the id in its `asset`
+field, and a **card body** holds `<img data-asset="ID">` with **no src**.
+`hydrateImageNode()` / `hydrateAssets()` supply an object URL at render time and
+`sanitizeHtml()` strips it again on the way back into the record. That round trip
+is what lets the sanitizer's src allowlist stay `data:image/`-only even though
+every rendered image carries a `blob:` src — nothing but `data:` ever enters
+stored HTML.
+
+**Both spellings have to stay in `ASSET_REF_RE`**, the single regex that answers
+"is this asset still referenced". It scans serialized content rather than parsed
+records (cheap across every board on disk), so it matches `"asset":"a_…"` and the
+escaped `data-asset=\"a_…\"`. Miss one and the boot GC reaps live pictures; it
+also feeds `pushDriveAssets`/`pullDriveAssets`, so a miss there strands bytes.
 
 Why the bytes left the board JSON: base64 costs ~1.33 bytes per image byte
 against a ~5 MB localStorage quota, and a Drive board paid it twice (the local
@@ -319,14 +335,23 @@ board's whole storage, and it surfaced only as `save failed` at paste time.
   pull, merge and undo, and a revoked URL renders as a broken image.
 - **A missing asset is a normal state, not an error**: a board can arrive
   before its bytes, or the store can be evicted. It renders as
-  `.asset-missing`, sized from the img's `width`/`height` attributes so the
-  layout doesn't jump when the real image lands.
+  `.asset-missing`, sized from the image node's stored box (or the img's
+  `width`/`height` attributes) so the layout doesn't jump when the bytes land.
+- **Nothing the user does re-encodes stored bytes.** An image node's `w`/`h` are
+  a display box, independent of the asset's pixels. Since an id's bytes are
+  immutable and Drive copies are never reaped, a resize that re-encoded would
+  have to mint a new id and strand the old bytes on every device that has them.
 - **Data URIs still exist at exactly two boundaries** — a board written before
   the asset store (hoisted by `migrateInlineImages` *after* first paint,
   version-bumped like `migrateLegacyDockMembers` and deliberately not a
   `commit()`, since an undo step would put the base64 straight back), and JSON
   export (`inlineAssetsForExport`, because an export is opened on a machine
-  with no store of ours). Import reverses it.
+  with no store of ours). Import (`extractInlineImages`) reverses both.
+  An exported image node carries `assetData` beside its `asset`; import prefers
+  bytes it already has under that id and otherwise decodes `assetData` under a
+  fresh one. An image node whose bytes are missing exports with its reference
+  **dangling rather than dropped** — deleting the node would silently take its
+  position and its connections too, where a placeholder says what happened.
 - **GC runs only at boot** (`collectUnusedAssets`): undo history references
   assets the live board has dropped, and the undo stacks are empty before the
   first edit. It counts `whiteboard:base:*` as references too — a base is what

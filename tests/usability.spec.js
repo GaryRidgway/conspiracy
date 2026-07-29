@@ -868,9 +868,9 @@ test('arrow keys move the highlight in the button-link modal, and Enter follows 
   expect(stored).toEqual({ type: 'node', target: idC });
 });
 
-// Paste a screenshot on the canvas → it becomes a card referencing the image
-// (downscaled into the asset store, no remote fetch), which persists like any
-// card. The bytes never enter the board JSON — see the IMAGE ASSETS banner.
+// Paste a screenshot on the canvas → it becomes an image NODE referencing the
+// bytes (downscaled into the asset store, no remote fetch), which persists like
+// any card. The bytes never enter the board JSON — see the IMAGE ASSETS banner.
 async function pasteImage(page) {
   await page.evaluate(async () => {
     const canvas = document.createElement('canvas');
@@ -884,23 +884,26 @@ async function pasteImage(page) {
   });
 }
 
-test('pasting an image on the canvas creates an image card that persists', { tag: '@cards' }, async ({ page }) => {
+test('pasting an image on the canvas creates an image node that persists', { tag: '@cards' }, async ({ page }) => {
   await pasteImage(page);
-  const img = page.locator('.node.card .card-body img');
-  await expect(img).toHaveCount(1);
-  await expect(img).toHaveAttribute('data-asset', /^a_[a-z0-9]+$/);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const img = node.locator('.image-src');
   await expect.poll(() => img.getAttribute('src')).toMatch(/^blob:/);   // resolved from the store
 
   await expect(page.locator('#saveState')).toHaveText('saved');
   const stored = await page.evaluate(() =>
     localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
-  expect(stored).toContain('data-asset=');
-  expect(stored).not.toContain('data:image/');   // the whole point: no base64 in localStorage
+  expect(stored).toMatch(/"asset":"a_[a-z0-9]+"/);   // a reference on the record
+  expect(stored).not.toContain('data:image/');       // the whole point: no base64 in localStorage
+  // the display box came from the image's own pixels (60×40), not a fixed default
+  const rec = await imageRecord(page);
+  expect(rec.kind).toBe('image');
+  expect(rec.w / rec.h).toBeCloseTo(60 / 40, 1);
 
   await page.reload();
-  const after = page.locator('.node.card .card-body img');
-  await expect(after).toHaveCount(1);
-  await expect.poll(() => after.getAttribute('src')).toMatch(/^blob:/);   // re-resolved from IndexedDB
+  await expect(page.locator('.node.image-node')).toHaveCount(1);
+  await expect.poll(() => page.locator('.image-src').getAttribute('src')).toMatch(/^blob:/);  // from IndexedDB
 });
 
 // A pasted screenshot lands under the cursor (not the viewport centre) — the
@@ -908,8 +911,8 @@ test('pasting an image on the canvas creates an image card that persists', { tag
 test('pasted image lands under the cursor', { tag: '@cards' }, async ({ page }) => {
   await page.mouse.move(210, 460);
   await pasteImage(page);
-  const node = page.locator('.node.card');
-  await expect(node.locator('.card-body img')).toHaveCount(1);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
   const box = await node.boundingBox();
   expect(Math.abs(box.x - 210)).toBeLessThan(3);
   expect(Math.abs(box.y - 460)).toBeLessThan(3);
@@ -953,6 +956,12 @@ const makeDataUri = (page) => page.evaluate(() => {
 });
 const storedBoard = (page) => page.evaluate(() =>
   localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+// The stored record of the board's one image node.
+const imageRecord = (page) => page.evaluate(() => {
+  const b = JSON.parse(localStorage.getItem(
+    'whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+  return Object.values(b.cards).find((c) => c.kind === 'image');
+});
 // Read one asset record straight out of IndexedDB, bypassing the app.
 const assetExists = (page, id) => page.evaluate((aid) => new Promise((res) => {
   const req = indexedDB.open('whiteboard', 1);
@@ -968,11 +977,13 @@ const assetExists = (page, id) => page.evaluate((aid) => new Promise((res) => {
 // record — otherwise the sanitizer's data:-only src rule would be a fiction and
 // a reload would show a dead reference to a previous page's object URL.
 test('a blob URL from a rendered image never reaches storage', { tag: '@cards' }, async ({ page }) => {
-  await pasteImage(page);
-  const body = page.locator('.node.card .card-body');
-  await expect.poll(() => body.locator('img').getAttribute('src')).toMatch(/^blob:/);
-  // typing runs the live DOM (blob src and all) back through sanitizeHtml
+  // the inline path is the one at risk: a card body round-trips through
+  // sanitizeHtml on every keystroke, blob src and all
+  const node = await addCardAt(page, 400, 300);
+  const body = node.locator('.card-body');
   await body.click();
+  await pasteImage(page);
+  await expect.poll(() => body.locator('img').getAttribute('src')).toMatch(/^blob:/);
   await page.keyboard.type('caption');
   await expect(page.locator('#saveState')).toHaveText('saved');
   const stored = await storedBoard(page);
@@ -1008,16 +1019,27 @@ test('a legacy inline image migrates out of the board JSON on open', { tag: '@bo
 // An export has to be self-contained — it's opened on a machine with no store
 // of ours — so it inlines the bytes again, and importing one unpacks them.
 test('export inlines image bytes; importing one puts them back in the store', { tag: '@boards' }, async ({ page }) => {
-  await pasteImage(page);
+  await pasteImage(page);                                  // → an image node
+  const card = await addCardAt(page, 620, 380);
+  await card.locator('.card-body').click();
+  await pasteImage(page);                                  // → inline in a card body
   await expect(page.locator('#saveState')).toHaveText('saved');
 
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('#exportBtn')]);
   const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
-  const bodies = Object.values(exported.cards).map((c) => c.body || '');
-  expect(bodies.join('')).toContain('data:image/');   // portable: bytes travel with the file
-  expect(bodies.join('')).not.toContain('data-asset=');
+  const recs = Object.values(exported.cards);
+  // both reference forms travel with the file — bytes on the node's own record,
+  // bytes back in the src of the body's <img>
+  const node = recs.find((c) => c.kind === 'image');
+  expect(node.assetData).toMatch(/^data:image\//);
+  const bodies = recs.map((c) => c.body || '').join('');
+  expect(bodies).toContain('data:image/');
+  expect(bodies).not.toContain('data-asset=');
 
-  // import it back into a cleared board; the reference form must return
+  // Import into a machine that has never seen these bytes: the ids in the file
+  // are the exporter's, so the import has to decode assetData rather than trust
+  // a reference into a store it doesn't have.
+  node.asset = 'a_theirdevice01';
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.setInputFiles('#importFile', {
@@ -1025,14 +1047,34 @@ test('export inlines image bytes; importing one puts them back in the store', { 
     buffer: Buffer.from(JSON.stringify(exported)),
   });
   await expect(page.locator('.node.card .card-body img')).toHaveCount(1);
+  await expect(page.locator('.node.image-node')).toHaveCount(1);
   await expect.poll(() => storedBoard(page)).toContain('data-asset=');
-  expect(await storedBoard(page)).not.toContain('data:image/');
+  const stored = await storedBoard(page);
+  expect(stored).not.toContain('data:image/');       // unpacked into the store, not the JSON
+  expect(stored).not.toContain('a_theirdevice01');   // re-keyed to bytes that are actually here
+  await expect.poll(() => page.locator('.image-src').getAttribute('src')).toMatch(/^blob:/);
 });
 
 // An asset no board refers to any more is dead weight in a store whose whole
 // purpose is headroom. Reaped at boot — the only point where undo history
 // can't still be holding a reference.
-test('an unreferenced asset is reaped at boot', { tag: '@boards' }, async ({ page }) => {
+//
+// BOTH spellings of a reference have to count: an image node's `asset` field and
+// `data-asset` inside a card body. A GC that knew only the HTML form would reap
+// every image node's picture at the next boot.
+//
+// The records are seeded before the bytes on purpose. Boot's GC runs on an idle
+// callback, which under load can fire after the test has started seeding — with
+// the references already in place, whenever it runs is fine.
+test('the boot GC reaps unreferenced assets and keeps referenced ones', { tag: '@boards' }, async ({ page }) => {
+  await page.evaluate(() => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const content = JSON.parse(localStorage.getItem(key));
+    content.cards['c_imgnode'] = { kind: 'image', x: 200, y: 160, w: 80, h: 60, asset: 'a_onanode01' };
+    content.cards['c_imgbody'] = { x: 460, y: 160, title: '',
+      body: '<img data-asset="a_inabody01" width="4" height="3">' };
+    localStorage.setItem(key, JSON.stringify(content));
+  });
   await page.evaluate(() => new Promise((res, rej) => {
     const req = indexedDB.open('whiteboard', 1);
     req.onupgradeneeded = () => {
@@ -1041,16 +1083,21 @@ test('an unreferenced asset is reaped at boot', { tag: '@boards' }, async ({ pag
     };
     req.onsuccess = () => {
       const t = req.result.transaction('assets', 'readwrite');
-      // added:0 puts it far outside the grace window that protects a fresh paste
-      t.objectStore('assets').put({ id: 'a_orphan01', blob: new Blob(['x'], { type: 'image/png' }), w: 1, h: 1, added: 0 });
+      const s = t.objectStore('assets');
+      // added:0 puts all three outside the grace window that protects a fresh paste
+      for (const id of ['a_orphan01', 'a_onanode01', 'a_inabody01']) {
+        s.put({ id, blob: new Blob(['x'], { type: 'image/png' }), w: 4, h: 3, added: 0 });
+      }
       t.oncomplete = () => res();
       t.onerror = () => rej(t.error);
     };
     req.onerror = () => rej(req.error);
   }));
-  expect(await assetExists(page, 'a_orphan01')).toBe(true);
   await page.reload();
+  // the orphan going is what proves the GC ran at all in this boot
   await expect.poll(() => assetExists(page, 'a_orphan01'), { timeout: 15000 }).toBe(false);
+  expect(await assetExists(page, 'a_onanode01')).toBe(true);
+  expect(await assetExists(page, 'a_inabody01')).toBe(true);
 });
 
 // The bytes can be absent legitimately — a Drive board opened on a second
@@ -1070,6 +1117,125 @@ test('a reference with no bytes renders a sized placeholder', { tag: '@cards' },
   const box = await img.boundingBox();
   expect(box.width).toBeCloseTo(120, 0);
   expect(box.height).toBeGreaterThan(31);       // reserves a box instead of collapsing
+});
+
+// ── Image nodes: a picture as a node of its own (kind:'image' on cards) ──
+
+// Corner drags hold the proportions the user can see; edge drags are the
+// deliberate stretch. Between them that's any dimensions, with nothing to learn.
+test('an image node resizes proportionally from a corner and freely from an edge', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);                          // a 60×40 source
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const saved = page.locator('#saveState');
+  await expect(saved).toHaveText('saved');
+  const start = await imageRecord(page);
+  expect([start.w, start.h]).toEqual([60, 40]);    // box came from the image's own pixels
+
+  // pull the SE corner sideways only: the height has to follow anyway
+  let box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width + 60, y: box.y + box.height });
+  await expect(saved).toHaveText('saved');
+  const corner = await imageRecord(page);
+  expect(corner.w).toBeCloseTo(120, 0);
+  expect(corner.w / corner.h).toBeCloseTo(60 / 40, 1);
+
+  // the same pull on the east edge changes width alone. Grab it away from the
+  // midpoint — the connection port owns that spot.
+  box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + 20 },
+    { x: box.x + box.width - 60, y: box.y + 20 });
+  await expect(saved).toHaveText('saved');
+  const edge = await imageRecord(page);
+  expect(edge.w).toBeCloseTo(60, 0);
+  expect(edge.h).toBeCloseTo(corner.h, 0);         // stretched, not scaled
+
+  await page.reload();
+  await expect.poll(async () => (await imageRecord(page)).w).toBeCloseTo(60, 0);
+});
+
+// An image node has no header, so the picture itself is the drag surface —
+// otherwise the node would be unmovable.
+test('an image node drags by the picture', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(300, 300);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const before = await nodePos(node);
+  const box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    { x: box.x + box.width / 2 + 140, y: box.y + box.height / 2 + 90 });
+  const after = await nodePos(node);
+  expect(after.x - before.x).toBeCloseTo(140, 0);
+  expect(after.y - before.y).toBeCloseTo(90, 0);
+});
+
+// The bytes can be absent legitimately (a board synced ahead of its images, an
+// evicted store). The node's stored box holds the layout regardless.
+test('an image node with no bytes here renders a sized placeholder', { tag: '@cards' }, async ({ page }) => {
+  await page.evaluate(() => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const content = JSON.parse(localStorage.getItem(key));
+    content.cards['c_ghostnode'] = { kind: 'image', x: 150, y: 150, w: 140, h: 90, asset: 'a_nothere02' };
+    localStorage.setItem(key, JSON.stringify(content));
+  });
+  await page.reload();
+  const node = page.locator('.node.image-node[data-id="c_ghostnode"]');
+  await expect(node).toHaveClass(/asset-missing/);
+  const box = await node.boundingBox();
+  expect(box.width).toBeCloseTo(140, 0);
+  expect(box.height).toBeCloseTo(90, 0);
+});
+
+// The palette's Image tool: pictures from disk, not just the clipboard. Centred
+// on the point you asked for, and multiples cascade instead of stacking.
+test('the Image tool adds pictures from a file', { tag: '@cards' }, async ({ page }) => {
+  const png = Buffer.from(await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 80; c.height = 80;
+    const x = c.getContext('2d');
+    x.fillStyle = '#5AD19A'; x.fillRect(0, 0, 80, 80);
+    return c.toDataURL('image/png').split(',')[1];
+  }), 'base64');
+
+  const chooser = page.waitForEvent('filechooser');
+  await page.click('#addImage');
+  await (await chooser).setFiles([
+    { name: 'one.png', mimeType: 'image/png', buffer: png },
+    { name: 'two.png', mimeType: 'image/png', buffer: png },
+  ]);
+
+  const nodes = page.locator('.node.image-node');
+  await expect(nodes).toHaveCount(2);
+  await expect.poll(() => nodes.first().locator('.image-src').getAttribute('src')).toMatch(/^blob:/);
+  const [a, b] = await Promise.all([nodePos(nodes.nth(0)), nodePos(nodes.nth(1))]);
+  expect(b.x - a.x).toBeCloseTo(28, 0);            // cascaded, not stacked
+  expect(b.y - a.y).toBeCloseTo(28, 0);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+});
+
+// An image node is a card underneath, so everything cards get for free has to
+// actually work on it: connections, undo, and a reload.
+test('an image node connects, undoes and reloads like any card', { tag: '@connections' }, async ({ page }) => {
+  await page.mouse.move(300, 260);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  const card = await addCardAt(page, 700, 300);
+
+  const box = await node.boundingBox();
+  const target = await card.boundingBox();
+  await node.hover();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height / 2 },
+    { x: target.x + target.width / 2, y: target.y + target.height / 2 });
+  await expect(page.locator('#connections .conn')).toHaveCount(1);
+
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('#connections .conn')).toHaveCount(0);
+  await expect(node).toHaveCount(1);               // the image survives its arrow's undo
+
+  await page.reload();
+  await expect(page.locator('.node.image-node')).toHaveCount(1);
 });
 
 // A table pasted from GitHub/docs keeps its structure: the sanitizer lets

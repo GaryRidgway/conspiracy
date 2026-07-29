@@ -10,9 +10,10 @@ Press **?** in the app at any time for the shortcut cheat-sheet.
 
 ## Contents
 
-- [The four things you can add](#the-four-things-you-can-add)
+- [The five things you can add](#the-five-things-you-can-add)
 - [Moving around the canvas](#moving-around-the-canvas)
 - [Cards](#cards)
+- [Images](#images)
 - [Frames](#frames)
 - [Embeds](#embeds)
 - [Buttons](#buttons)
@@ -35,9 +36,9 @@ Press **?** in the app at any time for the shortcut cheat-sheet.
 
 ---
 
-## The four things you can add
+## The five things you can add
 
-Everything on a board is one of four item types, added from the floating
+Everything on a board is one of five item types, added from the floating
 palette on the left — or by right-clicking empty canvas and picking
 "Add … here", which places the item exactly where you clicked.
 
@@ -46,6 +47,7 @@ palette on the left — or by right-clicking empty canvas and picking
 | **Card** | A note: a title plus a rich-text body. The main unit of a board. |
 | **Frame** | A named rectangular region — a labelled area you can group things in, jump to, or dock to the side panel. |
 | **Embed** | A live web page rendered inside a resizable box on the canvas. |
+| **Image** | A picture from a file or the clipboard, resizable on the canvas. |
 | **Button** | A clickable chip that jumps to another item on the board, or opens a URL. |
 
 While a board is empty a centered hint points you at the palette.
@@ -95,18 +97,31 @@ Focus a card body and a small floating toolbar appears above the card:
 Pasted content keeps its structure, including tables pasted from GitHub
 or a document, even though the toolbar doesn't offer tables itself.
 
-### Pasting images
+## Images
 
-Paste a screenshot (**⌘/Ctrl+V**) and:
+Two ways in: the **Image** tool in the left palette (or right-click →
+*Add image here*) picks files from disk, and **⌘/Ctrl+V** pastes a
+screenshot. Where a paste lands depends on what has focus:
 
-- **on the canvas** — it becomes a new card holding the image, placed
-  under your cursor;
-- **while editing a card body** — it lands inline at the caret.
+- **on the canvas** — it becomes an image on the board in its own right,
+  placed under your cursor;
+- **while editing a card body** — it lands inline at the caret, as part of
+  that card's text.
+
+An image on the board behaves like anything else: drag it anywhere, give it
+arrows, color it, link to it. Drag it by the picture — there's no title bar
+to grab. Selecting it (or hovering) reveals a bar above it where you can
+give it a name, which is also what screen readers and **⌘K** search see.
+
+**Resizing** happens at the handles: pull a **corner** to scale it, which
+holds its proportions, or an **edge** to stretch one dimension on its own.
+Hold **Shift** while pulling a corner to break the proportions there too.
 
 Images are downscaled on the way in (longest edge 1600px, WebP), and the
 picture itself is stored separately from the board — the board only keeps
 a reference to it. That's why an image-heavy board no longer eats the
-same storage budget as the text and layout around it.
+same storage budget as the text and layout around it. Resizing only ever
+changes the box on the board, never the stored picture.
 
 An occasional consequence: if a picture shows as a dashed empty box, its
 bytes aren't on this device. That happens on a board you've just opened
