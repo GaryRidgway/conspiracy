@@ -337,6 +337,31 @@ board's whole storage, and it surfaced only as `save failed` at paste time.
   exemption at boot. It's a request, not a guarantee, which is why a large
   image library still wants its Drive copy.
 
+### Storage pressure (`checkStoragePressure`, settings meter)
+
+Two stores with different ceilings and — the part that's easy to get wrong —
+**different advice**. Keep them separate; a single blended number can't support
+either message.
+
+| Pressure | Ceiling | Advice |
+|---|---|---|
+| Board text (localStorage) | fixed ~5 MB | export or delete a board. **Never Drive** |
+| Images (asset store) | origin quota, vast | — |
+| Images, device-only, not persisted | not a limit at all | save to Drive |
+| Whole origin near quota | `estimate()` | export, or delete images |
+
+**Drive does not relieve localStorage.** A Drive board caches its content *and*
+a merge base there, so connecting spends *more* of that budget, not less. A
+warning that suggests Drive for board-text pressure is actively wrong, and a
+test asserts the message never says the word.
+
+The image warning is about **durability, not capacity**: browser storage is
+evictable, so a big local-only library is one the browser may clear. Once the
+board is on Drive the local copy is a cache — losing it costs a download — so
+that board is deliberately *not* warned. Checked at boot and after every image
+paste, at most one warning per session (the latch is set when something is
+*said*, not when the check runs, so a quiet boot doesn't silence a later paste).
+
 Deep links: `#board=<id>` opens a board, `#node=<id>` frames a node. A
 Copy-ID link pasted *back into the app* (card links, button links) is
 recognized by `deepLinkNodeId()` and navigates in place — it must never

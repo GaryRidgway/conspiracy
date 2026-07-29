@@ -121,6 +121,16 @@
           </span>
         </label>
       </div>
+      <!-- Read-only, refreshed each time the panel opens. Board text and
+           pictures are separate stores with very different ceilings, and the
+           honest answer to "can I keep more images?" depends on which one is
+           under pressure — so show both rather than one blended number. -->
+      <div class="help-group">
+        <h3>Storage</h3>
+        <div class="help-row"><span>Board text</span><span class="help-keys" id="storeText">—</span></div>
+        <div class="help-row"><span>Pictures</span><span class="help-keys" id="storeImages">—</span></div>
+        <div class="help-row"><span>Safe from clearing</span><span class="help-keys" id="storePersisted">—</span></div>
+      </div>
     </div>
   </div>
 

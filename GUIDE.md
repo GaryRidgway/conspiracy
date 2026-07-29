@@ -116,6 +116,25 @@ on the board works normally meanwhile.
 **Exporting** a board writes the pictures into the file, so an export is
 still a complete, portable backup.
 
+### How much room am I using?
+
+**Settings** (the gear, top right) reports it: how much of this browser's
+board-text budget you've used, how much your pictures take, and whether
+the browser has agreed not to clear them.
+
+The app also speaks up on its own, once per session, when something is
+actually worth acting on — and what it suggests depends on which limit
+you're near:
+
+- **Board text near the limit.** Export or delete a board you don't need
+  in this browser. Connecting to Drive does *not* help here; a Drive board
+  keeps a local copy plus a sync snapshot, so it uses slightly more of
+  this particular budget, not less.
+- **A large picture library that exists only in this browser.** This isn't
+  a limit — it's that the browser is allowed to clear it. Saving the board
+  to Drive keeps the pictures in your own Drive, after which the local copy
+  is just a cache and losing it costs a re-download.
+
 ## Frames
 
 A frame is a labelled region: a rectangle with a title tab in its top-left

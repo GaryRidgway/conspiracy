@@ -4027,6 +4027,8 @@
         selectNode(id);
         commit();
       }
+      // The moment the number moved, and the moment the advice is most useful.
+      checkStoragePressure();
     }, (err) => {
       // A full asset store must not fail silently: the image is simply gone,
       // and the board itself saved fine, so nothing else would ever say so.
@@ -6459,6 +6461,7 @@
     else if (settingsPanel.contains(document.activeElement)) restoreModalFocus();
     settingsPanel.classList.toggle('hidden', !open);
     if (settingsBtn) settingsBtn.setAttribute('aria-expanded', String(open));
+    if (open) refreshStorageMeter();
   }
   if (settingsBtn) {
     settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); setSettingsOpen(!settingsOpen()); });
@@ -6472,6 +6475,97 @@
     flyToCheck.checked = settings.flyTo;
     flyToCheck.addEventListener('change', () => { settings.flyTo = flyToCheck.checked; saveSettings(); });
   }
+
+  // ── Storage pressure ───────────────────────────────────────────────────
+  // Two stores, two very different ceilings, and — this is the part worth
+  // getting right — two different pieces of advice:
+  //
+  //  • localStorage holds the board TEXT against a fixed ~5 MB ceiling.
+  //    Connecting to Drive does not relieve it; it makes it worse, because a
+  //    Drive board caches its content AND a merge base here. So that message
+  //    must never suggest Drive.
+  //  • the asset store holds image bytes against the origin quota, which is
+  //    vast by comparison — but EVICTABLE, and for a device-only board that
+  //    means the only copy of those pictures. That is the case where Drive is
+  //    the actual answer, and it's about durability rather than a limit.
+  const LS_BUDGET = 5 * 1024 * 1024;             // every engine lands near 5 MB
+  const LS_WARN_FRACTION = 0.8;
+  const QUOTA_WARN_FRACTION = 0.85;
+  const ASSETS_AT_RISK_BYTES = 20 * 1024 * 1024; // a library worth not losing
+  const mb = (n) => (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+
+  // The quota counts UTF-16 code units, so a character costs two bytes.
+  function localStorageBytes() {
+    let n = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith('whiteboard')) continue;
+      n += k.length + (localStorage.getItem(k) || '').length;
+    }
+    return n * 2;
+  }
+  async function storageReport() {
+    const nav = navigator.storage || {};
+    const est = nav.estimate ? await nav.estimate().catch(() => null) : null;
+    return {
+      local: localStorageBytes(),
+      assets: await ASSETS.usage(),
+      used: est && est.usage,
+      quota: est && est.quota,
+      persisted: nav.persisted ? await nav.persisted().catch(() => false) : false,
+    };
+  }
+
+  const storeTextEl = document.getElementById('storeText');
+  const storeImagesEl = document.getElementById('storeImages');
+  const storePersistedEl = document.getElementById('storePersisted');
+  async function refreshStorageMeter() {
+    if (!storeTextEl) return;
+    const r = await storageReport().catch(() => null);
+    if (!r) return;
+    storeTextEl.textContent = mb(r.local) + ' of ~' + mb(LS_BUDGET);
+    storeImagesEl.textContent = r.quota ? mb(r.assets) + ' of ~' + mb(r.quota) : mb(r.assets);
+    // Not a yes/no about safety in general — only about this browser reclaiming
+    // space. "Export" and "Drive" are the answers when it says no.
+    storePersistedEl.textContent = r.persisted ? 'yes' : 'no — export or use Drive';
+  }
+
+  // Run at boot and after every image paste — the paste is when the number
+  // actually moved and when the advice is most useful. At most ONE warning per
+  // session: the latch is set when something is said, not when the check runs,
+  // so a boot that found nothing wrong doesn't silence a later paste.
+  let storageWarned = false;
+  async function checkStoragePressure() {
+    if (storageWarned) return;
+    const r = await storageReport().catch(() => null);
+    if (!r) return;
+    const entry = libraryEntry(currentBoardId);
+    const onDrive = entry && entry.mode === 'drive';
+    const toDrive = { label: 'Show Drive', run: () => { if (boardMenuBtn) boardMenuBtn.click(); } };
+    const warn = (text, action) => { storageWarned = true; showStorageNotice(text, action); };
+
+    // Most severe first: the whole origin is nearly full, so the next write of
+    // anything can fail outright.
+    if (r.quota && r.used > r.quota * QUOTA_WARN_FRACTION) {
+      warn('This browser is nearly out of storage (' + mb(r.used) + ' of ' + mb(r.quota) +
+        '). Export a board, or delete some images, before adding more.');
+      return;
+    }
+    if (r.local > LS_BUDGET * LS_WARN_FRACTION) {
+      warn('The text and layout of your boards is close to this browser’s limit (' +
+        mb(r.local) + ' of about ' + mb(LS_BUDGET) + '). Export a board you don’t need here, or delete one. ' +
+        'Pictures are stored separately and aren’t the cause.');
+      return;
+    }
+    // Durability, not capacity: these images exist in one place, and the browser
+    // is allowed to clear it.
+    if (!onDrive && !r.persisted && r.assets > ASSETS_AT_RISK_BYTES) {
+      warn('This board’s images (' + mb(r.assets) + ') exist only in this browser, ' +
+        'which can clear them to reclaim space. Saving the board to Drive keeps them in your own Drive.', toDrive);
+    }
+  }
+  // Test seam: re-arm the once-per-session latch and check again.
+  window.__wb_checkStoragePressure = () => { storageWarned = false; return checkStoragePressure(); };
 
   // ════════════════════════════════════════════════════════
   //  HELP — the ? button (top right) and its shortcuts panel.
@@ -6735,7 +6829,10 @@
     btn.classList.toggle('hidden', !action);
     if (action) {
       btn.textContent = action.label;
-      btn.onclick = () => { hideStorageNotice(); action.run(); };
+      // stopPropagation because an action may OPEN a menu: the dropdowns close
+      // themselves on any document click landing outside their wrapper, and
+      // without this the very click that opened one would immediately shut it.
+      btn.onclick = (e) => { e.stopPropagation(); hideStorageNotice(); action.run(); };
     }
     storageNotice.classList.remove('hidden');
   }
@@ -7510,7 +7607,8 @@
   ASSETS.persist();          // ask not to be evicted; a request, never a guarantee
   // Reap orphaned image bytes once, off the boot path. Boot is the only safe
   // moment (see collectUnusedAssets), and it's never urgent.
-  requestIdle(() => collectUnusedAssets());
+  // GC first, so the pressure check measures what's actually still referenced.
+  requestIdle(() => collectUnusedAssets().then(checkStoragePressure));
   // A returning opted-in user whose session token has expired. Warm the Google
   // script NOW so the first-gesture reconnect calls for a token inside that
   // gesture's activation window rather than after a cold cross-network fetch,

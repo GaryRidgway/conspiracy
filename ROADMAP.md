@@ -152,7 +152,10 @@ isn't lost:
   to IndexedDB (`ARCHITECTURE.md` → *Image assets*), which raised the image
   ceiling by orders of magnitude. What's left is that both stores are
   **evictable** — a big local-only image library is one the browser may
-  discard — so the remaining ceiling is durability, not size.
+  discard — so the remaining ceiling is durability, not size. Surfaced
+  rather than solved: see *Storage pressure*. The unsolved half is board
+  TEXT against localStorage's fixed ~5 MB, which Drive can't relieve
+  because a Drive board caches content and a merge base locally too.
 - **Splitting a board across files.** The original plan proposed
   per-node documents for this; its stated 1 MiB trigger was Firestore's
   limit, and doesn't transfer to a Drive file, so the premise needs

@@ -2020,6 +2020,92 @@ test('the Drive chip escalates to an interactive connect when the silent path is
 // ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
 //    Exercised directly via the pure window.__wb_mergeBoards hook (no OAuth). ──
 
+// ── Storage pressure: two stores, two ceilings, two different messages ──
+
+const noticeText = (page) => page.locator('#storage-notice .notice-text').textContent();
+// Put `bytes` of image data in the asset store under one record, and force
+// persisted:false so the eviction branch is the one under test rather than
+// whatever this browser happens to grant.
+async function seedAssetBytes(page, id, bytes) {
+  await page.evaluate(async ([aid, n]) => {
+    Object.defineProperty(navigator.storage, 'persisted', { configurable: true, value: async () => false });
+    await new Promise((res, rej) => {
+      const req = indexedDB.open('whiteboard', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
+      };
+      req.onsuccess = () => {
+        const t = req.result.transaction('assets', 'readwrite');
+        t.objectStore('assets').put({ id: aid, blob: new Blob([new Uint8Array(n)], { type: 'image/png' }), w: 1, h: 1, added: Date.now() });
+        t.oncomplete = () => res();
+        t.onerror = () => rej(t.error);
+      };
+      req.onerror = () => rej(req.error);
+    });
+  }, [id, bytes]);
+}
+
+// The board-text ceiling is the one Drive can't help with — a Drive board caches
+// its content AND a merge base locally, so connecting spends MORE of this
+// budget. The message must not send the user down that path.
+test('the board-text limit warning does not blame images or recommend Drive',
+  { tag: '@boards' }, async ({ page }) => {
+    await page.evaluate(() => localStorage.setItem('whiteboard:board:junkfill', 'x'.repeat(2.1e6)));
+    await page.evaluate(() => window.__wb_checkStoragePressure());
+    await expect(page.locator('#storage-notice')).toBeVisible();
+    const text = await noticeText(page);
+    expect(text).toMatch(/text and layout/);
+    expect(text).toMatch(/aren’t the cause/);
+    expect(text).not.toMatch(/Drive/);
+  });
+
+// A big image library in one browser is a library the browser may clear. This is
+// about durability, not a limit — and it's the one case where Drive IS the fix.
+test('a large local-only image library is warned about, pointing at Drive',
+  { tag: '@boards' }, async ({ page }) => {
+    await seedAssetBytes(page, 'a_bigone001', 21 * 1024 * 1024);
+    await page.evaluate(() => window.__wb_checkStoragePressure());
+    await expect(page.locator('#storage-notice')).toBeVisible();
+    const text = await noticeText(page);
+    expect(text).toMatch(/only in this browser/);
+    expect(text).toMatch(/Drive/);
+    // and the button goes somewhere useful rather than just asserting a problem:
+    // the Drive bar, whose next step for a disconnected user is Connect
+    await page.click('#storage-notice .notice-show');
+    await expect(page.locator('#board-menu')).toBeVisible();
+    await expect(page.locator('#driveConnectBtn')).toBeVisible();
+  });
+
+// Once the board is on Drive the local copy is a cache: losing it costs a
+// download, not the pictures. Warning anyway would be crying wolf.
+test('a Drive-backed board is not warned about its local image copy',
+  { tag: '@boards' }, async ({ page }) => {
+    // Drive-backed BEFORE the bytes land: boot runs its own pressure check on an
+    // idle callback, and a device-mode board with 21 MB of images is exactly what
+    // that check warns about — so the flip has to be in place first.
+    await page.evaluate(() => {
+      const lib = JSON.parse(localStorage.getItem('whiteboard:library'));
+      const e = lib.find((b) => b.id === localStorage.getItem('whiteboard:current'));
+      e.mode = 'drive'; e.driveFileId = 'somefile';
+      localStorage.setItem('whiteboard:library', JSON.stringify(lib));
+    });
+    await seedAssetBytes(page, 'a_bigtwo002', 21 * 1024 * 1024);
+    await page.evaluate(() => window.__wb_checkStoragePressure());
+    await expect(page.locator('#storage-notice')).toBeHidden();
+  });
+
+// The settings panel answers "how much room am I using" on demand, keeping the
+// two stores separate — a single blended number can't support either message.
+test('settings reports board text and picture storage separately', { tag: '@chrome' }, async ({ page }) => {
+  await pasteImage(page);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.click('#settingsBtn');
+  await expect.poll(() => page.locator('#storeText').textContent()).toMatch(/MB of ~/);
+  await expect.poll(() => page.locator('#storeImages').textContent()).toMatch(/MB/);
+  await expect.poll(() => page.locator('#storePersisted').textContent()).toMatch(/yes|no/);
+});
+
 // ── Drive folder layout: board JSON at the top, image bytes in assets/ ──
 // These replace Drive I/O with an in-page fake (window.__wb_drive is the app's
 // test seam) and boot with a cached token, which is exactly the path a reload
