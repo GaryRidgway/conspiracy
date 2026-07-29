@@ -1327,6 +1327,74 @@ test('panning inside a crop slides the picture, not the node', { tag: '@cards' }
   expect([stillThere.x, stillThere.y, stillThere.w]).toEqual([where.x, where.y, where.w]);
 });
 
+// A crop rect is free by default, so the modifier CONSTRAINS it (the opposite of
+// its job on an ordinary resize, where the proportions are already held). It
+// locks to whatever makes the current mask regular — here, a true circle.
+test('a modifier held while cropping keeps a circle round', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(300, 280);
+  await pasteImage(page);                          // a 60×40 source: not square
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="circle"]').click();
+  await expect(saved).toHaveText('saved');
+
+  await node.dblclick();
+  let box = await node.boundingBox();
+  await page.keyboard.down('Shift');
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width - 22, y: box.y + box.height });   // pull x only
+  await page.keyboard.up('Shift');
+  await expect(saved).toHaveText('saved');
+
+  let rec = await imageRecord(page);
+  expect(rec.w).toBeCloseTo(38, 0);
+  expect(rec.h).toBe(rec.w);                       // square box ⇒ the circle is round
+  // and it is a crop, not a scale: the window shrank into the same picture
+  expect(rec.crop.w).toBeCloseTo(38 / 60, 2);
+  expect(rec.crop.h).toBeCloseTo(38 / 40, 2);
+
+  // Dragging back out past the picture's edge must hold the ratio rather than
+  // clamp one side flat — Ctrl stands in for Shift here, they're interchangeable.
+  box = await node.boundingBox();
+  await page.keyboard.down('Control');
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width + 400, y: box.y + box.height + 400 });
+  await page.keyboard.up('Control');
+  await expect(saved).toHaveText('saved');
+  rec = await imageRecord(page);
+  expect(rec.h).toBe(rec.w);                       // still square at the boundary
+  expect(rec.h).toBeLessThanOrEqual(40);           // and still inside the picture
+});
+
+// "Regular" is not 1:1 for every shape: these polygons are percentages of the
+// box, and an equilateral triangle is only √3/2 as tall as it is wide.
+test('the crop modifier locks a triangle to equilateral, not to square', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(320, 260);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="triangle"]').click();
+  await expect(saved).toHaveText('saved');
+
+  await node.dblclick();
+  const box = await node.boundingBox();
+  await page.keyboard.down('Shift');
+  await drag(page, { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x + box.width - 24, y: box.y + box.height });
+  await page.keyboard.up('Shift');
+  await expect(saved).toHaveText('saved');
+
+  const rec = await imageRecord(page);
+  expect(rec.w / rec.h).toBeCloseTo(2 / Math.sqrt(3), 1);
+  expect(rec.w).not.toBe(rec.h);
+});
+
 // Enter puts a keyboard user into crop mode, so the arrows have to crop there —
 // otherwise the only thing they could do in the mode is leave it. (And nudging
 // the node would slide the box out from under the ghost the crop measures

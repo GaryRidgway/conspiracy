@@ -366,6 +366,18 @@ each gesture moves exactly one of them:
 | handle drag | the box (clamped inside the ghost) | the edge you pull is the edge that moves |
 | drag inside / arrow keys | the ghost | the picture slides, the node stays put on the board |
 
+**The modifier does opposite things in the two modes, because the defaults are
+opposite.** Resizing holds the proportions and Shift/Ctrl/Cmd releases them;
+cropping is free and the same keys constrain it — to `IMAGE_SHAPES[].ratio`, the
+box aspect at which the current mask comes out *regular*. That ratio is **not 1
+for every shape**: the clip polygons are percentages of the box, so an
+equilateral triangle (and a regular hexagon, by the same construction) is √3/2 as
+tall as it is wide. Both rules are expressed as one `lockAspect(ev, dir, aspect)`
+hook returning a ratio or null, so "which key means what" lives with the node
+type instead of inside the shared resize. When a locked drag hits the ghost's
+edge, `clampCropBox` shrinks **both** dimensions by one factor — clamping the
+overshooting side alone would break the very ratio the key is holding.
+
 There is deliberately **no accept step**: every crop drag is an ordinary
 `commit()`, so undo walks back through them and nothing is provisional. Escape,
 Enter and a click away only leave the mode. The ghost is derived *once* on entry

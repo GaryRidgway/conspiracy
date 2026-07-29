@@ -125,6 +125,12 @@ keeping:
   still while the window closes in on it;
 - **drag the picture** to slide it under the window — the window stays
   exactly where it sits on the board;
+- hold **Shift** (or **Ctrl**, or **Cmd**) while dragging a handle to keep
+  the shape **regular**: a circle stays round, a triangle or hexagon stays
+  equilateral, and anything rectangular stays square. Note this is the
+  reverse of its job on an ordinary resize, where the proportions are
+  already held and the modifier releases them — a crop starts free, so
+  there the modifier is what constrains it;
 - **arrow keys** pan it too, so cropping works without a mouse.
 - **Esc** (or **Enter**, or a click anywhere else) finishes.
 

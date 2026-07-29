@@ -2895,11 +2895,14 @@
           const dx = now.x - start.x, dy = now.y - start.y;
           let w = dir.includes('e') ? o.w + dx : dir.includes('w') ? o.w - dx : o.w;
           let h = dir.includes('s') ? o.h + dy : dir.includes('n') ? o.h - dy : o.h;
-          // Where the caller asked for it, corners hold the proportions the user
-          // can see (Shift frees them) and edges are the deliberate stretch —
-          // between them that's "custom dims" without a modifier key to learn.
-          if (opts.aspect && opts.aspect() && dir.length === 2 && !ev.shiftKey) {
-            if (Math.abs(w - o.w) >= Math.abs(h - o.h)) h = w / aspect; else w = h * aspect;
+          // One aspect ratio to hold for this frame of the drag, or null for a
+          // free rect — the caller decides from the direction and the live
+          // modifier state, so "which key means what" lives with the node type
+          // rather than in here. The dominant delta drives the other dimension,
+          // so the pointer stays on the edge it grabbed.
+          const lock = opts.lockAspect ? opts.lockAspect(ev, dir, aspect) : null;
+          if (lock) {
+            if (Math.abs(w - o.w) >= Math.abs(h - o.h)) h = w / lock; else w = h * lock;
           }
           data.w = Math.max(opts.minW, Math.round(w));
           data.h = Math.max(opts.minH, Math.round(h));
@@ -2907,7 +2910,7 @@
           // pinned (a frame's contents keep their world positions).
           if (dir.includes('w')) data.x = o.x + o.w - data.w;
           if (dir.includes('n')) data.y = o.y + o.h - data.h;
-          if (opts.clamp) opts.clamp(data, o, dir);
+          if (opts.clamp) opts.clamp(data, o, dir, lock);
           el.style.left = data.x + 'px';
           el.style.top = data.y + 'px';
           el.style.width = data.w + 'px';
@@ -2992,17 +2995,26 @@
   // context menu's preview chips and the node itself share one definition
   // instead of drifting apart. This list is the closed set of valid keys:
   // board content is untrusted, and only a key from here reaches the DOM.
+  // `ratio` is the box w/h at which the shape comes out REGULAR — a true circle,
+  // an equilateral triangle — which is what a modifier held during a crop locks
+  // to. It isn't 1 for every shape: the polygons are percentages of the box, and
+  // an equilateral triangle (or a regular hexagon, by the same construction) is
+  // √3/2 as tall as it is wide. The star's own coordinates already carry a
+  // pentagram's proportions, so it's regular in a square.
+  const EQUILATERAL = 2 / Math.sqrt(3);
   const IMAGE_SHAPES = [
-    { key: 'rect', label: 'Rectangle' },
-    { key: 'round', label: 'Rounded' },
-    { key: 'circle', label: 'Circle' },
-    { key: 'triangle', label: 'Triangle' },
-    { key: 'diamond', label: 'Diamond' },
-    { key: 'hexagon', label: 'Hexagon' },
-    { key: 'star', label: 'Star' },
+    { key: 'rect', label: 'Rectangle', ratio: 1 },
+    { key: 'round', label: 'Rounded', ratio: 1 },
+    { key: 'circle', label: 'Circle', ratio: 1 },
+    { key: 'triangle', label: 'Triangle', ratio: EQUILATERAL },
+    { key: 'diamond', label: 'Diamond', ratio: 1 },
+    { key: 'hexagon', label: 'Hexagon', ratio: EQUILATERAL },
+    { key: 'star', label: 'Star', ratio: 1 },
   ];
   const imageShape = (data) =>
     (IMAGE_SHAPES.some((s) => s.key === data.shape) ? data.shape : 'rect');
+  const shapeRatio = (data) =>
+    (IMAGE_SHAPES.find((s) => s.key === imageShape(data)) || { ratio: 1 }).ratio;
 
   function setImagesShape(ids, key) {
     let changed = false;
@@ -3124,10 +3136,21 @@
     makeBoxResizable(id, el, {
       selector: '.image-handle',
       minW: IMAGE_MIN_SIZE, minH: IMAGE_MIN_SIZE,
-      // Cropping is a free rect by definition — locking the aspect there would
-      // make most of the crops anyone wants unreachable.
-      aspect: () => cropId !== id,
-      clamp: (data, o, dir) => { if (cropId === id) clampCropBox(data, o, dir); },
+      // Two different jobs for the modifier, because the default differs:
+      //
+      // Resizing, the proportions are already held (that's what you want 99% of
+      // the time), so the modifier RELEASES them for a deliberate stretch.
+      // Cropping, the rect has to be free — most crops anyone wants are a
+      // different shape from the original — so the modifier CONSTRAINS instead,
+      // to whatever makes the current mask regular: a circle actually round, a
+      // triangle equilateral. Any of Shift/Ctrl/Cmd, since which one it is isn't
+      // worth remembering (and Ctrl-drag is a right-click on a Mac trackpad).
+      lockAspect: (ev, dir, boxAspect) => {
+        const mod = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+        if (cropId === id) return mod ? shapeRatio(board.cards[id]) : null;
+        return dir.length === 2 && !mod ? boxAspect : null;
+      },
+      clamp: (data, o, dir, lock) => { if (cropId === id) clampCropBox(data, o, dir, lock); },
       onResize: () => {
         if (cropId === id) updateCrop(id);
         redrawConnectionsFor(id);
@@ -3219,7 +3242,7 @@
       layer = document.createElement('div');
       layer.className = 'crop-layer';
       layer.innerHTML = '<img class="crop-ghost" alt="" draggable="false">' +
-        '<span class="crop-hint">drag to crop · Esc when done</span>';
+        '<span class="crop-hint">drag to crop · ⇧ keeps the shape regular · Esc when done</span>';
       el.insertBefore(layer, el.firstChild);      // painted UNDER the bright window
     }
     const ghostImg = layer.querySelector('.crop-ghost');
@@ -3236,34 +3259,49 @@
   function updateCrop(id) {
     const data = board.cards[id];
     if (!data || !cropGhost) return;
-    const x = round4((data.x - cropGhost.x) / cropGhost.w);
-    const y = round4((data.y - cropGhost.y) / cropGhost.h);
-    const w = round4(data.w / cropGhost.w);
-    const h = round4(data.h / cropGhost.h);
+    // Through the same reader the render path uses, so pixel rounding can't leave
+    // a hair of negative x in a record — one normalizer, not two.
+    const c = cropRect({ crop: {
+      x: (data.x - cropGhost.x) / cropGhost.w,
+      y: (data.y - cropGhost.y) / cropGhost.h,
+      w: data.w / cropGhost.w,
+      h: data.h / cropGhost.h,
+    } });
     // "The whole picture" is the ABSENCE of the field, not {0,0,1,1}: one less
     // thing in the JSON, and one less field for a merge to conflict over.
-    if (x <= 0 && y <= 0 && w >= 1 && h >= 1) delete data.crop;
-    else data.crop = { x, y, w, h };
+    if (c.x <= 0 && c.y <= 0 && c.w >= 1 && c.h >= 1) delete data.crop;
+    else data.crop = { x: round4(c.x), y: round4(c.y), w: round4(c.w), h: round4(c.h) };
     applyCropStyle(nodeEls.get(id), data);
     layoutCrop(id);
   }
 
   // Keep a crop gesture inside the ghost. Runs after the generic resize has
-  // written the box, so it clamps the edge that MOVED and leaves the anchored
-  // one alone. (It can't undershoot the minimum size: the box started inside the
-  // ghost, so the room from an anchored edge to the far side is at least as big
-  // as the box was.)
-  function clampCropBox(data, o, dir) {
+  // written the box, and deliberately re-derives the whole rect rather than
+  // clamping the dragged edge: with a ratio locked, the drag changes the
+  // dimension it wasn't given, so there is no "untouched" edge to trust.
+  //
+  // Size first, then the origin from the anchored edge, then slide back inside.
+  // (It can't undershoot the minimum: the ghost is at least as big as the box
+  // was, and the box was at least the minimum.)
+  function clampCropBox(data, o, dir, lock) {
     const g = cropGhost;
     if (!g) return;
-    if (dir.includes('e')) data.w = Math.min(data.w, g.x + g.w - data.x);
-    if (dir.includes('s')) data.h = Math.min(data.h, g.y + g.h - data.y);
-    if (dir.includes('w') && data.x < g.x) { data.w -= g.x - data.x; data.x = g.x; }
-    if (dir.includes('n') && data.y < g.y) { data.h -= g.y - data.y; data.y = g.y; }
+    if (lock) {
+      // Shrink both together — clamping one dimension alone would silently break
+      // the very ratio the user is holding a key to keep.
+      const s = Math.min(1, g.w / data.w, g.h / data.h);
+      data.w *= s;
+      data.h *= s;
+    } else {
+      data.w = Math.min(data.w, g.w);
+      data.h = Math.min(data.h, g.h);
+    }
     data.w = Math.round(data.w);
     data.h = Math.round(data.h);
-    data.x = Math.round(data.x);
-    data.y = Math.round(data.y);
+    data.x = Math.round(dir.includes('w') ? o.x + o.w - data.w : o.x);
+    data.y = Math.round(dir.includes('n') ? o.y + o.h - data.h : o.y);
+    data.x = Math.min(Math.max(data.x, Math.ceil(g.x)), Math.floor(g.x + g.w - data.w));
+    data.y = Math.min(Math.max(data.y, Math.ceil(g.y)), Math.floor(g.y + g.h - data.h));
   }
 
   // Slide the picture under the window — what dragging means while cropping.
