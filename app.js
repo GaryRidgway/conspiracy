@@ -2889,6 +2889,7 @@
         const o = { x: data.x, y: data.y, w: data.w, h: data.h };
         const aspect = o.w / Math.max(1, o.h);
         let moved = false;
+        if (opts.onStart) opts.onStart();
         const onMove = (ev) => {
           if (ev.pointerId !== pid) return;
           const now = pointerWorld(ev);
@@ -2923,6 +2924,7 @@
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
           window.removeEventListener('pointercancel', onUp);
+          if (opts.onEnd) opts.onEnd();
           if (moved) commit();
         };
         window.addEventListener('pointermove', onMove);
@@ -3100,7 +3102,12 @@
   }
 
   function wireImageNode(id, el) {
-    el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+    el.addEventListener('pointerdown', (e) => {
+      // Mid-crop, Shift/Ctrl/Cmd mean "keep the shape regular" — they must not
+      // ALSO toggle this node out of the selection on the way past.
+      if (cropId === id) { if (!selectedNodes.has(id)) selectNode(id); return; }
+      nodePointerSelect(id, e);
+    }, true);
     // No header: there's no text to place a caret in, so the picture itself is
     // the drag surface. Handles and bar buttons opt out.
     el.addEventListener('pointerdown', (e) => {
@@ -3155,6 +3162,9 @@
         if (cropId === id) updateCrop(id);
         redrawConnectionsFor(id);
       },
+      // Hold the mode for the length of the gesture — see exitCrop().
+      onStart: () => { cropBusy = cropId === id; },
+      onEnd: () => { cropBusy = false; },
     });
   }
 
@@ -3171,6 +3181,7 @@
   const FULL_CROP = { x: 0, y: 0, w: 1, h: 1 };
   let cropId = null;      // which image node is in crop mode (runtime only)
   let cropGhost = null;   // its whole-picture rect in world px, fixed while cropping
+  let cropBusy = false;   // a crop gesture is in flight and owns the mode
   const round4 = (n) => Math.round(n * 1e4) / 1e4;
 
   // Board content is untrusted, and a `w` of 0 (or of "0") divides into an
@@ -3219,7 +3230,11 @@
   }
 
   function exitCrop() {
-    if (!cropId) return;
+    // A gesture owns the mode until it ends. Every hook in a crop drag reads
+    // `cropId` per frame, so anything that dropped the mode mid-drag turned that
+    // same drag into a plain resize under the user's hand — the box scaling the
+    // picture instead of cropping it, halfway through.
+    if (cropBusy || !cropId) return;
     const el = nodeEls.get(cropId);
     const data = board.cards[cropId];
     cropId = null;
@@ -3320,6 +3335,7 @@
     const pid = e.pointerId;
     const o = { x: g.x, y: g.y };
     let moved = false;
+    cropBusy = true;
     const onMove = (ev) => {
       if (ev.pointerId !== pid) return;
       const now = pointerWorld(ev);
@@ -3335,6 +3351,7 @@
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      cropBusy = false;
       if (moved) commit();
     };
     window.addEventListener('pointermove', onMove);
@@ -3363,6 +3380,9 @@
     const el = nodeEls.get(cropId);
     const inMenu = e.target.closest && e.target.closest('#context-menu');
     if (inMenu || (el && el.contains(e.target))) return;
+    // A press this far away means nothing of ours is mid-drag, so the mode can
+    // always be left this way even if a gesture never saw its pointerup.
+    cropBusy = false;
     exitCrop();
   }, true);
 
@@ -5371,6 +5391,9 @@
     if (!r.width && !r.height) return g;
     let left = r.left, top = r.top, right = r.right, bottom = r.bottom;
     for (const child of el.children) {
+      // A crop ghost spans the whole picture, well outside the node — counting it
+      // would make Fit and fly-to frame a region that vanishes on Escape.
+      if (child.classList.contains('crop-layer')) continue;
       const cr = child.getBoundingClientRect();
       if (!cr.width || !cr.height) continue;
       if (getComputedStyle(child).opacity === '0') continue;

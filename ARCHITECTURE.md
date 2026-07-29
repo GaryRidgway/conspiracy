@@ -385,6 +385,25 @@ Enter and a click away only leave the mode. The ghost is derived *once* on entry
 content replacement invalidates it, and `exitCrop()` sits at the top of
 `reconcileToBoard()` to cover undo, import, pull, merge and board switch at once.
 
+Two things guard the mode, both learned from it dropping out mid-drag:
+
+- **A gesture owns the mode until it ends** (`cropBusy`, set by `startCropPan`
+  and by `makeBoxResizable`'s `onStart`/`onEnd`). Every hook in a crop drag reads
+  `cropId` per frame, so anything that exited the mode mid-gesture converted that
+  same drag into a plain resize under the user's hand — the box scaling the
+  picture instead of cropping it, halfway through. A press outside the node
+  clears the flag unconditionally, so a lost pointerup can't strand the mode.
+- **The ghost layer takes pointer events**, and dragging it pans. With
+  `pointer-events: none` it was an invisible hole exactly where you reach when
+  you want *more* of the image: the press fell through to `#world`, whose
+  handler starts a box-select, and the document-level "clicked away" listener
+  exited the mode. It is also skipped in `nodeVisualGeom`, or Fit and fly-to
+  would frame a region that vanishes on Escape.
+
+The shape mask stays **on** while cropping: it's the framing for that shape that
+the user is choosing. The window's masked-off corners fall through to the dimmed
+ghost behind, which is exactly what's being cut away.
+
 The image node has **no CSS border** for this reason: a border insets the clip
 box (and with it the `<img>` the crop positions) by a pixel per side, which both
 skews the crop and leaves a visible seam between the ghost and the window. Every

@@ -313,12 +313,15 @@ body.space-pan #viewport.panning,
 
 /* Crop mode: the whole picture (the "ghost") is pinned behind the box and
    dimmed; the box is the bright window onto it, and its handles move the window
-   instead of scaling the picture. The layer takes no pointer events, so dragging
-   only ever grabs the window and a click on the dimmed surround counts as
-   clicking away — which is exactly what it looks like. */
+   instead of scaling the picture.
+   The layer IS grabbable — it's the picture, and dragging the picture pans it.
+   It used to take no pointer events so that a press on the dim area read as
+   clicking away, but that put an invisible hole exactly where you reach when you
+   want MORE of the image: the press fell through to the canvas, which exited the
+   mode and started a box-select. Clicking away now means outside the whole
+   picture (or Esc, which the hint teaches). */
 .image-node .crop-layer {
   position: absolute;
-  pointer-events: none;
   /* outline, not border: a border would inset the ghost image by a pixel and
      leave a visible seam against the bright window it's meant to align with */
   outline: 1px dashed var(--accent-soft);
@@ -327,10 +330,13 @@ body.space-pan #viewport.panning,
   width: 100%; height: 100%;
   object-fit: fill;
   opacity: 0.3;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .image-node .crop-hint {
   position: absolute;
   left: -1px; top: calc(100% + 5px);
+  pointer-events: none;          /* a label, not a grab target */
   padding: 0.1rem 0.4rem;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -344,8 +350,9 @@ body.space-pan #viewport.panning,
    don't apply mid-crop, and a port drag can't reach anything. */
 .image-node.cropping .image-bar,
 .image-node.cropping .port { display: none; }
-/* You crop the picture, not the silhouette — the mask comes back on exit. */
-.image-node.cropping .image-clip { clip-path: none; }
+/* The mask STAYS on while cropping: you're choosing the framing for that shape,
+   so it's the shape you need to see. The window's masked-off corners fall through
+   to the dimmed ghost behind, which is exactly what's being cut away. */
 /* No cursor to derive nearness from during a crop: light every handle. */
 .image-node.cropping .image-corner { opacity: 1; }
 

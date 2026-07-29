@@ -124,7 +124,8 @@ keeping:
 - **drag a handle** to move that edge of the window — the picture holds
   still while the window closes in on it;
 - **drag the picture** to slide it under the window — the window stays
-  exactly where it sits on the board;
+  exactly where it sits on the board. The dimmed part counts too: drag
+  anywhere on the picture, inside the window or out;
 - hold **Shift** (or **Ctrl**, or **Cmd**) while dragging a handle to keep
   the shape **regular**: a circle stays round, a triangle or hexagon stays
   equilateral, and anything rectangular stays square. Note this is the
@@ -132,7 +133,10 @@ keeping:
   already held and the modifier releases them — a crop starts free, so
   there the modifier is what constrains it;
 - **arrow keys** pan it too, so cropping works without a mouse.
-- **Esc** (or **Enter**, or a click anywhere else) finishes.
+- **Esc** (or **Enter**, or a click away from the picture) finishes.
+
+If the image has a shape, you'll see that shape while you crop — you're
+choosing the framing for it, after all.
 
 There is nothing to confirm: each drag is a normal edit, so **⌘/Ctrl+Z**
 walks back through them like anything else. Afterwards, resizing scales

@@ -1395,6 +1395,87 @@ test('the crop modifier locks a triangle to equilateral, not to square', { tag: 
   expect(rec.w).not.toBe(rec.h);
 });
 
+// The dimmed surround is the picture, so dragging it pans. It used to take no
+// pointer events, which left an invisible hole exactly where you reach for MORE
+// of the image: the press fell through to the canvas, which exited crop mode and
+// started a box-select instead.
+test('dragging the dimmed part of a crop pans it instead of dropping the mode', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(360, 300);
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+
+  // shrink the window from the east, leaving dimmed picture to its right
+  await node.dblclick();
+  const box = await node.boundingBox();
+  await drag(page, { x: box.x + box.width, y: box.y + box.height / 2 },
+    { x: box.x + box.width - 26, y: box.y + box.height / 2 });
+  await expect(saved).toHaveText('saved');
+  const cropped = await imageRecord(page);
+  const where = await nodePos(node);
+
+  // press in the dimmed strip beyond the window's right edge and drag
+  const win = await node.boundingBox();
+  await drag(page, { x: win.x + win.width + 12, y: win.y + win.height / 2 },
+    { x: win.x + win.width + 2, y: win.y + win.height / 2 });
+  await expect(saved).toHaveText('saved');
+
+  await expect(node).toHaveClass(/cropping/);                 // mode survived
+  await expect(page.locator('#selection-box')).toBeHidden();  // no marquee started
+  const panned = await imageRecord(page);
+  expect(panned.crop.x).toBeGreaterThan(cropped.crop.x);      // it panned
+  expect(panned.crop.w).toBeCloseTo(cropped.crop.w, 3);
+  expect(await nodePos(node)).toEqual(where);                 // and never moved the node
+});
+
+// Every hook in a crop drag reads the mode per frame, so anything that dropped
+// the mode mid-drag turned that same drag into a resize under the user's hand.
+// A gesture owns the mode until it ends.
+test('a crop drag stays a crop even if the mode is dropped mid-gesture', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+  const before = await imageRecord(page);
+
+  await node.dblclick();
+  const box = await node.boundingBox();
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 10, y, { steps: 4 });
+  await page.keyboard.press('Escape');                        // would have ended the mode
+  await page.mouse.move(box.x + box.width - 20, y, { steps: 4 });
+  await page.mouse.up();
+  await expect(saved).toHaveText('saved');
+
+  const after = await imageRecord(page);
+  expect(after.crop.w).toBeCloseTo((before.w - 20) / before.w, 2);   // cropped the whole way
+  expect(after.w).toBeCloseTo(before.w - 20, 0);
+  await page.keyboard.press('Escape');                        // and Escape works once it ends
+  await expect(node).not.toHaveClass(/cropping/);
+});
+
+// The shape is what you're framing, so it has to be visible while you frame it.
+test('a shape mask stays visible while cropping', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="circle"]').click();
+
+  const clip = () => node.locator('.image-clip').evaluate((el) => getComputedStyle(el).clipPath);
+  const masked = await clip();
+  expect(masked).not.toBe('none');
+  await node.dblclick();
+  await expect(node).toHaveClass(/cropping/);
+  expect(await clip()).toBe(masked);        // still the circle, mid-crop
+});
+
 // Enter puts a keyboard user into crop mode, so the arrows have to crop there —
 // otherwise the only thing they could do in the mode is leave it. (And nudging
 // the node would slide the box out from under the ghost the crop measures
