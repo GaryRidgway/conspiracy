@@ -33,6 +33,35 @@ test('recover from getting lost: Fit brings off-screen content into view', { tag
   expect(within(box, vp.width, vp.height)).toBe(true);
 });
 
+// The other half of Fit: Shift+2 frames just the selection. Unlike Fit it may
+// zoom IN — "show me this" is the opposite request from "show me everything", and
+// it's the only way to close in on one item without working the zoom control.
+test('Shift+2 fits the selection, and zooms in to do it', { tag: '@nav' }, async ({ page }) => {
+  const near = await addCardAt(page, 300, 250);
+  const far = await addCardAt(page, 2400, 1800);           // spreads the board out
+  await page.click('#fitContent');
+  const zoomedOut = await worldScale(page);
+  expect(zoomedOut).toBeLessThan(1);                        // both cards fit, so it pulled back
+
+  // nothing selected is a no-op, not a jump to the origin. (Two Escapes: focus
+  // is still on the Fit button, and the first one steps out of the chrome.)
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(far).not.toHaveClass(/selected/);
+  await page.keyboard.press('Shift+2');
+  expect(await worldScale(page)).toBe(zoomedOut);
+
+  await far.locator('.card-header').click();
+  await expect(far).toHaveClass(/selected/);
+  await page.keyboard.press('Shift+2');
+
+  const vp = page.viewportSize();
+  await expect.poll(async () => await worldScale(page)).toBeGreaterThan(zoomedOut);
+  expect(within(await far.boundingBox(), vp.width, vp.height)).toBe(true);
+  // it framed the SELECTION, not everything — the other card is off screen now
+  expect(within(await near.boundingBox(), vp.width, vp.height)).toBe(false);
+});
+
 // ── 2. Accidental zoom (Zoom Whiteboard backlash: scroll-wheel hijacked to
 //      zoom). Plain scroll must PAN, never change zoom. ──
 test('plain scroll/trackpad pans and never changes zoom', { tag: '@canvas' }, async ({ page }) => {
@@ -906,6 +935,26 @@ test('pasting an image on the canvas creates an image node that persists', { tag
   await expect.poll(() => page.locator('.image-src').getAttribute('src')).toMatch(/^blob:/);  // from IndexedDB
 });
 
+// Copying a board node must not disable image paste. The internal clipboard is
+// sticky for the whole session, so a guard keyed on "is the clipboard full?"
+// silently killed every image paste after the first ⌘C — the guard has to be
+// scoped to the one ⌘V that actually pasted nodes.
+test('copying a node does not stop images from pasting', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const nodes = page.locator('.node.image-node');
+  await expect(nodes).toHaveCount(1);
+
+  await nodes.click();
+  await page.keyboard.press('Meta+c');
+  await pasteImage(page);
+  await expect(nodes).toHaveCount(2);
+
+  // ...and the guard still does its job: ⌘V pastes the copied node, and the
+  // screenshot still sitting on the OS clipboard does not ride along with it.
+  await page.keyboard.press('Meta+v');
+  await expect(nodes).toHaveCount(3);          // the pasted copy, nothing more
+});
+
 // A pasted screenshot lands under the cursor (not the viewport centre) — the
 // node's client-space top-left should match where the mouse last was.
 test('pasted image lands under the cursor', { tag: '@cards' }, async ({ page }) => {
@@ -1281,6 +1330,33 @@ test('an image can be masked to a circle, and back again', { tag: '@cards' }, as
   await expect(page.locator('.node.image-node')).toHaveAttribute('data-shape', 'rect');
   await expect(saved).toHaveText('saved');
   expect('shape' in await imageRecord(page)).toBe(false);
+});
+
+// Retiring a shape needs no migration, because imageShape() only trusts keys
+// still in IMAGE_SHAPES — a board that kept a stored `star` shows the whole
+// picture rather than an unmasked-but-still-flagged node or a broken clip-path.
+test('a retired shape key falls back to the whole picture', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  await expect(page.locator('.node.image-node')).toHaveCount(1);
+  await expect(page.locator('#saveState')).toHaveText('saved');
+
+  await expect(page.locator('.node.image-node')).toHaveAttribute('data-shape', 'rect');
+  await page.locator('.node.image-node').click({ button: 'right' });
+  await expect(page.locator('#context-menu .ctx-shape')).toHaveCount(6);          // no star
+  await expect(page.locator('#context-menu .ctx-shape[data-shape="star"]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // a board written by a build that still had it
+  await page.evaluate(() => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const b = JSON.parse(localStorage.getItem(key));
+    for (const c of Object.values(b.cards)) if (c.kind === 'image') c.shape = 'star';
+    localStorage.setItem(key, JSON.stringify(b));
+  });
+  await page.reload();
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveAttribute('data-shape', 'rect');
+  expect(await node.locator('.image-clip').evaluate((el) => getComputedStyle(el).clipPath)).toBe('none');
 });
 
 // Crop is non-destructive: a source rect over untouched bytes. The invariant
@@ -1756,7 +1832,7 @@ test('a button linked to a board item flies the viewport there on click', { tag:
   await expect(modal).toBeHidden();
 
   const btn = page.locator('.btn-node');
-  await expect(btn).toHaveText(/Button/);
+  await expect(btn).toHaveText('Target Dossier');   // adopted its target's name
   await btn.click();
   const vp = page.viewportSize();
   expect(within(await card.boundingBox(), vp.width, vp.height)).toBe(true);
@@ -2117,6 +2193,16 @@ async function addFreeButton(page) {
   const id = await page.locator('.btn-node').last().getAttribute('data-id');
   return page.locator(`.btn-node[data-id="${id}"]`);
 }
+// Drop a fresh button into a card's bottom tray.
+async function dockButtonTo(page, card) {
+  const cb = await card.boundingBox();
+  const btn = await addFreeButton(page);
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+  return btn;
+}
 // Regression: a node drag re-lays only its own dragged assemblies (scoped
 // layoutAttachmentsFor) instead of the whole board every frame. The check has
 // to read the docked button WHILE THE POINTER IS STILL DOWN — on drop, the
@@ -2153,6 +2239,107 @@ test('a docked button tracks its card mid-drag, before the pointer is released',
   const cNow = await card.boundingBox();
   expect(cNow.x - cBefore.x).toBeGreaterThan(60);       // sanity: the card really moved
   await page.mouse.up();
+});
+
+// A card and its docked buttons get .selected/.co-selected in the same
+// synchronous call, so the only thing that can desync the highlight is HOW the
+// two shadows interpolate. Both sides must carry a ring layer of identical
+// geometry at rest, so the transition is a pure alpha fade on each — mid-flight
+// they then read the same value at the same instant. This used to fail: the card
+// grew its ring layer from nothing, so the browser morphed the depth shadow into
+// it over ~130ms while the chip's crisp ring faded up independently.
+test('a card and its docked button light up in step', { tag: ['@buttons', '@cards'] }, async ({ page }) => {
+  const card = await addCardAt(page, 480, 280);
+  const btn = await dockButtonTo(page, card);
+  const btnId = await btn.getAttribute('data-id');
+  const cardId = await card.getAttribute('data-id');
+  // reload so no :active/hover left over from the docking drag skews the read
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  await page.reload();
+  const node = page.locator(`.node[data-id="${cardId}"]`);
+  const chip = page.locator(`.node[data-id="${btnId}"]`);
+  await expect(chip).toHaveClass(/attached-bottom/);
+
+  // the ring layer is box-shadow's FIRST layer on both, and at rest it is a
+  // fully transparent 1px slot rather than absent
+  const ring = (s) => s.match(/^rgba?\([^)]*\)(?:\s+-?[\d.]+px){3,4}/)[0];
+  const rings = () => page.evaluate(([c, b]) => [
+    getComputedStyle(document.querySelector(`.node[data-id="${c}"]`)).boxShadow,
+    getComputedStyle(document.querySelector(`.node[data-id="${b}"]`)).boxShadow,
+  ], [cardId, btnId]);
+  const [c0, b0] = await rings();
+  expect(ring(c0)).toBe('rgba(0, 0, 0, 0) 0px 0px 0px 1px');
+  expect(ring(b0)).toBe(ring(c0));
+
+  // …and mid-transition they hold the same value. Both reads happen in one task,
+  // so they see one frame of the timeline: equal iff the two interpolate alike.
+  const mid = await node.evaluate((el, b) => {
+    const chipEl = document.querySelector(`.node[data-id="${b}"]`);
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+    return new Promise((res) => setTimeout(() => res([
+      getComputedStyle(el).boxShadow, getComputedStyle(chipEl).boxShadow,
+    ]), 50));
+  }, btnId);
+  expect(ring(mid[0])).toBe(ring(mid[1]));
+  expect(ring(mid[0])).not.toBe(ring(c0));         // sanity: it really is mid-fade
+
+  await expect(node).toHaveClass(/selected/);
+  await expect(chip).toHaveClass(/co-selected/);
+  // and they land on the same ring. Polled, not snapshotted: the class arrives
+  // 120ms before the fade finishes, so a one-shot read catches it mid-flight.
+  await expect.poll(async () => ring((await rings())[0]))
+    .toBe('rgb(255, 198, 41) 0px 0px 0px 1px');
+  const [c1, b1] = await rings();
+  expect(ring(b1)).toBe(ring(c1));
+});
+
+// Colouring an assembly colours all of it. A grey tray under a red card reads as
+// a half-finished edit — and unlike the selection cascade this writes each
+// button's own colour field, so it survives a reload and a later detach.
+test('colouring a card colours its docked buttons', { tag: ['@buttons', '@cards'] }, async ({ page }) => {
+  const card = await addCardAt(page, 480, 280);
+  const btn = await dockButtonTo(page, card);
+  const btnId = await btn.getAttribute('data-id');
+
+  await card.locator('.card-header').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch').nth(1).click();   // first real colour
+  await expect(card).toHaveClass(/colored/);
+  await expect(btn).toHaveClass(/colored/);
+
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  const stored = await page.evaluate((id) => {
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+    return b.cards[id].color;
+  }, btnId);
+  expect(stored).toBeTruthy();                      // its own field, not just a class
+
+  await page.reload();
+  await expect(page.locator(`.node[data-id="${btnId}"]`)).toHaveClass(/colored/);
+});
+
+// The dock snap preview has to win over every resting state. It was a
+// border-colour tint, which .colored (later in the stylesheet) and
+// .colored.selected (one class more specific) both outranked — so the preview
+// silently disappeared on exactly the coloured items it was needed on.
+test('the dock snap preview shows on a coloured card too', { tag: '@buttons' }, async ({ page }) => {
+  const card = await addCardAt(page, 480, 280);
+  await card.locator('.card-header').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-swatch').nth(1).click();
+  await expect(card).toHaveClass(/colored/);
+  await expect(card).toHaveClass(/selected/);        // colouring leaves it selected — the worst case
+
+  const btn = await addFreeButton(page);
+  const cb = await card.boundingBox();
+  const b0 = await btn.boundingBox();
+  // hold the drag over the tray zone and read the preview while the pointer is down
+  await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height + 10, { steps: 8 });
+  await expect(card).toHaveClass(/snap-target/);
+  const outline = await card.evaluate((el) => getComputedStyle(el).outline);
+  await page.mouse.up();
+  expect(outline).toMatch(/rgb\(255, 198, 41\)/);    // accent, not the card's own colour
+  expect(outline).toMatch(/2px/);
 });
 
 // Regression: skipping the port-proximity read while a node is being dragged

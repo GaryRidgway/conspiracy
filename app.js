@@ -1620,9 +1620,16 @@
     el.style.zIndex = data.z != null ? String(data.z) : '';
   }
   // Set (or clear, color=null) the color of the given nodes in one undo step.
+  // Docked buttons come along: the assembly reads as one object, so leaving the
+  // tabs grey under a red card looks like a half-finished edit. Unlike the
+  // selection cascade (co-selected is visual only, or a delete would take the
+  // buttons with it) this really does write each button's own color field —
+  // it's an ordinary per-field edit, so it merges and undoes like any other,
+  // and a button detached later keeps the colour it was given.
   function setNodesColor(ids, color) {
+    const targets = withDockedButtons(ids);
     let changed = false;
-    for (const id of ids) {
+    for (const id of targets) {
       const node = getNode(id);
       if (!node) continue;
       if (color) node.data.color = color; else delete node.data.color;
@@ -1632,8 +1639,8 @@
       changed = true;
     }
     if (!changed) return;
-    if (ids.some((id) => isPinned(id))) renderPinDock();   // chips tint too
-    if (ids.some((id) => isDockedFrame(id))) syncDockPanel();   // tab/pill tints too
+    if (targets.some((id) => isPinned(id))) renderPinDock();   // chips tint too
+    if (targets.some((id) => isDockedFrame(id))) syncDockPanel();   // tab/pill tints too
     commit();
   }
 
@@ -1919,10 +1926,33 @@
     }
   }
 
+  // The stock label a fresh button carries. Anything else is a name the user
+  // chose, and linking must never overwrite that.
+  const BUTTON_DEFAULT_TITLE = 'Button';
+
+  // What a button linked to `action` should be called. A button's whole purpose
+  // is its destination, so "Button" tells you nothing that the link doesn't
+  // already know — and naming it by hand right after choosing the target is a
+  // step nobody wants. A node target takes the item's own title; a URL takes its
+  // host, the same shorthand an embed's label uses.
+  function actionLabel(action) {
+    if (!action) return null;
+    if (action.type === 'node') return getNode(action.target) ? nodeTitle(action.target) : null;
+    if (action.type === 'url') return labelFor(action.target);
+    return null;
+  }
+
   function setButtonAction(id, action) {
     const data = board.cards[id];
     if (!data || data.kind !== 'button') return;
     if (action) data.action = action; else delete data.action;
+    // Adopt the target's name, but only over the stock one — never over a name
+    // the user typed, and never when unlinking (a button that loses its link
+    // keeps the label, which is the only thing left identifying it).
+    if (action && (!data.title || data.title === BUTTON_DEFAULT_TITLE)) {
+      const label = actionLabel(action);
+      if (label) data.title = label;
+    }
     if (isPinned(id)) renderPinDock();   // pinned buttons live in the dock, not the canvas
     else renderButton(id);
     commit();
@@ -1930,7 +1960,7 @@
 
   function createButton(worldX, worldY) {
     const id = newId('c_');
-    board.cards[id] = { kind: 'button', x: Math.round(worldX), y: Math.round(worldY), title: 'Button' };
+    board.cards[id] = { kind: 'button', x: Math.round(worldX), y: Math.round(worldY), title: BUTTON_DEFAULT_TITLE };
     commit();
     renderCard(id);
     selectNode(id);
@@ -1967,6 +1997,20 @@
       if (n.data.kind !== 'button' || !n.data.attachedTo) return cur;
       cur = n.data.attachedTo;
     }
+  }
+
+  // The given ids plus every button docked to any of them — a tray under a
+  // card, a row beside a frame's tab, a chain off a free button. Read from the
+  // records rather than from dockRootButtons, which only holds what is
+  // currently rendered: an off-screen tab has to be treated like a visible one
+  // or a colour change would skip it until it happened to hydrate.
+  function withDockedButtons(ids) {
+    const out = new Set(ids);
+    for (const [bid, c] of Object.entries(board.cards)) {
+      if (c.kind !== 'button' || !c.attachedTo || out.has(bid)) continue;
+      if (out.has(dockRoot(bid))) out.add(bid);
+    }
+    return [...out];
   }
 
   const DOCK_CLASSES = ['attached-bottom', 'attached-title', 'attached-chain',
@@ -3001,8 +3045,11 @@
   // an equilateral triangle — which is what a modifier held during a crop locks
   // to. It isn't 1 for every shape: the polygons are percentages of the box, and
   // an equilateral triangle (or a regular hexagon, by the same construction) is
-  // √3/2 as tall as it is wide. The star's own coordinates already carry a
-  // pentagram's proportions, so it's regular in a square.
+  // √3/2 as tall as it is wide.
+  //
+  // Removing a key here is safe and needs no migration: imageShape() falls back
+  // to 'rect' for anything not in this list, so a board that still stores a
+  // retired shape shows the whole picture rather than a broken mask.
   const EQUILATERAL = 2 / Math.sqrt(3);
   const IMAGE_SHAPES = [
     { key: 'rect', label: 'Rectangle', ratio: 1 },
@@ -3011,7 +3058,6 @@
     { key: 'triangle', label: 'Triangle', ratio: EQUILATERAL },
     { key: 'diamond', label: 'Diamond', ratio: 1 },
     { key: 'hexagon', label: 'Hexagon', ratio: EQUILATERAL },
-    { key: 'star', label: 'Star', ratio: 1 },
   ];
   const imageShape = (data) =>
     (IMAGE_SHAPES.some((s) => s.key === data.shape) ? data.shape : 'rect');
@@ -3561,10 +3607,29 @@
     ? (fn) => requestIdleCallback(fn, { timeout: 2000 })
     : (fn) => setTimeout(fn, 300);      // Safari has no requestIdleCallback
 
+  // A page that autofocuses a field — search boxes, docs, most editors — pulls
+  // focus into its own document the instant it loads. requestIdleCallback fires
+  // precisely when the user stops typing to think, so an embed still off screen
+  // would reach in and take the caret out of the card they were mid-sentence in.
+  // Prefetching is a nicety; the caret is not. Hold the queue while any text
+  // field has focus — nothing is dropped, and the focusout below drains it.
+  const textFocused = () => {
+    const ae = document.activeElement;
+    return !!ae && (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+  };
+  // Deferred a tick: focusout fires BEFORE focus lands, so activeElement is
+  // still the field we're waiting on until the current task finishes.
+  document.addEventListener('focusout', () => {
+    if (idleQueue.length) setTimeout(drainIdlePrefetch, 0);
+  });
+
   function drainIdlePrefetch() {
-    if (idlePrefetching || !idleQueue.length || document.hidden) return;
+    if (idlePrefetching || !idleQueue.length || document.hidden || textFocused()) return;
     idlePrefetching = true;
     requestIdle(() => {
+      // Editing may have started between scheduling and firing — an idle slice
+      // is exactly the pause between two keystrokes.
+      if (textFocused()) { idlePrefetching = false; return; }
       // the world may have moved since this was scheduled — re-check
       let id;
       while ((id = idleQueue.shift())) {
@@ -4349,6 +4414,14 @@
   // offset so repeated pastes don't stack exactly.
   let clipboard = null;
   let pasteCount = 0;
+  // When ⌘V pastes internal-clipboard nodes it preventDefaults, and every
+  // browser we've checked then skips the `paste` event entirely — but the image
+  // paste handler still double-checks, because a browser that fired both would
+  // drop a stale screenshot on top of the pasted nodes. That check has to be
+  // about THIS gesture: keying it off `clipboard` being non-empty (as it once
+  // was) killed image paste for the rest of the session the moment you copied
+  // any node at all.
+  let nodesPastedAt = -Infinity;
 
   function copyNodes(ids) {
     if (!ids.length) return;
@@ -4370,6 +4443,7 @@
   // pasted nodes join the active tab (membership is gesture-based)
   function pasteClipboard(anchor, opts) {
     if (!clipboard || !clipboard.nodes.length) return;
+    nodesPastedAt = performance.now();
     // Keyboard paste cascades by a fixed offset; a context-menu "Paste here"
     // drops the group's top-left at the cursor (anchor, in world units).
     let dx, dy;
@@ -4463,9 +4537,9 @@
       (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
     if (editingElsewhere) return;           // don't hijack titles/modals
 
-    // If the user copied board nodes, the ⌘V keydown handler already pasted
-    // them — a stale screenshot on the OS clipboard shouldn't paste on top.
-    if (!inCardBody && clipboard) return;
+    // If this same ⌘V already pasted board nodes, a stale screenshot left on the
+    // OS clipboard shouldn't land on top of them (see nodesPastedAt).
+    if (!inCardBody && performance.now() - nodesPastedAt < 300) return;
 
     e.preventDefault();
     // Caret range must be captured before the async re-encode.
@@ -4741,6 +4815,11 @@
     layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
     if (selectedConn && !connEls.has(selectedConn)) selectedConn = null;
+    // Re-stamp what survived: a wholesale replacement can destroy and recreate an
+    // element, and the new one comes back without the class even though its id
+    // never left the selection.
+    for (const id of selectedNodes) markNode(id, true);
+    if (selectedConn) markConn(selectedConn, true);
     updateEmptyState();
     refreshColorFilter();
     renderPinDock();
@@ -5555,11 +5634,10 @@
     zoomAround(1, r.x + r.w / 2, r.y + r.h / 2);
   }
 
-  function fitToContent() {
-    exitInteract();
-    hydrateAll();          // framing "everything" needs every node's geometry
-    // docked-window contents are framed by their panel, not the canvas
-    const ids = [...nodeEls.keys()].filter((id) => !inDock(id));
+  // Frame a set of nodes in the main view. Shared by Fit (everything) and
+  // fit-selected, so both land their subject with the same padding and the
+  // same centring — only the zoom ceiling differs.
+  function fitToNodes(ids, maxZoom) {
     if (!ids.length) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const id of ids) {
@@ -5568,15 +5646,36 @@
       minX = Math.min(minX, g.x); minY = Math.min(minY, g.y);
       maxX = Math.max(maxX, g.x + g.w); maxY = Math.max(maxY, g.y + g.h);
     }
+    if (minX === Infinity) return;
     const r = visibleRect();
     const pad = 80;
     const bw = (maxX - minX) + pad * 2;
     const bh = (maxY - minY) + pad * 2;
-    const zoom = Math.min(1, r.w / bw, r.h / bh);
+    const zoom = Math.min(maxZoom, r.w / bw, r.h / bh);
     setMainViewport(
       r.x + (r.w - bw * zoom) / 2 - (minX - pad) * zoom,
       r.y + (r.h - bh * zoom) / 2 - (minY - pad) * zoom,
       zoom);
+  }
+
+  function fitToContent() {
+    exitInteract();
+    hydrateAll();          // framing "everything" needs every node's geometry
+    // docked-window contents are framed by their panel, not the canvas
+    // Never zooms past 100%: "show me everything" is a pull-back, and a board
+    // holding one card shouldn't magnify it.
+    fitToNodes([...nodeEls.keys()].filter((id) => !inDock(id)), 1);
+  }
+
+  // Fit-selected DOES zoom in — "show me this" is the opposite request, and it's
+  // the only way to close in on one item without hunting the zoom control.
+  // Selection is already element-backed (setSelection filters by nodeEls), so
+  // unlike Fit it needs no hydration pass.
+  function fitToSelection() {
+    exitInteract();
+    const ids = [...selectedNodes].filter((id) => !inDock(id));
+    if (!ids.length) { announce('Nothing selected to fit'); return; }
+    fitToNodes(ids, MAX_ZOOM);
   }
 
   // ════════════════════════════════════════════════════════
@@ -6224,6 +6323,13 @@
       fitToContent();
       return;
     }
+    // Shift+2 — fit the selection, the same pairing Figma uses next to its
+    // fit-everything. "2" reports as "@" with Shift on most layouts.
+    if (!editing && e.shiftKey && (e.key === '2' || e.key === '@')) {
+      e.preventDefault();
+      fitToSelection();
+      return;
+    }
 
     // Tab cycles board items — but ONLY while focus is on the canvas. Once
     // focus is in the chrome, Tab must stay the browser's and move between
@@ -6690,6 +6796,7 @@
     clearTimeout(textToolbar._glideTimer);
     textToolbar.classList.remove('hidden');
     positionTextToolbar(cardEl);
+    refreshTextToolbarState();         // opens showing where the caret already is
     editedCardResize.disconnect();     // one card at a time — the focused one
     editedCardResize.observe(cardEl);
   }
@@ -6722,8 +6829,29 @@
     btn.addEventListener('click', () => {
       document.execCommand(btn.dataset.cmd, false);
       if (activeBody) saveCardBody(activeBody.id, activeBody.el);
+      refreshTextToolbarState();     // the command just changed what it reports
     });
   });
+
+  // Light up whichever commands are already in force at the caret. Without this
+  // the buttons are pure actions with no state, so mid-sentence there's no way
+  // to tell whether the next character comes out bold — and no way to see that
+  // a click turned bold OFF rather than on.
+  function refreshTextToolbarState() {
+    if (!activeBody || textToolbar.classList.contains('hidden')) return;
+    for (const btn of textToolbar.querySelectorAll('[data-cmd]')) {
+      // queryCommandState throws on some commands in some engines, and reports
+      // against the document selection — which is still inside the body here,
+      // because the buttons preventDefault their mousedown.
+      let on = false;
+      try { on = document.queryCommandState(btn.dataset.cmd); } catch { on = false; }
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    }
+  }
+  // selectionchange is the only event that fires for every way the caret can
+  // move — typing, arrows, clicking, and the browser's own ⌘B.
+  document.addEventListener('selectionchange', refreshTextToolbarState);
 
   // ── inline node links ──
   const ttLink = document.getElementById('tt-link');
@@ -7347,7 +7475,12 @@
       board = content;
       undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
       if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
-      clearSelection(); interactiveId = null;
+      // The selection deliberately survives. A background pull/merge arrives on
+      // the sync tick with no warning, and dropping the selection then made the
+      // highlight vanish out from under someone in the middle of typing —
+      // reconcileToBoard prunes whatever genuinely went away, which is the only
+      // part a remote change can actually invalidate.
+      interactiveId = null;
       reconcileToBoard();       // derives dock from the pulled cards' dockMembers
       lastContent = contentSnapshot();
       updateHistoryButtons();

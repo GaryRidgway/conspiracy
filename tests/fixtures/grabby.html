@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Focus-stealing Embed Fixture</title>
+</head>
+<body>
+  <!-- Stands in for the very many real pages that autofocus a search box on
+       load. An embed doing this pulls focus into its own document, which used
+       to yank the caret out of whatever card the user was typing in. -->
+  <input id="grab" autofocus placeholder="steals focus on load">
+  <script>document.getElementById('grab').focus();</script>
+</body>
+</html>

@@ -83,6 +83,19 @@ body.space-pan #viewport.panning,
      the browser re-rasterize glyphs crisply at the current scale. */
 }
 
+/* ── Selection ring slot ──────────────────────────────────────────────────
+   Every bordered node paints its ring as a CONSTANT box-shadow layer whose
+   colour lives in --ring, rather than by adding a layer when .selected lands.
+   That is what keeps an assembly in step: a card and its docked buttons get
+   .selected/.co-selected in the same synchronous call, so any difference in
+   how the two SHADOWS interpolate reads as one half lighting up after the
+   other. Adding a layer makes the browser pad the shorter list and morph the
+   depth shadow into the ring (~130ms of muddy olive blur); a frame, which
+   transitioned border-color but not box-shadow, snapped its ring on instantly
+   while its docked chip faded in behind it. One geometry, one transition, one
+   slot — the whole assembly now fades up together.
+   ── */
+
 /* ── Card ── */
 .card {
   position: absolute;
@@ -96,7 +109,8 @@ body.space-pan #viewport.panning,
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  --ring: transparent;
+  box-shadow: 0 0 0 1px var(--ring), 0 6px 22px rgba(0,0,0,0.35);
   display: flex;
   flex-direction: column;
   transition: border-color 0.12s, box-shadow 0.12s;
@@ -104,7 +118,8 @@ body.space-pan #viewport.panning,
 .card:hover { border-color: var(--border2); }
 .card.selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
+  --ring: var(--accent);
+  box-shadow: 0 0 0 1px var(--ring), 0 8px 26px rgba(0,0,0,0.45);
 }
 .card.dragging { cursor: grabbing; }
 
@@ -125,7 +140,8 @@ body.space-pan #viewport.panning,
    (--node-color-hi), not the accent gold; uncolored nodes keep the gold ring. */
 .card.colored.selected, .iframe-node.colored.selected {
   border-color: var(--node-color-hi);
-  box-shadow: 0 0 0 1px var(--node-color-hi), 0 8px 26px rgba(0,0,0,0.45);
+  --ring: var(--node-color-hi);
+  box-shadow: 0 0 0 1px var(--ring), 0 8px 26px rgba(0,0,0,0.45);
 }
 .node.colored .port { background: var(--node-color-hi); }
 
@@ -139,7 +155,9 @@ body.space-pan #viewport.panning,
   border: 1.5px solid var(--border2);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.025);
-  transition: border-color 0.12s;
+  --ring: transparent;
+  box-shadow: 0 0 0 1px var(--ring);
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 .frame-node .frame-tab {
   position: absolute;
@@ -156,8 +174,11 @@ body.space-pan #viewport.panning,
   background: var(--surface);
   border: 1px solid var(--border2);
   border-radius: 7px;
+  --ring: transparent;
+  box-shadow: 0 0 0 1px var(--ring);
   pointer-events: auto;              /* the grab/rename/menu surface */
   cursor: grab;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 .frame-node.dragging .frame-tab { cursor: grabbing; }
 .frame-node .frame-name {
@@ -231,8 +252,8 @@ body.space-pan #viewport.panning,
 .frame-node:hover .edge-sw, .frame-node.selected .edge-sw { opacity: 1; }
 /* selection ring matches cards/buttons (border + 1px ring), so a selected
    frame doesn't look thinner than its own co-selected docked buttons */
-.frame-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.frame-node.selected .frame-tab { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.frame-node.selected,
+.frame-node.selected .frame-tab { border-color: var(--accent); --ring: var(--accent); }
 .frame-node.colored {
   border-color: var(--node-color);
   background: color-mix(in srgb, var(--node-color) 5%, transparent);
@@ -245,7 +266,7 @@ body.space-pan #viewport.panning,
 .frame-node.colored.selected,
 .frame-node.colored.selected .frame-tab {
   border-color: var(--node-color-hi);
-  box-shadow: 0 0 0 1px var(--node-color-hi);
+  --ring: var(--node-color-hi);
 }
 
 /* ── Image node — a picture as its own node. The node box IS the visible
@@ -308,14 +329,10 @@ body.space-pan #viewport.panning,
 [data-shape="triangle"] { --clip: polygon(50% 0%, 100% 100%, 0% 100%); }
 [data-shape="diamond"]  { --clip: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
 [data-shape="hexagon"]  { --clip: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
-[data-shape="star"]     {
-  --clip: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%,
-                  50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
-}
 .image-node .image-clip { clip-path: var(--clip, none); }
 /* The rings stay rectangular on purpose — they mark the BOX, which is what the
    handles resize and the crop window frames, and that box is a rectangle even
-   when the picture inside it is a star. Only the depth follows the silhouette. */
+   when the picture inside it is a hexagon. Only the depth follows the silhouette. */
 .image-node.selected { box-shadow: 0 0 0 2px var(--accent); }
 .image-node.colored { box-shadow: 0 0 0 2px var(--node-color); }
 .image-node.colored.selected { box-shadow: 0 0 0 2px var(--node-color-hi); }
@@ -473,7 +490,7 @@ body.space-pan #viewport.panning,
      typed IS the width they chose. Tray tabs are the exception (explicit
      equal widths from layoutAttachments, ellipsis picks up the slack). */
   padding: 0.35rem 1.5rem 0.35rem 0.4rem;
-  --btn-ring: transparent;           /* selection ring slot */
+  --ring: transparent;           /* selection ring slot — see the ring note */
   /* flat face, but card-level shadow: a control must sit at least as
      high as an idle card, or it reads as less alive than the content */
   background: var(--surface2);
@@ -484,13 +501,13 @@ body.space-pan #viewport.panning,
   color: var(--text);
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 0 0 1px var(--btn-ring), 0 6px 22px rgba(0,0,0,0.35);
+  box-shadow: 0 0 0 1px var(--ring), 0 6px 22px rgba(0,0,0,0.35);
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.06s;
 }
 .btn-node:hover { background: var(--border); border-color: var(--accent-soft); }
 .btn-node:active {
   transform: scale(0.96);
-  box-shadow: 0 0 0 1px var(--btn-ring), 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 0 0 1px var(--ring), 0 2px 8px rgba(0,0,0,0.3);
 }
 .btn-node .btn-disc {
   flex: none;
@@ -522,16 +539,16 @@ body.space-pan #viewport.panning,
    one control: title-row chips match the flat tab (its surface, no drop
    shadow — the ring slot stays for selection); tray tabs match the card's
    dimmer border. Hover keeps the standard chip feedback. */
-.btn-node.attached-title { background: var(--surface); box-shadow: 0 0 0 1px var(--btn-ring); }
+.btn-node.attached-title { background: var(--surface); box-shadow: 0 0 0 1px var(--ring); }
 .btn-node.attached-bottom { background: var(--surface); border-color: var(--border); }
 .btn-node.attached-title:hover, .btn-node.attached-bottom:hover {
   background: var(--border);
   border-color: var(--accent-soft);
 }
-.btn-node.selected { border-color: var(--accent); --btn-ring: var(--accent); }
+.btn-node.selected { border-color: var(--accent); --ring: var(--accent); }
 /* selecting a card/frame/chain root highlights its docked buttons with it
    (visual companion to .selected — the buttons aren't in the selection) */
-.btn-node.co-selected { border-color: var(--accent); --btn-ring: var(--accent); }
+.btn-node.co-selected { border-color: var(--accent); --ring: var(--accent); }
 /* Docked buttons: only the touching corners flatten (no color inheritance —
    the assembly reads as one piece by geometry alone).
    Card bottoms: a full-width tray of equal tabs; outer bottom corners match
@@ -557,10 +574,20 @@ body.space-pan #viewport.panning,
   border-bottom-right-radius: 0;
 }
 .frame-node.has-tab-buttons .frame-tab { border-radius: 7px 0 0 7px; }
-/* live preview while a dragged button hovers a dockable zone */
-.card.snap-target { border-color: var(--accent); }
-.frame-node.snap-target .frame-tab { border-color: var(--accent); }
-.btn-node.snap-target { border-color: var(--accent); }
+/* Live preview while a dragged button hovers a dockable zone — the same accent
+   outline a dragged CONNECTION puts on its target (.node.drop-target): "the
+   drop lands here" should read the same however it's aimed.
+   It has to be an outline rather than the border tint this once was. Every
+   node type sets border-color again for .colored (later in the file) and again
+   for .colored.selected (one class more specific), so the tint quietly lost on
+   exactly the items that most needed it — a coloured card or button showed no
+   preview at all. Nothing else outlines a node, so this can't be outranked. */
+.card.snap-target,
+.btn-node.snap-target,
+.frame-node.snap-target .frame-tab {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* colored buttons: full-strength color border (same as cards/iframes/frames)
    with the color tinting the disc, not the whole face */
 .btn-node.colored { border-color: var(--node-color); }
@@ -573,8 +600,8 @@ body.space-pan #viewport.panning,
   background: color-mix(in srgb, var(--node-color) 15%, var(--surface));
 }
 .btn-node.colored.attached-title:hover { border-color: var(--node-color-hi); }
-.btn-node.colored.selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
-.btn-node.colored.co-selected { border-color: var(--node-color-hi); --btn-ring: var(--node-color-hi); }
+.btn-node.colored.selected { border-color: var(--node-color-hi); --ring: var(--node-color-hi); }
+.btn-node.colored.co-selected { border-color: var(--node-color-hi); --ring: var(--node-color-hi); }
 
 /* ── Shared node header (cards + iframes) ── */
 .card-header {
@@ -1671,7 +1698,8 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
+  --ring: transparent;
+  box-shadow: 0 0 0 1px var(--ring), 0 6px 22px rgba(0,0,0,0.35);
   display: flex;
   flex-direction: column;
   transition: border-color 0.12s, box-shadow 0.12s;
@@ -1679,7 +1707,8 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
 .iframe-node:hover { border-color: var(--border2); }
 .iframe-node.selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 8px 26px rgba(0,0,0,0.45);
+  --ring: var(--accent);
+  box-shadow: 0 0 0 1px var(--ring), 0 8px 26px rgba(0,0,0,0.45);
 }
 .iframe-node.dragging { cursor: grabbing; }
 
@@ -1950,6 +1979,14 @@ body.zoom-modifier .iframe-node.interactive .iframe-frame { pointer-events: none
   font-family: var(--font-body);
 }
 .tt-btn:hover { background: var(--surface2); color: var(--text); }
+/* Whichever commands are in force at the caret. Tinted fill rather than a
+   border so the button doesn't change size as it toggles, and the accent so it
+   reads as "on" rather than merely hovered (hover is the neutral surface). */
+.tt-btn.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.tt-btn.active:hover { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 #tt-link { font-weight: 700; }
 
 #node-picker {

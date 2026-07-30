@@ -122,6 +122,35 @@ test('rich text: bold formatting is applied and saved as HTML', { tag: '@cards' 
   await expectSaved(page, '<b>hello</b>');
 });
 
+// The toolbar has to report the caret's state, not just issue commands —
+// otherwise there's no way to tell mid-sentence whether the next character comes
+// out bold, or that a click turned bold OFF rather than on.
+test('rich text: the toolbar shows which formatting is in force', { tag: '@cards' }, async ({ page }) => {
+  const node = await makeCardAt(page, 350, 300, { title: 'State' });
+  const bold = page.locator('#text-toolbar [data-cmd="bold"]');
+  const italic = page.locator('#text-toolbar [data-cmd="italic"]');
+  await node.locator('.card-body').click();
+  await expect(page.locator('#text-toolbar')).toBeVisible();
+  await expect(bold).toHaveAttribute('aria-pressed', 'false');
+
+  await bold.click();
+  await expect(bold).toHaveAttribute('aria-pressed', 'true');   // typing now would be bold
+  await expect(bold).toHaveClass(/active/);
+  await expect(italic).toHaveAttribute('aria-pressed', 'false'); // and only bold
+  await page.keyboard.type('loud');
+  await expect(bold).toHaveAttribute('aria-pressed', 'true');    // still on, mid-word
+
+  await bold.click();                                            // a second press is OFF
+  await expect(bold).toHaveAttribute('aria-pressed', 'false');
+  await expect(bold).not.toHaveClass(/active/);
+
+  // walking the caret back into the bold run lights it up again
+  await page.keyboard.type(' quiet');
+  await expect(bold).toHaveAttribute('aria-pressed', 'false');
+  for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowLeft');
+  await expect(bold).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('rich text: bulleted and numbered lists', { tag: '@cards' }, async ({ page }) => {
   const node = await makeCardAt(page, 350, 300, { title: 'Lists' });
   await node.locator('.card-body').click();

@@ -61,6 +61,7 @@ While a board is empty a centered hint points you at the palette.
 | **⌘/Ctrl** + scroll, or trackpad pinch | Zoom about the cursor |
 | Drag empty canvas | Box-select |
 | **Fit** button, or **Shift+1** | Zoom out to frame everything on the board |
+| **Shift+2** | Frame just what's selected — this one zooms *in* |
 | **Reset view** button | Return to the board's default view |
 | Zoom bar (bottom right) | Zoom in/out, click the percentage to snap back to 100%, or fit |
 
@@ -93,6 +94,10 @@ Focus a card body and a small floating toolbar appears above the card:
 - Bulleted list / numbered list
 - **Link** — inserts an inline link to another item on this board (see
   [Linking to items](#linking-to-items))
+
+The formatting buttons light up for whatever is already in force where your
+caret sits, so you can tell at a glance whether the next character will come
+out bold — and a second press turns it off again.
 
 Pasted content keeps its structure, including tables pasted from GitHub
 or a document, even though the toolbar doesn't offer tables itself.
@@ -145,7 +150,7 @@ brings the whole picture back — cropping never removes anything from the
 stored image.
 
 **Shapes**: right-click an image for a row of shape chips — rectangle,
-rounded, circle, triangle, diamond, hexagon, star. These are *masks* too,
+rounded, circle, triangle, diamond, hexagon. These are *masks* too,
 so nothing is thrown away: choosing rectangle again brings the whole
 picture back, whenever you like. The bounding box (and its handles) stays
 rectangular, so a circular image is still easy to grab and resize.
@@ -261,6 +266,9 @@ A button is a small chip that does one thing when clicked.
     in place instead of opening a second copy of the app.)
 - Its icon tells you which: a link glyph for a URL, a target glyph for a
   board item, a plus while it's unconfigured.
+- **It names itself.** A button still called *Button* takes the name of
+  whatever you link it to — the item's own title, or a URL's site. Rename it
+  yourself and that name is kept from then on; re-linking never overwrites it.
 - **Press**: a plain click. **Move**: click and drag — any real movement is
   treated as a drag, not a press.
 - **Right-click** for *Rename*, *Set/Change link…*, *Remove link*,
@@ -277,8 +285,11 @@ item's furniture. Its position is then maintained for you:
 | Just right of a frame's title tab | A row of buttons alongside the title |
 | Another button | A horizontal menu chain |
 
-Dragging the host moves the whole assembly; dragging a docked button
-moves the assembly by its root. **Detach** (right-click) frees it again.
+While you drag a button over somewhere it can dock, that target is
+**outlined in gold** — the same outline you get when aiming a connection at
+something. Dragging the host moves the whole assembly; dragging a docked
+button moves the assembly by its root. Selecting the host highlights its
+docked buttons with it, and **Detach** (right-click) frees one again.
 Deleting the host doesn't delete its buttons — they're left in place.
 
 ## Connections (the red thread)
@@ -322,7 +333,9 @@ they join, and clean themselves up if an endpoint is deleted.
 Right-click any item and pick a swatch from the color row: **red, amber,
 green, blue, purple, pink, gray**, or clear it. The color tints the item's
 heading and border, and the connections attached to it. Setting a color on
-a multi-item selection colors all of them in one step.
+a multi-item selection colors all of them in one step, and colouring an item
+that has **docked buttons** colours those too — the assembly is one object,
+so it takes one colour.
 
 Once anything on the board is colored, a **legend of dots** appears under
 the tool palette. Click a dot to **spotlight** that color — matching items
@@ -594,6 +607,7 @@ Known gaps, deliberately scoped rather than half-built:
 | Zoom at cursor | **⌘/Ctrl**+scroll |
 | Box-select | drag empty space |
 | Fit everything | **Shift+1** |
+| Fit the selection | **Shift+2** |
 | Find & jump | **⌘/Ctrl+K** |
 | Select all | **⌘/Ctrl+A** |
 | Clear selection | **Escape** |

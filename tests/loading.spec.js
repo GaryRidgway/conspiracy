@@ -9,9 +9,11 @@
 //  reloads the page to re-evaluate from the persisted viewport.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
-import { installErrorGuard } from './helpers.js';
+import { installErrorGuard, addCardAt } from './helpers.js';
 
 const EMBED_URL = 'http://localhost:8123/tests/fixtures/embed.html';
+// Autofocuses a field on load, like most real pages worth embedding do.
+const GRABBY_URL = 'http://localhost:8123/tests/fixtures/grabby.html';
 
 async function addFrame(page, url) {
   await page.click('#addFrame');
@@ -83,6 +85,34 @@ test('near-ring frame prefetches in idle time while still off screen', { tag: '@
   expect((await frame.boundingBox()).x + (await frame.boundingBox()).width).toBeLessThan(0);
   // …yet the idle prefetch fills it in
   await expect(frame.locator('iframe')).toHaveAttribute('src', EMBED_URL, { timeout: 8000 });
+});
+
+// The prefetch runs in idle time, which is exactly the pause between two
+// keystrokes — and a page that autofocuses a field pulls focus into its own
+// document as it loads. Unguarded, that took the caret out of the card the user
+// was typing in, seconds after they stopped: "stop to think, lose your place".
+test('the idle prefetch waits rather than steal the caret from a card', { tag: '@frames' }, async ({ page }) => {
+  await addFrame(page, GRABBY_URL);
+  const bb = await page.locator('.node.iframe-node').boundingBox();
+  const away = bb.x + bb.width + 1280 * 2 + 200;
+  await panBy(page, away, 0);
+  await page.reload();
+  expect(await frameSrc(page)).toBeNull();                  // far → placeholder
+
+  const card = await addCardAt(page, 600, 400);
+  await card.locator('.card-body').click();
+  await page.keyboard.type('mid-sentence');
+  // bring it back to 200px past the left edge: off screen, inside the near ring
+  await panBy(page, -(away - bb.x - bb.width - 200), 0);
+  const box = await page.locator('.node.iframe-node').boundingBox();
+  expect(box.x + box.width).toBeLessThan(0);                // still off screen
+  await page.waitForTimeout(2500);                          // idle: the prefetch would fire here
+  await expect(card.locator('.card-body')).toBeFocused();
+  expect(await frameSrc(page)).toBeNull();                  // held, because we're typing
+
+  // held, not dropped — finish editing and it loads
+  await page.mouse.click(1000, 650);
+  await expect(page.locator('.node.iframe-node iframe')).toHaveAttribute('src', GRABBY_URL, { timeout: 8000 });
 });
 
 // ════════════════════════════════════════════════════════════════════════

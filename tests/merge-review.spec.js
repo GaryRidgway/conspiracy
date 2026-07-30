@@ -77,6 +77,42 @@ test('the panel flips a record to the other device and back, undoably', { tag: '
   await expect(title).toHaveText('Alpha');
 });
 
+// A background pull/merge arrives on the sync tick with no warning, so it must
+// not disturb what the user is doing. It used to clearSelection() outright,
+// which made the highlight vanish out from under someone mid-sentence — and
+// looked, from the outside, like the app losing its place at random. Only what
+// the remote genuinely removed may leave the selection.
+test('a background pull keeps the selection and the caret', { tag: ['@boards', '@select'] }, async ({ page }) => {
+  // doomed first: addNamedCard drops every card on the same spot, so the second
+  // one has to be the keeper or it'd be buried under the other's body
+  const gone = await addNamedCard(page, 'Doomed');
+  const keep = await addNamedCard(page, 'Keeper');
+  const keepEl = page.locator(`.node.card[data-id="${keep}"]`);
+
+  await keepEl.locator('.card-body').click();
+  await page.keyboard.type('mid-sentence');
+  await expect(keepEl).toHaveClass(/selected/);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // a remote edit that touches neither card, plus a remote delete of the other
+  await page.evaluate((goneId) => {
+    const content = JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current')));
+    delete content.cards[goneId];
+    content.version++;
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content);
+  }, gone);
+
+  await expect(page.locator(`.node.card[data-id="${gone}"]`)).toHaveCount(0);
+  await expect(keepEl).toHaveClass(/selected/);              // ring still on
+  await expect(keepEl.locator('.card-body')).toBeFocused();  // caret still in it
+  await expect(keepEl.locator('.card-body')).toHaveText('mid-sentence');
+
+  // …and a node the remote really did delete leaves the selection behind it
+  const stillSelected = await page.evaluate(() =>
+    [...document.querySelectorAll('.node.selected')].map((el) => el.dataset.id));
+  expect(stillSelected).toEqual([keep]);
+});
+
 test('a pull landing while the review panel is open closes it instead of letting a stale flip clobber it', { tag: '@boards' }, async ({ page }) => {
   const id = await addNamedCard(page, 'Alpha');
   const rec = await storedCard(page, id);

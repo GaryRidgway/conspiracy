@@ -148,6 +148,7 @@
         <div class="help-row"><span>Zoom at cursor</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>scroll</kbd></span></div>
         <div class="help-row"><span>Box-select</span><span class="help-keys">drag empty space</span></div>
         <div class="help-row"><span>Fit everything</span><span class="help-keys"><kbd>Shift</kbd>+<kbd>1</kbd></span></div>
+        <div class="help-row"><span>Fit the selection</span><span class="help-keys"><kbd>Shift</kbd>+<kbd>2</kbd></span></div>
         <div class="help-row"><span>Find &amp; jump</span><span class="help-keys"><kbd>⌘/Ctrl</kbd>+<kbd>K</kbd></span></div>
         <div class="help-row"><span>Add items</span><span class="help-keys">palette / right-click</span></div>
       </div>
@@ -202,10 +203,10 @@
 
   <!-- Floating rich-text toolbar (positioned above the focused card) -->
   <div id="text-toolbar" class="hidden">
-    <button type="button" class="tt-btn" data-cmd="bold" title="Bold" aria-label="Bold"><span class="icon icon-format_bold"></span></button>
-    <button type="button" class="tt-btn" data-cmd="italic" title="Italic" aria-label="Italic"><span class="icon icon-format_italic"></span></button>
-    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" title="Bulleted list" aria-label="Bulleted list"><span class="icon icon-format_list_bulleted"></span></button>
-    <button type="button" class="tt-btn" data-cmd="insertOrderedList" title="Numbered list" aria-label="Numbered list"><span class="icon icon-format_list_numbered"></span></button>
+    <button type="button" class="tt-btn" data-cmd="bold" aria-pressed="false" title="Bold" aria-label="Bold"><span class="icon icon-format_bold"></span></button>
+    <button type="button" class="tt-btn" data-cmd="italic" aria-pressed="false" title="Italic" aria-label="Italic"><span class="icon icon-format_italic"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertUnorderedList" aria-pressed="false" title="Bulleted list" aria-label="Bulleted list"><span class="icon icon-format_list_bulleted"></span></button>
+    <button type="button" class="tt-btn" data-cmd="insertOrderedList" aria-pressed="false" title="Numbered list" aria-label="Numbered list"><span class="icon icon-format_list_numbered"></span></button>
     <button type="button" class="tt-btn" id="tt-link" title="Link to a node" aria-label="Link to a node"><span class="icon icon-link"></span></button>
   </div>
 

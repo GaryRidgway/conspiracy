@@ -84,6 +84,36 @@ rather than cascading the delete. Title-row geometry must come from
 integers measured from the padding edge, and the frame's fractional border
 visibly misaligns the row.
 
+A dock is meant to read as **one object**, and three things follow from that:
+
+- **The highlight must land at the same instant on both halves.** `markNode()`
+  sets `.selected` on the root and `.co-selected` on its buttons in one
+  synchronous call, so the *classes* are never out of step — what desynced them
+  was how their `box-shadow`s interpolated. Every bordered node therefore paints
+  its ring as a **constant layer coloured by `--ring`** (`0 0 0 1px var(--ring)`,
+  transparent at rest), never by *adding* a layer on `.selected`. Add a layer and
+  the browser pads the shorter list and morphs the depth shadow into the ring
+  over ~130ms of muddy blur; a frame, which transitioned `border-color` but not
+  `box-shadow`, snapped its ring on instantly while its chip faded up behind it.
+  One geometry and one transition on all of `.card` / `.iframe-node` /
+  `.frame-node` / `.frame-tab` / `.btn-node` means the fade is a pure alpha ramp
+  and both halves hold the same value at every instant — which is what the test
+  asserts, by reading both in a single task.
+- **Colour cascades for real.** `setNodesColor` runs its ids through
+  `withDockedButtons()`, writing each button's own `color` field. That is the
+  opposite of the selection cascade (visual only, or a delete would take the
+  buttons with it) and it's safe *because* it's an ordinary per-field edit: it
+  merges, undoes, and survives a later detach like any other. The expansion reads
+  the records, not `dockRootButtons` — that map only holds what is rendered, so
+  an off-screen tab would otherwise keep its old colour until it hydrated.
+- **The snap preview is an `outline`, not a border tint.** It marks an in-flight
+  gesture, so it has to outrank every resting state — and as a `border-color` it
+  didn't: each node type sets `border-color` again for `.colored` (later in the
+  stylesheet) and again for `.colored.selected` (one class more specific), so the
+  preview vanished on exactly the coloured items. Nothing else outlines a node,
+  and it reuses the accent outline a dragged *connection* puts on its target
+  (`.node.drop-target`) — "the drop lands here" reads the same however it's aimed.
+
 ### Pinned nodes: chrome, not canvas
 
 A record with `pinned` (epoch ms — doubles as the dock's sort order) renders
@@ -430,7 +460,7 @@ at all), so a test asserts the nesting and that `.image-clip` carries no filter 
 its own. The shadow is off while cropping, where it would land on the ghost
 instead of the board and read as grime rather than lift. The **rings stay
 rectangular** on purpose: they mark the box the handles resize, which is a
-rectangle even when the picture is a star.
+rectangle even when the picture is a hexagon.
 - **Data URIs still exist at exactly two boundaries** — a board written before
   the asset store (hoisted by `migrateInlineImages` *after* first paint,
   version-bumped like `migrateLegacyDockMembers` and deliberately not a
@@ -544,7 +574,7 @@ on either side picks the branch:
 
 - neither changed → no-op (one cheap `getMeta`)
 - only remote → **pull** (`applyPulledBoard`: replaces content, clears undo,
-  keeps local viewport)
+  keeps local viewport — **and keeps the selection and the caret**; see below)
 - only local → **push** via `guardedUpdate`
 - both → **three-way merge** against `whiteboard:base:<id>`; no base
   (legacy/first divergence) → `#conflict-modal` prompt
@@ -564,6 +594,17 @@ Invariants that took real bugs to learn — keep them:
    fetch time, so pushing the live `board` object can send content newer than
    the recorded watermark — and then the saved base disagrees with what Drive
    actually holds, which makes a later merge resurrect stale remote values.
+3b. **A background pull must not disturb what the user is doing.** It arrives on
+   the 10s tick with no warning, so `applyPulledBoard` deliberately does *not*
+   `clearSelection()` — that made the highlight vanish out from under someone
+   mid-sentence, which from the outside looks like the app randomly losing its
+   place. `reconcileToBoard` prunes only ids whose element genuinely went away,
+   which is the sole thing a remote change can invalidate, and then re-stamps
+   `markNode`/`markConn` on what survived — a wholesale replacement can destroy
+   and recreate an element, and the new one comes back classless even though its
+   id never left the selection. The caret survives on its own, because
+   `renderCard` refuses to overwrite a `title`/`body` that has focus; keep that
+   guard if you touch the render path.
 4. **Read meta before content** everywhere a (content, version) pair is
    recorded (see `openFromDrive`). Meta-first + a racing push = harmless
    redundant pull next tick. Content-first = "in sync" with edits you never
@@ -691,7 +732,14 @@ silently overwrote newer synced content with no conflict raised for it.
   "click to load" placeholder. Loading is one-way — frames never unload —
   and the queue is rebuilt wholesale each evaluation, so a queued frame
   that scrolls into view just loads via the visible path instead.
-  Covered by `tests/loading.spec.js`.
+  The idle drain **holds while any text field has focus**, and resumes on
+  `focusout`. A page that autofocuses a field — most pages worth embedding —
+  pulls focus into its own document as it loads, and `requestIdleCallback` fires
+  precisely when the user pauses typing to think: unguarded, an embed still off
+  screen reached in and took the caret out of the card they were mid-sentence in,
+  seconds after they stopped. Nothing is dropped, only deferred. (The `visible`
+  tier is deliberately *not* guarded — that load follows a deliberate pan.)
+  Covered by `tests/loading.spec.js`, against a fixture that steals focus.
 - The color filter/legend is **pure view state**: in-memory only, never
   committed, no version bump, per device.
 - `frameNode(id)` / `selectNode` / `flashNode` are the shared navigation
@@ -743,6 +791,16 @@ silently overwrote newer synced content with no conflict raised for it.
   event, so menu items live in exactly one place regardless of trigger.
 - Escape is a priority chain: open modal → board menu → blur editing → blur
   chrome → exit image crop → exit iframe interact mode → clear selection.
+- **Two clipboards, and the guard between them must be per-gesture.** ⌘V's
+  keydown handler pastes the internal node clipboard and `preventDefault`s, which
+  suppresses the `paste` event; the document-level `paste` listener owns pasted
+  *images*. The image handler still double-checks that this same ⌘V didn't
+  already paste nodes (a browser firing both would drop a stale screenshot on top
+  of them) — but that check reads `nodesPastedAt`, a timestamp, not "is the
+  internal clipboard non-empty?". The internal clipboard is sticky for the whole
+  session, so the latter silently killed every image paste from the first ⌘C
+  onward: a feature outage with no error anywhere. Test:
+  "copying a node does not stop images from pasting".
 - Iframe "interact mode" (`interactiveId`) is runtime-only state and must
   never trap the user: every canvas gesture (pan, wheel, zoom controls, ⌘K
   jump) calls `exitInteract()`. Any new gesture must too.
