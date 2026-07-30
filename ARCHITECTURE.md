@@ -430,9 +430,38 @@ one turns out to be pinned. The invariant to preserve: **holding the modifier
 must never make a handle dead that works without it.** A drag with nowhere to go
 on *either* axis still does nothing, identically with and without the key, and
 that one is the crop model doing its job rather than a bug — the window can never
-show more than the picture. Two tests, one per half.
-(`makeBoxResizable` forwards its clamp args by spread; a wrapper that names four
-parameters silently drops `want` and the fix goes quiet.)
+show more than the picture.
+
+**Measure a locked drag from a rect that already holds the ratio** (`base` in
+`makeBoxResizable`: the largest ratio-holding rect *inside* the starting rect).
+This is the second, larger half of the same bug, and it hides behind the first
+because it needs a window that *isn't* already on the locked ratio — which is
+most of them. A locked drag can only ever land on sizes on its own ratio, so
+deltas taken from a free starting rect spend their opening stretch walking to
+that ratio and buy nothing: hold the square lock on a 240×120 window and the box
+*has* to become 120×120, so the first 120px of horizontal drag lands on 120×120
+whichever way it goes — the long edge is numb for half the picture's width while
+the short one, already on ratio, tracks the pointer from the first pixel. Users
+report the two faces separately ("it doesn't expand on one of those edges" and
+"the long edge snaps down when I drag too far") and they are one arithmetic
+error. With `base`, the snap to ratio happens once, up front, and every pixel
+after it moves something; unlocked, and on an ordinary resize where the lock *is*
+the box's own ratio, `base` is the starting rect and nothing changes. The
+"did this frame achieve anything" test in `clampCropBox` measures against `base`
+for the same reason — against the free rect it never fires on a lopsided window,
+because the ratio snap alone already changed the size.
+
+**A size floor applies to the pair, not to each axis.** `Math.max(min, w)` per
+side squares off exactly the ratio the user is holding a key to keep, so a locked
+triangle crop dragged to the limit comes out isoceles. Both floors (the drag's
+and `fit`'s) use the smallest rect *on the ratio* that clears both minimums — a
+rect and not a scale factor, because a drag that runs the size through zero has
+no factor to give, and a negative one comes back out of a scale-to-fit *larger*.
+
+Four tests, one per half of each. `makeBoxResizable` hands its clamp one options
+bag rather than a positional tail: the list grew twice, and both times a wrapper
+that named its parameters silently dropped the new one — a fix that then looked
+like it did nothing at all.
 
 There is deliberately **no accept step**: every crop drag is an ordinary
 `commit()`, so undo walks back through them and nothing is provisional. Escape,

@@ -2938,21 +2938,43 @@
           if (ev.pointerId !== pid) return;
           const now = pointerWorld(ev);
           const dx = now.x - start.x, dy = now.y - start.y;
-          let w = dir.includes('e') ? o.w + dx : dir.includes('w') ? o.w - dx : o.w;
-          let h = dir.includes('s') ? o.h + dy : dir.includes('n') ? o.h - dy : o.h;
-          // What the pointer asked for on each axis independently, kept aside
-          // before the ratio lock overwrites one of them: a clamp that finds the
-          // dominant axis blocked needs to know what the OTHER axis wanted, or
-          // that half of the movement is simply lost (see clampCropBox).
-          const want = { w, h };
           // One aspect ratio to hold for this frame of the drag, or null for a
           // free rect — the caller decides from the direction and the live
           // modifier state, so "which key means what" lives with the node type
           // rather than in here. The dominant delta drives the other dimension,
           // so the pointer stays on the edge it grabbed.
           const lock = opts.lockAspect ? opts.lockAspect(ev, dir, aspect) : null;
+          // Measure the drag from a rect that ALREADY holds the ratio. A locked
+          // drag can only ever land on its own ratio, so deltas taken from a free
+          // starting rect spend their opening stretch walking to it and buy
+          // nothing: hold the square lock on a 240×120 crop window and the box has
+          // to become 120×120, so the first 120px of horizontal drag lands on
+          // 120×120 whichever way it goes — both directions identical, the handle
+          // dead — while the other axis, already on ratio, tracks the pointer from
+          // the first pixel. One axis live and one numb is the report this came
+          // from. `base` is the largest ratio-holding rect INSIDE the start, so the
+          // snap to ratio happens once, up front, and every pixel after it moves
+          // something. (Unlocked, and on an ordinary resize where the lock IS the
+          // box's own ratio, base is the start — nothing changes.)
+          const base = !lock || Math.abs(o.w - o.h * lock) < 0.5 ? o
+            : o.w > o.h * lock ? { w: o.h * lock, h: o.h } : { w: o.w, h: o.w / lock };
+          let w = dir.includes('e') ? base.w + dx : dir.includes('w') ? base.w - dx : base.w;
+          let h = dir.includes('s') ? base.h + dy : dir.includes('n') ? base.h - dy : base.h;
+          // What the pointer asked for on each axis independently, kept aside
+          // before the ratio lock overwrites one of them: a clamp that finds the
+          // dominant axis blocked needs to know what the OTHER axis wanted, or
+          // that half of the movement is simply lost (see clampCropBox).
+          const want = { w, h };
           if (lock) {
-            if (Math.abs(w - o.w) >= Math.abs(h - o.h)) h = w / lock; else w = h * lock;
+            if (Math.abs(w - base.w) >= Math.abs(h - base.h)) h = w / lock; else w = h * lock;
+            // Floor the PAIR, not each axis: clamping one side up to the minimum on
+            // its own breaks the very ratio the user is holding a key to keep, so a
+            // locked crop dragged down to the limit would go square on them. The
+            // floor is the smallest rect ON this ratio that clears both minimums —
+            // a rect rather than a scale factor because a drag that runs the size
+            // straight through zero has no factor to give.
+            const fw = Math.max(opts.minW, opts.minH * lock);
+            if (!(w >= fw)) { w = fw; h = fw / lock; }   // !( ) so NaN floors too
           }
           data.w = Math.max(opts.minW, Math.round(w));
           data.h = Math.max(opts.minH, Math.round(h));
@@ -2960,7 +2982,10 @@
           // pinned (a frame's contents keep their world positions).
           if (dir.includes('w')) data.x = o.x + o.w - data.w;
           if (dir.includes('n')) data.y = o.y + o.h - data.h;
-          if (opts.clamp) opts.clamp(data, o, dir, lock, want);
+          // One bag rather than a positional tail: this list has grown twice, and
+          // both times a wrapper that named its parameters silently dropped the new
+          // one — a fix that then looked like it did nothing at all.
+          if (opts.clamp) opts.clamp(data, o, { dir, lock, want, base });
           el.style.left = data.x + 'px';
           el.style.top = data.y + 'px';
           el.style.width = data.w + 'px';
@@ -3356,17 +3381,25 @@
   //
   // (It can't undershoot the minimum size: the box began inside the ghost, so the
   // room from an anchored edge is at least the box's own size.)
-  function clampCropBox(data, o, dir, lock, want) {
+  function clampCropBox(data, o, { dir, lock, want, base }) {
     const g = cropGhost;
     if (!g) return;
     const maxW = dir.includes('w') ? o.x + o.w - g.x : g.x + g.w - o.x;
     const maxH = dir.includes('n') ? o.y + o.h - g.y : g.y + g.h - o.y;
     if (lock) {
-      // Shrink both by one factor — capping the overshooting side alone would
-      // break the very ratio the user is holding a key to keep.
+      // Scale both by one factor — capping the overshooting side alone would
+      // break the very ratio the user is holding a key to keep, in either
+      // direction (see the paired floor in makeBoxResizable).
+      // Same paired floor as the drag itself, and it has to come first: the
+      // re-drive below can hand this a size the pointer ran past zero, and a
+      // negative one would come back out of `s` scaled UP.
+      const fw = Math.max(IMAGE_MIN_SIZE, IMAGE_MIN_SIZE * lock);
+      const floor = () => ({ w: fw, h: fw / lock });
       const fit = (w, h) => {
+        if (!(w > 0) || !(h > 0)) return floor();
         const s = Math.min(1, maxW / w, maxH / h);
-        return { w: Math.max(IMAGE_MIN_SIZE, w * s), h: Math.max(IMAGE_MIN_SIZE, h * s) };
+        w *= s; h *= s;
+        return w >= fw ? { w, h } : floor();
       };
       let r = fit(data.w, data.h);
       // That single factor has a failure mode of its own. The ratio is driven by
@@ -3377,9 +3410,13 @@
       // That is what made the four mixed diagonals — pushing one edge out while
       // pulling the other in — dead handles, but only with the modifier held.
       // So when the dominant axis has nowhere to go, re-drive from the other one.
-      const stuck = (v) => Math.round(v.w) === o.w && Math.round(v.h) === o.h;
+      //
+      // "Where we started" is the ratio-holding BASE, not the raw starting rect:
+      // measured against a free rect the test never fires on a non-square window,
+      // because the ratio snap alone already changed the size.
+      const stuck = (v) => Math.round(v.w) === Math.round(base.w) && Math.round(v.h) === Math.round(base.h);
       if (want && stuck(r)) {
-        const alt = Math.abs(want.w - o.w) >= Math.abs(want.h - o.h)
+        const alt = Math.abs(want.w - base.w) >= Math.abs(want.h - base.h)
           ? fit(want.h * lock, want.h)      // width was driving, and it's pinned
           : fit(want.w, want.w / lock);
         if (!stuck(alt)) r = alt;           // still nothing to give: leave it pinned

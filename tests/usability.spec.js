@@ -1500,17 +1500,21 @@ test('a modifier held while cropping keeps a circle round', { tag: '@cards' }, a
   await node.dblclick();
   let box = await node.boundingBox();
   await page.keyboard.down('Shift');
+  // A SHORT pull, deliberately: holding the lock on a 60×40 window snaps it to
+  // the biggest circle that fits (40×40) before the drag is worth anything, so a
+  // drag measured from the free 60 has to cover 20px before it moves a pixel.
+  // 10px used to land on exactly the same box as 10px the other way.
   await drag(page, { x: box.x + box.width, y: box.y + box.height },
-    { x: box.x + box.width - 22, y: box.y + box.height });   // pull x only
+    { x: box.x + box.width - 10, y: box.y + box.height });   // pull x only
   await page.keyboard.up('Shift');
   await expect(saved).toHaveText('saved');
 
   let rec = await imageRecord(page);
-  expect(rec.w).toBeCloseTo(38, 0);
+  expect(rec.w).toBeCloseTo(30, 0);                // 40 snapped-to-round, less the 10
   expect(rec.h).toBe(rec.w);                       // square box ⇒ the circle is round
   // and it is a crop, not a scale: the window shrank into the same picture
-  expect(rec.crop.w).toBeCloseTo(38 / 60, 2);
-  expect(rec.crop.h).toBeCloseTo(38 / 40, 2);
+  expect(rec.crop.w).toBeCloseTo(30 / 60, 2);
+  expect(rec.crop.h).toBeCloseTo(30 / 40, 2);
 
   // Dragging back out past the picture's edge must hold the ratio rather than
   // clamp one side flat — Ctrl stands in for Shift here, they're interchangeable.
@@ -1607,6 +1611,50 @@ test('pushing a crop handle past the picture is bounded, modifier or not', { tag
   }
 });
 
+// A locked drag can only ever land on sizes ON its ratio, so measuring the
+// pointer from the free starting rect makes the whole walk to that ratio free —
+// and invisible. Hold the square lock on a 240×120 crop window and the box has
+// to become 120×120, so the first 120px of horizontal drag lands on 120×120
+// whichever way it goes: that handle is numb for half the picture's width while
+// the vertical one, already on ratio, tracks the pointer from the first pixel.
+// One axis live and one dead is the report this came from, and it only shows on a
+// window that isn't already on the locked ratio — which is most of them.
+test('a locked crop drag answers both axes alike, from the first pixel', { tag: '@cards' }, async ({ page }) => {
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  const size = {};
+  for (const [name, dx, dy] of [['x', -20, 0], ['y', 0, -20], ['out', 40, 40]]) {
+    if (await node.count()) {
+      await page.keyboard.press('Escape');
+      await node.locator('.image-bar .card-delete').click();
+      await expect(node).toHaveCount(0);
+    }
+    await page.mouse.move(500, 400);
+    await pasteImage(page, 240, 120);                // landscape: NOT on the square lock
+    await expect(node).toHaveCount(1);
+    await expect(saved).toHaveText('saved');
+    await node.dblclick();
+    await expect(node).toHaveClass(/cropping/);
+    expect(await imageRecord(page)).toMatchObject({ w: 240, h: 120 });
+
+    const hb = await node.locator('.image-handle[data-dir="se"]').boundingBox();
+    const from = { x: hb.x + hb.width / 2, y: hb.y + hb.height / 2 };
+    await page.keyboard.down('Shift');
+    await drag(page, from, { x: from.x + dx, y: from.y + dy });
+    await page.keyboard.up('Shift');
+    await expect(saved).toHaveText('saved');
+
+    const rec = await imageRecord(page);
+    expect(rec.h, name).toBe(rec.w);                 // square whichever edge was pulled
+    size[name] = rec.w;
+  }
+  expect(size.x, 'the long edge must not be the numb one').toBe(size.y);
+  expect(size.x).toBe(100);                          // the 120 square that fits, less the 20
+  // Outward still stops at the picture, and stops on the BIGGEST square that
+  // fits rather than something smaller — the other half of the same complaint.
+  expect(size.out).toBe(120);
+});
+
 // "Regular" is not 1:1 for every shape: these polygons are percentages of the
 // box, and an equilateral triangle is only √3/2 as tall as it is wide.
 test('the crop modifier locks a triangle to equilateral, not to square', { tag: '@cards' }, async ({ page }) => {
@@ -1631,6 +1679,19 @@ test('the crop modifier locks a triangle to equilateral, not to square', { tag: 
   const rec = await imageRecord(page);
   expect(rec.w / rec.h).toBeCloseTo(2 / Math.sqrt(3), 1);
   expect(rec.w).not.toBe(rec.h);
+
+  // …including at the very bottom of the range. The size floor is a MINIMUM per
+  // axis, so applying it to each side on its own squares off exactly the ratio
+  // being held: pull this to the limit and the triangle would come out isoceles.
+  const box2 = await node.boundingBox();
+  await page.keyboard.down('Shift');
+  await drag(page, { x: box2.x + box2.width, y: box2.y + box2.height },
+    { x: box2.x + box2.width - 400, y: box2.y + box2.height - 400 });
+  await page.keyboard.up('Shift');
+  await expect(saved).toHaveText('saved');
+  const floored = await imageRecord(page);
+  expect(floored.w / floored.h).toBeCloseTo(2 / Math.sqrt(3), 1);
+  expect(Math.min(floored.w, floored.h)).toBe(24);   // and it did reach the floor
 });
 
 // The dimmed surround is the picture, so dragging it pans. It used to take no

@@ -136,7 +136,10 @@ keeping:
   equilateral, and anything rectangular stays square. Note this is the
   reverse of its job on an ordinary resize, where the proportions are
   already held and the modifier releases them — a crop starts free, so
-  there the modifier is what constrains it;
+  there the modifier is what constrains it. Expect the window to *jump* the
+  moment you hold the key on a lopsided one: a square can't be wider than
+  the picture is tall, so it snaps to the biggest one that fits and drags
+  from there;
 - **arrow keys** pan it too, so cropping works without a mouse.
 - **Esc** (or **Enter**, or a click away from the picture) finishes.
 
