@@ -416,6 +416,21 @@ The image node has **no CSS border** for this reason: a border insets the clip
 box (and with it the `<img>` the crop positions) by a pixel per side, which both
 skews the crop and leaves a visible seam between the ghost and the window. Every
 ring on it is a `box-shadow`, painted outside the box.
+
+**Depth is a `drop-shadow` one element out from the mask.** A `box-shadow` only
+knows the node's rectangle, so a circle or a transparent PNG got a hard-edged
+rectangle behind it; a `drop-shadow` traces the alpha of what is actually painted
+— the crop window (the `overflow: hidden` clip *does* reach the filter's input),
+the shape mask, and the picture's own transparency. It needs its own element,
+`.image-shade` wrapping `.image-clip`, because **filters paint before clipping**:
+put both on one element and the clip cuts the shadow away to nothing. Only the
+picture may live inside the shade — wrap the handles or the bar and the silhouette
+is a rectangle again. Collapsing those two divs is a silent regression (no shadow
+at all), so a test asserts the nesting and that `.image-clip` carries no filter of
+its own. The shadow is off while cropping, where it would land on the ghost
+instead of the board and read as grime rather than lift. The **rings stay
+rectangular** on purpose: they mark the box the handles resize, which is a
+rectangle even when the picture is a star.
 - **Data URIs still exist at exactly two boundaries** — a board written before
   the asset store (hoisted by `migrateInlineImages` *after* first paint,
   version-bumped like `migrateLegacyDockMembers` and deliberately not a

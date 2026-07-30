@@ -1214,6 +1214,40 @@ test('the Image tool adds pictures from a file', { tag: '@cards' }, async ({ pag
   await expect(page.locator('#saveState')).toHaveText('saved');
 });
 
+// Depth traces the visible picture, not the node's rectangle — and the ONLY
+// thing keeping that true is that the shadow sits one element out from the mask.
+// Filters paint before clipping, so a drop-shadow on the clipped element itself
+// is clipped away to nothing; collapsing these two divs would silently leave
+// every image with no shadow at all, which no screenshot-free test would notice.
+test('an image casts its shadow outside its mask, not around its box', { tag: '@cards' }, async ({ page }) => {
+  await pasteImage(page);
+  const node = page.locator('.node.image-node');
+  await expect(node).toHaveCount(1);
+
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="circle"]').click();
+  await expect(node).toHaveAttribute('data-shape', 'circle');
+  // Deselect and let the ring finish fading — mid-transition it still computes
+  // to a shadow, so this has to be the retrying assertion, not a snapshot read.
+  await page.mouse.click(600, 500);
+  await expect(node).toHaveCSS('box-shadow', 'none');      // no rectangle behind the circle
+
+  const geom = await node.evaluate((el) => {
+    const shade = el.querySelector('.image-shade');
+    const clip = el.querySelector('.image-clip');
+    return {
+      shadow: getComputedStyle(shade).filter,
+      nested: shade.contains(clip) && shade !== clip,
+      clipFilter: getComputedStyle(clip).filter,          // must stay none, or the clip eats it
+      masked: getComputedStyle(clip).clipPath,
+    };
+  });
+  expect(geom.shadow).toMatch(/drop-shadow/);
+  expect(geom.nested).toBe(true);
+  expect(geom.clipFilter).toBe('none');
+  expect(geom.masked).not.toBe('none');
+});
+
 // Shapes are a MASK: the box and the bytes are untouched, so Rectangle brings
 // the whole picture back. The record carries only a key — the geometry is CSS,
 // shared with the menu's preview chips.

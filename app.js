@@ -3047,8 +3047,11 @@
       el.dataset.id = id;
       // The bar sits outside the box (above it), so it stays legible on a
       // 24px-tall image and never covers the picture it describes.
+      // .image-shade exists only to cast the shadow: a filter and a clip-path on
+      // the SAME element would have the clip cut the shadow away (filters paint
+      // before clipping), so the shadow has to sit one level out from .image-clip.
       el.innerHTML = `
-        <div class="image-clip"><img class="image-src" alt="" draggable="false"></div>
+        <div class="image-shade"><div class="image-clip"><img class="image-src" alt="" draggable="false"></div></div>
         <div class="image-bar">
           <span class="image-label" title="Double-click to rename" spellcheck="false"></span>
           <button class="copy-link icon-btn" title="Copy link to this image" aria-label="Copy link to this image"><span class="icon icon-tag"></span></button>

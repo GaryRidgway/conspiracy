@@ -260,11 +260,26 @@ body.space-pan #viewport.panning,
 .image-node {
   position: absolute;
   border-radius: 8px;
-  box-shadow: 0 6px 22px rgba(0,0,0,0.35);
   cursor: grab;
   transition: box-shadow 0.12s;
 }
 .image-node.dragging { cursor: grabbing; }
+/* Depth is a drop-shadow, not a box-shadow, so it traces what you can actually
+   see: the crop window, the shape mask, and the picture's own alpha. A
+   box-shadow only knows the node's rectangle, which put a hard-edged rectangle
+   behind every circle and every transparent PNG.
+   It gets its own element because filters paint BEFORE clipping — a filter and
+   a clip-path on one element means the clip cuts the shadow away entirely. So
+   .image-clip clips and .image-shade, one level out, shadows the clipped result.
+   Only the picture lives in here: a shade wrapped around the handles and the bar
+   would be back to tracing a rectangle. */
+.image-node .image-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;      /* passes 8px down the chain to .image-clip */
+  filter: drop-shadow(0 6px 22px rgba(0,0,0,0.35));
+  transition: filter 0.12s;
+}
 .image-node .image-clip {
   position: absolute;
   inset: 0;
@@ -298,11 +313,13 @@ body.space-pan #viewport.panning,
                   50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
 }
 .image-node .image-clip { clip-path: var(--clip, none); }
-.image-node.selected { box-shadow: 0 0 0 2px var(--accent), 0 8px 26px rgba(0,0,0,0.45); }
-.image-node.colored { box-shadow: 0 0 0 2px var(--node-color), 0 6px 22px rgba(0,0,0,0.35); }
-.image-node.colored.selected {
-  box-shadow: 0 0 0 2px var(--node-color-hi), 0 8px 26px rgba(0,0,0,0.45);
-}
+/* The rings stay rectangular on purpose — they mark the BOX, which is what the
+   handles resize and the crop window frames, and that box is a rectangle even
+   when the picture inside it is a star. Only the depth follows the silhouette. */
+.image-node.selected { box-shadow: 0 0 0 2px var(--accent); }
+.image-node.colored { box-shadow: 0 0 0 2px var(--node-color); }
+.image-node.colored.selected { box-shadow: 0 0 0 2px var(--node-color-hi); }
+.image-node.selected .image-shade { filter: drop-shadow(0 8px 26px rgba(0,0,0,0.45)); }
 /* Bytes not on this device (synced ahead of its images, or an evicted store).
    The stored box holds the layout, so nothing jumps when they land. */
 .image-node.asset-missing .image-clip {
@@ -355,6 +372,11 @@ body.space-pan #viewport.panning,
    to the dimmed ghost behind, which is exactly what's being cut away. */
 /* No cursor to derive nearness from during a crop: light every handle. */
 .image-node.cropping .image-corner { opacity: 1; }
+/* The window's shadow would land on the ghost rather than on the board — depth
+   over your own picture reads as grime, not lift. (The box-shadow this replaced
+   was hidden here too: the ghost always covers the window, so it painted over
+   it.) */
+.image-node.cropping .image-shade { filter: none; }
 
 /* Bar above the box: label + actions, revealed on hover or selection (tap to
    select is the touch route — there is no hover there). */
