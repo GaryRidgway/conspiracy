@@ -1809,6 +1809,69 @@ test('overshooting a crop keeps the anchored edge still and stays draggable', { 
   expect((await imageRecord(page)).w).toBeCloseTo(start.w - 30, 0);
 });
 
+// The same round trip for the two gestures the test above doesn't cover: a LOCKED
+// handle, whose ratio baseline is re-derived from the live modifier state on every
+// frame, and the pan, which moves the ghost instead of the box. Both saturate
+// against a clamp while the pointer is away, so the question is whether coming
+// back is lossless — every crop gesture recomputes absolutely from an origin
+// pinned at the press, and nothing may re-base on a clamped value. Returning to
+// the exact press point must restore the box exactly, or a detour costs the user
+// an offset they can only clear by releasing and starting over.
+test('a crop gesture that leaves the picture and comes back does not drift', { tag: '@cards' }, async ({ page }) => {
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  const ghostOff = () => node.locator('.crop-layer').evaluate((el) =>
+    `${Math.round(parseFloat(el.style.left))},${Math.round(parseFloat(el.style.top))}`);
+
+  for (const grab of ['handle', 'pan']) {
+    if (await node.count()) {
+      await page.keyboard.press('Escape');
+      await node.locator('.image-bar .card-delete').click();
+      await expect(node).toHaveCount(0);
+    }
+    await page.mouse.move(400, 300);
+    await pasteImage(page, 240, 120);
+    await expect(node).toHaveCount(1);
+    await expect(saved).toHaveText('saved');
+    await node.dblclick();
+    await expect(node).toHaveClass(/cropping/);
+    // Inset the window first: a full-extent one has nothing to pan and nothing to
+    // grow into, so a no-op would pass this test without testing anything.
+    for (const [dir, dx, dy] of [['nw', 20, 12], ['se', -20, -12]]) {
+      const b = await node.locator(`.image-handle[data-dir="${dir}"]`).boundingBox();
+      await drag(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 },
+        { x: b.x + b.width / 2 + dx, y: b.y + b.height / 2 + dy });
+    }
+    await expect(saved).toHaveText('saved');
+
+    let from;
+    if (grab === 'handle') {
+      const hb = await node.locator('.image-handle[data-dir="se"]').boundingBox();
+      from = { x: hb.x + hb.width / 2, y: hb.y + hb.height / 2 };
+      await page.keyboard.down('Shift');
+    } else {
+      const bb = await node.boundingBox();
+      from = { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 };
+    }
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 1, from.y + 1, { steps: 2 });   // let the lock bite
+    await page.mouse.move(from.x, from.y, { steps: 2 });
+    const start = [await nodePos(node), await ghostOff()];
+
+    await page.mouse.move(from.x + 400, from.y + 400, { steps: 8 });
+    const out = [await nodePos(node), await ghostOff()];
+    expect(out, `${grab}: the detour has to actually move something`).not.toEqual(start);
+
+    await page.mouse.move(from.x, from.y, { steps: 8 });
+    expect(await nodePos(node), `${grab}: box drifted`).toEqual(start[0]);
+    expect(await ghostOff(), `${grab}: picture drifted`).toEqual(start[1]);
+    await page.mouse.up();
+    if (grab === 'handle') await page.keyboard.up('Shift');
+    await expect(saved).toHaveText('saved');
+  }
+});
+
 // The shape is what you're framing, so it has to be visible while you frame it.
 test('a shape mask stays visible while cropping', { tag: '@cards' }, async ({ page }) => {
   await pasteImage(page);

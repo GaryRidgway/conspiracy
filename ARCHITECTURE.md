@@ -463,6 +463,20 @@ bag rather than a positional tail: the list grew twice, and both times a wrapper
 that named its parameters silently dropped the new one — a fix that then looked
 like it did nothing at all.
 
+**No crop gesture may accumulate.** Every one of them computes its result as an
+absolute function of the current pointer position against an origin pinned at the
+press — `o` and `start` in `makeBoxResizable`, `o` in `startCropPan`, and a
+`cropGhost` derived once on entry. Nothing re-bases on the clamped result. That is
+what makes leaving the picture and coming back lossless: the clamp saturates while
+the pointer is away and releases cleanly, so returning to the press point restores
+the box exactly. Re-basing per frame is the tempting way to write any of these
+loops and it converts every clamped excursion into a permanent offset the user can
+only clear by releasing and starting the gesture over. Verified across three zoom
+levels, both modifier states, both anchors, and detours in both directions
+(outward past the picture and inward past the size floor); the `round4` on `crop`
+is the model's only lossy step and it settles after one enter/exit rather than
+walking. Two tests: the unlocked edge handle, and the locked handle plus the pan.
+
 There is deliberately **no accept step**: every crop drag is an ordinary
 `commit()`, so undo walks back through them and nothing is provisional. Escape,
 Enter and a click away only leave the mode. The ghost is derived *once* on entry
