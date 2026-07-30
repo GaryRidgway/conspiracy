@@ -2814,6 +2814,7 @@ const GIS_STUB = `
       return { requestAccessToken(opts) {
         // prompt:'' is our interactive ask; prompt:'none' is the silent one
         window.__gis.calls.push((opts && opts.prompt) === 'none' ? 'silent' : 'interactive');
+        if (window.__order) window.__order.push('drive:token');   // ordering tests
         if (window.__gis.grant) cfg.callback({ access_token: 'stub-token', expires_in: 3600 });
         // A definitive answer arrives on the normal callback as resp.error; a
         // request that never got through arrives on error_callback as a type.
@@ -2894,19 +2895,44 @@ test('a local-only user gets no Drive chip and no Google scripts',
     expect(await page.locator('script[src*="google"]').count()).toBe(0);
   });
 
-// A browser allows one popup per user gesture, and this hook gets there FIRST —
-// it rides pointerdown in the capture phase, while what the user clicked runs on
-// the click after. So Google's token flow spent the allowance and the app's own
-// window.open returned null: clicking a URL button as your first action on the
-// page opened nothing, with no error anywhere to explain it. Deferring the click
-// until Drive finishes cannot fix that (activation doesn't survive an await), so
-// the reconnect yields the gesture instead — it's the opportunistic one.
-test('a click that needs the popup is left to the app, and Drive takes the next gesture',
-  { tag: ['@boards', '@buttons'] }, async ({ page }) => {
-    const opened = [];
-    await page.exposeFunction('__recordOpen', (u) => { opened.push(u); });
-    await page.addInitScript(() => { window.open = (u) => { window.__recordOpen(u); return null; }; });
+// A browser allows ONE popup and ONE file chooser per user gesture, so whoever
+// asks first wins. On capture-phase pointerdown this hook always got there before
+// the thing the user actually clicked, and Google's token flow ate the allowance:
+// the palette's Image button opened no file picker, a URL-linked button opened no
+// tab, and nothing anywhere said why. Deferring the CLICK until Drive finishes
+// can't fix it either — activation doesn't survive an await. So the reconnect
+// goes last instead, and these pin the ordering rather than any list of controls.
+//
+// Records both sides into one array: the app's activation-hungry calls, and the
+// GIS stub's token request (see GIS_STUB).
+async function trackGestureOrder(page) {
+  await page.addInitScript(() => {
+    window.__order = [];
+    window.open = (u) => { window.__order.push('app:open'); return null; };
+    // Recorded, not called through — a real chooser would hang the run, and it's
+    // reaching input.click() at all that proves the app got the gesture.
+    HTMLInputElement.prototype.click = function () {
+      if (this.type === 'file') window.__order.push('app:filepicker:' + this.id);
+    };
+  });
+}
+const gestureOrder = (page) => page.evaluate(() => window.__order);
 
+test('the palette Image button gets the gesture before Drive does',
+  { tag: ['@boards', '@chrome'] }, async ({ page }) => {
+    await trackGestureOrder(page);
+    await bootOptedIn(page, { grant: true });
+
+    await page.click('#addImage');
+    await expect.poll(() => gisCalls(page)).toEqual(['silent']);      // Drive still reconnects…
+    expect(await gestureOrder(page))
+      .toEqual(['app:filepicker:imageFile', 'drive:token']);          // …but only after the picker
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+  });
+
+test('a URL button gets the gesture before Drive does',
+  { tag: ['@boards', '@buttons'] }, async ({ page }) => {
+    await trackGestureOrder(page);
     await page.click('#addButton');
     await expect(page.locator('#button-link-modal')).toBeVisible();
     await page.fill('#bl-input', 'https://example.com/thing');
@@ -2916,36 +2942,8 @@ test('a click that needs the popup is left to the app, and Drive takes the next 
 
     await bootOptedIn(page, { grant: true });
     await page.locator('.btn-node').click();
-    expect(opened).toEqual(['https://example.com/thing']);   // the app's popup, uncontested
-    expect(await gisCalls(page)).toEqual([]);                // Drive didn't touch this gesture
-    await expect(page.locator('#driveReconnectBtn')).toBeVisible();
-
-    // …and it stays armed, so the next input reconnects as usual
-    await page.mouse.click(700, 500);
-    expect(await gisCalls(page)).toEqual(['silent']);
-    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
-  });
-
-// The yield is scoped to gestures that actually compete. A button that jumps to a
-// board item opens no window, so it must NOT delay the reconnect — otherwise the
-// carve-out grows until the hook never fires.
-test('a click that needs no popup still gives Drive the gesture',
-  { tag: ['@boards', '@buttons'] }, async ({ page }) => {
-    const card = await addCardAt(page, 450, 350);
-    await card.locator('.card-title').dblclick();
-    await page.keyboard.type('Target');
-    await page.keyboard.press('Enter');
-    await page.click('#addButton');
-    await expect(page.locator('#button-link-modal')).toBeVisible();
-    await page.keyboard.type('Target');
-    await expect(page.locator('#button-link-modal .np-item')).toHaveCount(1);
-    await page.locator('#button-link-modal .np-item').click();
-    await expect(page.locator('#saveState')).toHaveText('saved');
-
-    await bootOptedIn(page, { grant: true });
-    await page.locator('.btn-node').click();
-    expect(await gisCalls(page)).toEqual(['silent']);
-    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+    await expect.poll(() => gisCalls(page)).toEqual(['silent']);
+    expect(await gestureOrder(page)).toEqual(['app:open', 'drive:token']);
   });
 
 // The chip is the fallback for when silent reconnect CAN'T work — a revoked

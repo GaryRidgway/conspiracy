@@ -8098,61 +8098,50 @@
   // Only DISCRETE input grants transient activation. mousemove, wheel, scroll and
   // focus are continuous and grant none, so hooking them would reproduce exactly
   // the blocked popup that keeping this off page load was meant to avoid.
-  // Just these two: pointerdown already covers mouse, touch and pen, and a
-  // right-click fires its own pointerdown before contextmenu. Adding the
-  // redundant ones means ONE user action fires the hook twice, which after a
-  // failure spends two retries on a single click.
-  const DRIVE_GESTURE_EVENTS = ['pointerdown', 'keydown'];
+  //
+  // These two, and — load-bearing — they are read AFTER the app has had the
+  // gesture, not before. A browser allows one popup per gesture and one file
+  // chooser per gesture, so whoever asks first wins: on capture-phase
+  // `pointerdown` this hook always got there before the thing the user actually
+  // clicked, and Google's token flow quietly ate the allowance. The palette's
+  // Image button opened no file picker, a URL-linked button opened no tab, and
+  // nothing anywhere said why. Enumerating which controls need it is a list that
+  // rots (file pickers, downloads, popups, clipboard writes, Drive's own Connect);
+  // going last is one rule that covers all of them, including ones not written
+  // yet. `click` rather than `pointerdown`, and BUBBLE phase rather than capture,
+  // so the target's own handlers run first.
+  //
+  // Losing the race is now the expected case, not a failure: a blocked token
+  // request comes back `popup_failed_to_open`, which RETRYABLE_AUTH_ERRORS
+  // already re-arms for, so the reconnect simply rides the next gesture.
+  //
+  // `contextmenu` is in the set because a right-click fires no `click`, and it
+  // can't double-fire the way it would have alongside `pointerdown` — one user
+  // action produces one or the other, never both. (A double-click does fire two
+  // clicks, but the first disarms the hook, so it still spends one attempt.)
+  const DRIVE_GESTURE_EVENTS = ['click', 'contextmenu', 'keydown'];
   // Chrome grants no activation for a modifier-only keydown, and Shift+Tab is a
   // keyboard user's opening keystroke about as often as bare Tab — so the Shift
   // half would spend an attempt on a press that cannot possibly succeed.
   const BARE_MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 
-  // A gesture the APP itself is about to need is not ours to spend.
-  //
-  // A browser allows one popup per user gesture, and this hook runs FIRST — it's
-  // on pointerdown, in the capture phase, while the thing the user actually
-  // clicked runs on the click that follows. So Google's token flow used up the
-  // allowance and the app's own window.open came back null: click a button
-  // linked to a URL as your first action on the page and the tab just never
-  // opened, with nothing anywhere to say why.
-  //
-  // Deferring the action instead — running it once Drive finishes — cannot work:
-  // activation does not survive an await, so the banked window.open would be
-  // blocked exactly the same way. Yielding is what works, and it costs nothing.
-  // Reconnect is opportunistic (it rides whatever gesture comes along); opening
-  // the link the user just clicked is not. The hook stays armed, so any other
-  // input — a pan, a keypress, selecting anything — still reconnects.
-  function gestureNeedsThePopup(target) {
-    if (!target || !target.closest) return false;
-    // An external link in a card body. A node link (data-node) navigates in
-    // place and needs no window, so it isn't competing for anything.
-    const a = target.closest('a[href]');
-    if (a && !a.dataset.node && /^https?:/i.test(a.getAttribute('href') || '')) return true;
-    // A button — canvas node or pinned chip, same class and dataset — whose
-    // action opens a URL. Same deep-link exception as runButtonAction.
-    const btn = target.closest('.btn-node');
-    const act = btn && board.cards[btn.dataset.id] && board.cards[btn.dataset.id].action;
-    return !!(act && act.type === 'url' && act.target &&
-      !(deepLinkNodeId(act.target) && getNode(deepLinkNodeId(act.target))));
-  }
-
   function onDriveGesture(e) {
     if (e.type === 'keydown' && BARE_MODIFIER_KEYS.has(e.key)) return;
-    if (e.type === 'pointerdown' && gestureNeedsThePopup(e.target)) return;   // stay armed
     disarmDriveGestureHook();
     tryDriveSilentReconnect();
   }
   function armDriveGestureHook() {
-    // Passive + capture: this observes, it never intercepts. CLAUDE.md's
-    // onCanvas/editing rule guards handlers that CONSUME keys; this one doesn't
-    // preventDefault, so it can safely fire from a text field or chrome focus.
+    // Passive, and bubble phase on window — the last stop, so every handler the
+    // app has for this gesture has already run (see DRIVE_GESTURE_EVENTS). This
+    // observes, it never intercepts: CLAUDE.md's onCanvas/editing rule guards
+    // handlers that CONSUME keys, and this one doesn't preventDefault, so it's
+    // safe from a text field or chrome focus.
     for (const ev of DRIVE_GESTURE_EVENTS)
-      window.addEventListener(ev, onDriveGesture, { capture: true, passive: true });
+      window.addEventListener(ev, onDriveGesture, { passive: true });
   }
   function disarmDriveGestureHook() {
     for (const ev of DRIVE_GESTURE_EVENTS)
-      window.removeEventListener(ev, onDriveGesture, { capture: true });
+      window.removeEventListener(ev, onDriveGesture);
   }
 
   if (driveConnectBtn) {

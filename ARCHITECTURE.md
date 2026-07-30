@@ -648,22 +648,26 @@ Invariants that took real bugs to learn — keep them:
    - Skip **modifier-only** keydowns (`Shift`, `Control`, …). Chrome grants no
      activation for them, and Shift+Tab is a keyboard user's opening keystroke —
      firing on the Shift half spends the attempt on a press that cannot succeed.
-   - Keep the event set **minimal**. `pointerdown` covers mouse, touch and pen,
-     and `contextmenu` is preceded by its own `pointerdown`; adding `pointerup`
-     or `contextmenu` makes one user action fire the hook twice, which after a
-     failure spends two retries on a single click.
-   - **Yield a gesture the app itself needs** (`gestureNeedsThePopup`). A browser
-     allows one popup per gesture, and this hook gets there first — capture-phase
-     `pointerdown`, while what the user clicked runs on the following `click`. So
-     Google's token flow spent the allowance and the app's own `window.open`
-     returned null: clicking a URL-linked button as your first action on the page
-     opened nothing, with no error anywhere. Deferring the *click* until Drive
-     finishes cannot fix this — activation does not survive an `await`, so a
-     banked `window.open` is blocked identically. The reconnect yields instead,
-     because it is the opportunistic half; the hook stays armed, so any other
-     input still reconnects. Keep the carve-out narrow (a URL action, an external
-     link — not a node target, which opens no window): widen it and the hook
-     stops firing at all.
+   - **Go LAST, never first.** A browser allows one popup *and* one file chooser
+     per gesture, so whoever asks first wins. This hook used to ride capture-phase
+     `pointerdown`, which put it ahead of the thing the user actually clicked:
+     Google's token flow ate the allowance, and the palette's Image button opened
+     no file picker while a URL-linked button opened no tab — silently, with
+     nothing logged. Deferring the *click* until Drive finishes cannot fix that
+     either, because activation does not survive an `await` (a banked
+     `window.open` is blocked identically). So the events are `click` /
+     `contextmenu` / `keydown` in the **bubble** phase on `window` — the last
+     stop, after every handler the app has. Enumerating which controls need the
+     allowance is a list that rots (file pickers, downloads, popups, clipboard
+     writes, Drive's own Connect button); going last is one rule that covers all
+     of them, including ones not written yet. Losing the race is then the expected
+     case, not a failure: `popup_failed_to_open` is already retryable, so the
+     reconnect rides the next gesture. Two tests pin the ordering.
+   - Keep the event set **minimal**, and mind the double-fire: one user action
+     must not spend two attempts. `click` covers mouse, touch, pen and Enter on a
+     focused control; `contextmenu` is there because a right-click fires no
+     `click`, and the two are mutually exclusive. Adding `pointerdown` or
+     `pointerup` back alongside them would fire the hook twice per click.
 
    `RETRYABLE_AUTH_ERRORS` separates "the request never reached Google"
    (`popup_failed_to_open`, re-arm and retry, bounded by
