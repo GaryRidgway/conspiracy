@@ -900,17 +900,17 @@ test('arrow keys move the highlight in the button-link modal, and Enter follows 
 // Paste a screenshot on the canvas → it becomes an image NODE referencing the
 // bytes (downscaled into the asset store, no remote fetch), which persists like
 // any card. The bytes never enter the board JSON — see the IMAGE ASSETS banner.
-async function pasteImage(page) {
-  await page.evaluate(async () => {
+async function pasteImage(page, w = 60, h = 40) {
+  await page.evaluate(async ([w, h]) => {
     const canvas = document.createElement('canvas');
-    canvas.width = 60; canvas.height = 40;
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#F87171'; ctx.fillRect(0, 0, 60, 40);
+    ctx.fillStyle = '#F87171'; ctx.fillRect(0, 0, w, h);
     const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
     const dt = new DataTransfer();
     dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
     document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  });
+  }, [w, h]);
 }
 
 test('pasting an image on the canvas creates an image node that persists', { tag: '@cards' }, async ({ page }) => {
@@ -1477,6 +1477,88 @@ test('a modifier held while cropping keeps a circle round', { tag: '@cards' }, a
   rec = await imageRecord(page);
   expect(rec.h).toBe(rec.w);                       // still square at the boundary
   expect(rec.h).toBeLessThanOrEqual(40);           // and still inside the picture
+});
+
+// Holding the modifier must never make a handle DEAD that works without it.
+// It could: the ratio is driven by whichever axis the pointer moved most, and if
+// that axis is flush against the picture the uniform scale-back that keeps the
+// ratio lands on exactly the starting size — so the drag did nothing, and the
+// other axis's movement went with it. That killed the four mixed diagonals
+// (push one edge out, pull the other in) on any square crop, and only with the
+// modifier down, which is a maddening thing to report and an easy one to
+// reintroduce. Needs a SQUARE source: with a 60×40 box a ratio-1 lock has to
+// resize anyway on the first move, which hides it.
+test('a blocked axis does not make the modifier eat the whole crop drag', { tag: '@cards' }, async ({ page }) => {
+  await page.mouse.move(400, 300);
+  await pasteImage(page, 120, 120);
+  const node = page.locator('.node.image-node');
+  const saved = page.locator('#saveState');
+  await expect(node).toHaveCount(1);
+  await expect(saved).toHaveText('saved');
+  await node.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-shape[data-shape="circle"]').click();
+  await expect(saved).toHaveText('saved');
+
+  // Each of these pushes one edge OUT (blocked — the window already shows the
+  // whole picture) while pulling the other IN, which has room. The in-half must
+  // win rather than the pair cancelling.
+  const MIXED = { nw: [-20, 20], ne: [20, 20], sw: [-20, -20], se: [20, -20] };
+  for (const [dir, [dx, dy]] of Object.entries(MIXED)) {
+    await page.locator('.node.image-node .image-bar .card-delete').click();   // start clean
+    await expect(node).toHaveCount(0);
+    await page.mouse.move(400, 300);
+    await pasteImage(page, 120, 120);
+    await expect(node).toHaveCount(1);
+    await expect(saved).toHaveText('saved');
+    await node.dblclick();
+    await expect(node).toHaveClass(/cropping/);
+    const before = await imageRecord(page);
+    expect(before.w).toBe(before.h);                    // square, so the lock bites
+
+    const hb = await node.locator(`.image-handle[data-dir="${dir}"]`).boundingBox();
+    const from = { x: hb.x + hb.width / 2, y: hb.y + hb.height / 2 };
+    await page.keyboard.down('Shift');
+    await drag(page, from, { x: from.x + dx, y: from.y + dy });
+    await page.keyboard.up('Shift');
+    await expect(saved).toHaveText('saved');
+
+    const after = await imageRecord(page);
+    expect(after.w, `${dir} must not be a dead handle`).toBeLessThan(before.w);
+    expect(after.h).toBe(after.w);                      // and still a true circle
+    await page.keyboard.press('Escape');
+  }
+});
+
+// The flip side: a push with nowhere to go stays put, and stays put the SAME way
+// with the modifier as without it. That bound is the crop model — the window can
+// never show more than the picture — so it must not quietly become a resize.
+test('pushing a crop handle past the picture is bounded, modifier or not', { tag: '@cards' }, async ({ page }) => {
+  for (const mod of [false, true]) {
+    await page.mouse.move(400, 300);
+    await pasteImage(page, 120, 120);
+    const node = page.locator('.node.image-node');
+    const saved = page.locator('#saveState');
+    await expect(node).toHaveCount(1);
+    await expect(saved).toHaveText('saved');
+    await node.dblclick();
+    await expect(node).toHaveClass(/cropping/);
+    const before = await imageRecord(page);
+
+    // SE outward on both axes: nothing left to reveal in either direction
+    const hb = await node.locator('.image-handle[data-dir="se"]').boundingBox();
+    const from = { x: hb.x + hb.width / 2, y: hb.y + hb.height / 2 };
+    if (mod) await page.keyboard.down('Shift');
+    await drag(page, from, { x: from.x + 40, y: from.y + 40 });
+    if (mod) await page.keyboard.up('Shift');
+    await expect(saved).toHaveText('saved');
+
+    const after = await imageRecord(page);
+    expect([after.w, after.h], `modifier=${mod}`).toEqual([before.w, before.h]);
+    expect(after.crop).toBeUndefined();                 // still the whole picture
+    await page.keyboard.press('Escape');
+    await node.locator('.image-bar .card-delete').click();
+    await expect(node).toHaveCount(0);
+  }
 });
 
 // "Regular" is not 1:1 for every shape: these polygons are percentages of the

@@ -2940,6 +2940,11 @@
           const dx = now.x - start.x, dy = now.y - start.y;
           let w = dir.includes('e') ? o.w + dx : dir.includes('w') ? o.w - dx : o.w;
           let h = dir.includes('s') ? o.h + dy : dir.includes('n') ? o.h - dy : o.h;
+          // What the pointer asked for on each axis independently, kept aside
+          // before the ratio lock overwrites one of them: a clamp that finds the
+          // dominant axis blocked needs to know what the OTHER axis wanted, or
+          // that half of the movement is simply lost (see clampCropBox).
+          const want = { w, h };
           // One aspect ratio to hold for this frame of the drag, or null for a
           // free rect — the caller decides from the direction and the live
           // modifier state, so "which key means what" lives with the node type
@@ -2955,7 +2960,7 @@
           // pinned (a frame's contents keep their world positions).
           if (dir.includes('w')) data.x = o.x + o.w - data.w;
           if (dir.includes('n')) data.y = o.y + o.h - data.h;
-          if (opts.clamp) opts.clamp(data, o, dir, lock);
+          if (opts.clamp) opts.clamp(data, o, dir, lock, want);
           el.style.left = data.x + 'px';
           el.style.top = data.y + 'px';
           el.style.width = data.w + 'px';
@@ -3206,7 +3211,7 @@
         if (cropId === id) return mod ? shapeRatio(board.cards[id]) : null;
         return dir.length === 2 && !mod ? boxAspect : null;
       },
-      clamp: (data, o, dir, lock) => { if (cropId === id) clampCropBox(data, o, dir, lock); },
+      clamp: (...args) => { if (cropId === id) clampCropBox(...args); },
       onResize: () => {
         if (cropId === id) updateCrop(id);
         redrawConnectionsFor(id);
@@ -3351,7 +3356,7 @@
   //
   // (It can't undershoot the minimum size: the box began inside the ghost, so the
   // room from an anchored edge is at least the box's own size.)
-  function clampCropBox(data, o, dir, lock) {
+  function clampCropBox(data, o, dir, lock, want) {
     const g = cropGhost;
     if (!g) return;
     const maxW = dir.includes('w') ? o.x + o.w - g.x : g.x + g.w - o.x;
@@ -3359,9 +3364,28 @@
     if (lock) {
       // Shrink both by one factor — capping the overshooting side alone would
       // break the very ratio the user is holding a key to keep.
-      const s = Math.min(1, maxW / data.w, maxH / data.h);
-      data.w *= s;
-      data.h *= s;
+      const fit = (w, h) => {
+        const s = Math.min(1, maxW / w, maxH / h);
+        return { w: Math.max(IMAGE_MIN_SIZE, w * s), h: Math.max(IMAGE_MIN_SIZE, h * s) };
+      };
+      let r = fit(data.w, data.h);
+      // That single factor has a failure mode of its own. The ratio is driven by
+      // whichever axis the pointer moved MOST; if that axis is already flush
+      // against the picture, scaling back to fit lands on exactly the size we
+      // started at — so the drag does nothing at all, and the movement on the
+      // other axis (which may have had plenty of room) is thrown away with it.
+      // That is what made the four mixed diagonals — pushing one edge out while
+      // pulling the other in — dead handles, but only with the modifier held.
+      // So when the dominant axis has nowhere to go, re-drive from the other one.
+      const stuck = (v) => Math.round(v.w) === o.w && Math.round(v.h) === o.h;
+      if (want && stuck(r)) {
+        const alt = Math.abs(want.w - o.w) >= Math.abs(want.h - o.h)
+          ? fit(want.h * lock, want.h)      // width was driving, and it's pinned
+          : fit(want.w, want.w / lock);
+        if (!stuck(alt)) r = alt;           // still nothing to give: leave it pinned
+      }
+      data.w = r.w;
+      data.h = r.h;
     } else {
       data.w = Math.min(data.w, maxW);
       data.h = Math.min(data.h, maxH);

@@ -416,6 +416,24 @@ type instead of inside the shared resize. When a locked drag hits the ghost's
 edge, `clampCropBox` shrinks **both** dimensions by one factor — clamping the
 overshooting side alone would break the very ratio the key is holding.
 
+That single factor has a failure mode worth knowing, because it produced a bug
+report nobody could act on ("with a modifier held, dragging a corner does
+nothing"). The ratio is driven by whichever axis the pointer moved **most**; if
+that axis is already flush against the picture, scaling the pair back to fit
+lands on *exactly the starting size*, so the drag is a total no-op — and the
+other axis's movement, which may have had plenty of room, is discarded with it.
+It only bites the four **mixed diagonals** (push one edge out while pulling the
+other in) on a box already at the locked ratio, and only with the modifier down.
+`clampCropBox` therefore takes `want` — what each axis asked for *before* the
+lock rewrote one of them — and re-drives from the other axis when the dominant
+one turns out to be pinned. The invariant to preserve: **holding the modifier
+must never make a handle dead that works without it.** A drag with nowhere to go
+on *either* axis still does nothing, identically with and without the key, and
+that one is the crop model doing its job rather than a bug — the window can never
+show more than the picture. Two tests, one per half.
+(`makeBoxResizable` forwards its clamp args by spread; a wrapper that names four
+parameters silently drops `want` and the fix goes quiet.)
+
 There is deliberately **no accept step**: every crop drag is an ordinary
 `commit()`, so undo walks back through them and nothing is provisional. Escape,
 Enter and a click away only leave the mode. The ghost is derived *once* on entry
