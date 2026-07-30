@@ -652,6 +652,18 @@ Invariants that took real bugs to learn — keep them:
      and `contextmenu` is preceded by its own `pointerdown`; adding `pointerup`
      or `contextmenu` makes one user action fire the hook twice, which after a
      failure spends two retries on a single click.
+   - **Yield a gesture the app itself needs** (`gestureNeedsThePopup`). A browser
+     allows one popup per gesture, and this hook gets there first — capture-phase
+     `pointerdown`, while what the user clicked runs on the following `click`. So
+     Google's token flow spent the allowance and the app's own `window.open`
+     returned null: clicking a URL-linked button as your first action on the page
+     opened nothing, with no error anywhere. Deferring the *click* until Drive
+     finishes cannot fix this — activation does not survive an `await`, so a
+     banked `window.open` is blocked identically. The reconnect yields instead,
+     because it is the opportunistic half; the hook stays armed, so any other
+     input still reconnects. Keep the carve-out narrow (a URL action, an external
+     link — not a node target, which opens no window): widen it and the hook
+     stops firing at all.
 
    `RETRYABLE_AUTH_ERRORS` separates "the request never reached Google"
    (`popup_failed_to_open`, re-arm and retry, bounded by
@@ -809,6 +821,14 @@ silently overwrote newer synced content with no conflict raised for it.
   event, so menu items live in exactly one place regardless of trigger.
 - Escape is a priority chain: open modal → board menu → blur editing → blur
   chrome → exit image crop → exit iframe interact mode → clear selection.
+- **Every paste lands under the cursor**, via one shared `pointerDropWorld()` —
+  a screenshot and a copied node use the same reader, and both fall back (viewport
+  centre / a fixed cascade) only when the cursor isn't over a board surface.
+  Offsetting a keyboard paste from the ORIGINAL instead, as ⌘V once did, put a
+  copy taken from one corner of the board back where it came from when you pasted
+  from the far side — off screen, indistinguishable from nothing happening.
+  Repeated pastes from one spot still cascade by 24px so they don't stack exactly;
+  moving the cursor resets the cascade (`lastPasteAnchor`).
 - **Two clipboards, and the guard between them must be per-gesture.** ⌘V's
   keydown handler pastes the internal node clipboard and `preventDefault`s, which
   suppresses the `paste` event; the document-level `paste` listener owns pasted

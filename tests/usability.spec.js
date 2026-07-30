@@ -478,6 +478,52 @@ test('copy and paste a node', { tag: '@select' }, async ({ page }) => {
   await expect(page.locator('.node.card')).toHaveCount(3);
 });
 
+// A paste lands where the CURSOR is, not next to the original. Offsetting from
+// the original meant copying something, panning away, and pasting put the copy
+// back where it came from — off screen, indistinguishable from nothing having
+// happened. Repeat pastes from one spot still cascade so they don't stack.
+test('paste lands under the cursor, however far from the original', { tag: '@select' }, async ({ page }) => {
+  const node = await addCardAt(page, 450, 350);
+  const hb = await node.locator('.card-header').boundingBox();
+  await page.mouse.click(hb.x + hb.width * 0.5, hb.y + hb.height / 2);
+  await page.keyboard.press('ControlOrMeta+c');
+  const origin = await nodePos(node);
+
+  // pan a long way off, so "near the original" and "near the cursor" are nowhere
+  // close to each other
+  await page.evaluate(() => {
+    const v = document.getElementById('viewport');
+    for (let i = 0; i < 8; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaX: 400, deltaY: 300, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(async () => (await node.boundingBox()) === null
+    || !within(await node.boundingBox(), page.viewportSize().width, page.viewportSize().height)).toBe(true);
+
+  await page.mouse.move(700, 500);
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  const copy = page.locator('.node.card.selected');
+  const box = await copy.boundingBox();
+  expect(Math.abs(box.x - 700)).toBeLessThan(3);       // top-left at the cursor
+  expect(Math.abs(box.y - 500)).toBeLessThan(3);
+  const pasted = await nodePos(copy);
+  expect(Math.abs(pasted.x - origin.x)).toBeGreaterThan(1000);   // nowhere near the original
+
+  // a second ⌘V from the same spot cascades rather than stacking exactly
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(page.locator('.node.card')).toHaveCount(3);
+  const third = await nodePos(page.locator('.node.card.selected'));
+  expect(third.x - pasted.x).toBeCloseTo(24, 0);
+  expect(third.y - pasted.y).toBeCloseTo(24, 0);
+
+  // …and moving the cursor starts over from there, no accumulated drift
+  await page.mouse.move(500, 300);
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(page.locator('.node.card')).toHaveCount(4);
+  const fourth = await page.locator('.node.card.selected').boundingBox();
+  expect(Math.abs(fourth.x - 500)).toBeLessThan(3);
+  expect(Math.abs(fourth.y - 300)).toBeLessThan(3);
+});
+
 // Right-click context menu (Miro/FigJam: add-here / duplicate / delete).
 test('right-click opens a context menu on the canvas and on a node', { tag: '@chrome' }, async ({ page }) => {
   const menu = page.locator('#context-menu');
@@ -2846,6 +2892,60 @@ test('a local-only user gets no Drive chip and no Google scripts',
   { tag: ['@boards', '@chrome'] }, async ({ page }) => {
     await expect(page.locator('#driveReconnectBtn')).toBeHidden();
     expect(await page.locator('script[src*="google"]').count()).toBe(0);
+  });
+
+// A browser allows one popup per user gesture, and this hook gets there FIRST —
+// it rides pointerdown in the capture phase, while what the user clicked runs on
+// the click after. So Google's token flow spent the allowance and the app's own
+// window.open returned null: clicking a URL button as your first action on the
+// page opened nothing, with no error anywhere to explain it. Deferring the click
+// until Drive finishes cannot fix that (activation doesn't survive an await), so
+// the reconnect yields the gesture instead — it's the opportunistic one.
+test('a click that needs the popup is left to the app, and Drive takes the next gesture',
+  { tag: ['@boards', '@buttons'] }, async ({ page }) => {
+    const opened = [];
+    await page.exposeFunction('__recordOpen', (u) => { opened.push(u); });
+    await page.addInitScript(() => { window.open = (u) => { window.__recordOpen(u); return null; }; });
+
+    await page.click('#addButton');
+    await expect(page.locator('#button-link-modal')).toBeVisible();
+    await page.fill('#bl-input', 'https://example.com/thing');
+    await page.click('#bl-use-url');
+    await expect(page.locator('#button-link-modal')).toBeHidden();
+    await expect(page.locator('#saveState')).toHaveText('saved');
+
+    await bootOptedIn(page, { grant: true });
+    await page.locator('.btn-node').click();
+    expect(opened).toEqual(['https://example.com/thing']);   // the app's popup, uncontested
+    expect(await gisCalls(page)).toEqual([]);                // Drive didn't touch this gesture
+    await expect(page.locator('#driveReconnectBtn')).toBeVisible();
+
+    // …and it stays armed, so the next input reconnects as usual
+    await page.mouse.click(700, 500);
+    expect(await gisCalls(page)).toEqual(['silent']);
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+  });
+
+// The yield is scoped to gestures that actually compete. A button that jumps to a
+// board item opens no window, so it must NOT delay the reconnect — otherwise the
+// carve-out grows until the hook never fires.
+test('a click that needs no popup still gives Drive the gesture',
+  { tag: ['@boards', '@buttons'] }, async ({ page }) => {
+    const card = await addCardAt(page, 450, 350);
+    await card.locator('.card-title').dblclick();
+    await page.keyboard.type('Target');
+    await page.keyboard.press('Enter');
+    await page.click('#addButton');
+    await expect(page.locator('#button-link-modal')).toBeVisible();
+    await page.keyboard.type('Target');
+    await expect(page.locator('#button-link-modal .np-item')).toHaveCount(1);
+    await page.locator('#button-link-modal .np-item').click();
+    await expect(page.locator('#saveState')).toHaveText('saved');
+
+    await bootOptedIn(page, { grant: true });
+    await page.locator('.btn-node').click();
+    expect(await gisCalls(page)).toEqual(['silent']);
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
   });
 
 // The chip is the fallback for when silent reconnect CAN'T work — a revoked

@@ -320,8 +320,11 @@ they join, and clean themselves up if an endpoint is deleted.
 - **Duplicate**: **⌘/Ctrl+D**, or right-click → *Duplicate*.
 - **Copy / cut / paste**: **⌘/Ctrl+C** / **X** / **V**. Copying takes the
   selection *and the connections between its members*, so pasting
-  reproduces a whole sub-graph. Repeated pastes cascade so they don't
-  stack exactly. Right-click → *Paste here* places the copy where you
+  reproduces a whole sub-graph. The copy lands **under your cursor**, so you
+  can copy something, scroll to the far side of the board, and paste it right
+  where you're looking. Pasting repeatedly from one spot cascades so the
+  copies don't stack exactly; move the cursor and the next one lands there
+  instead. Right-click → *Paste here* does the same from the point you
   clicked.
 - **Move to top**: right-click → *Move to top* raises an item above its
   neighbours. (Frames are always behind, by design, so this doesn't apply

@@ -4446,6 +4446,22 @@
   // was) killed image paste for the rest of the session the moment you copied
   // any node at all.
   let nodesPastedAt = -Infinity;
+  let lastPasteAnchor = null;   // world point the previous paste landed on
+
+  // Last known cursor position, and the board point under it. Every paste lands
+  // there — a screenshot, a copied node — so the two share one reader. Only a
+  // cursor genuinely over a board surface counts: over the chrome, or before the
+  // mouse has moved at all, there is no drop point and the caller falls back.
+  let lastClient = null;
+  document.addEventListener('pointermove', (e) => { lastClient = { x: e.clientX, y: e.clientY }; }, { passive: true });
+
+  function pointerDropWorld() {
+    if (!lastClient) return null;
+    const under = document.elementFromPoint(lastClient.x, lastClient.y);
+    if (!under || !under.closest('#viewport, #dock-viewport')) return null;
+    const ctx = pointerCtx(lastClient.x, lastClient.y);
+    return { ...ctxToWorld(ctx, lastClient.x, lastClient.y), intoDock: ctx === 'dock' };
+  }
 
   function copyNodes(ids) {
     if (!ids.length) return;
@@ -4460,22 +4476,37 @@
       .map((c) => ({ from: c.from, to: c.to }));
     clipboard = { nodes, conns };
     pasteCount = 0;
+    lastPasteAnchor = null;
   }
   const copySelection = () => copyNodes([...selectedNodes]);
 
-  // opts.intoDock: a "Paste here" issued from the panel's context menu — the
-  // pasted nodes join the active tab (membership is gesture-based)
+  // opts.intoDock: the pasted nodes join the active dock tab (membership is
+  // gesture-based) — set when the paste happened over the panel.
+  //
+  // `anchor` (world units) is where the group's top-left goes, and every paste
+  // gesture supplies one: the cursor for ⌘V, the click point for a context-menu
+  // "Paste here". Offsetting from the ORIGINAL instead — which ⌘V used to do —
+  // meant a copy taken from one corner of the board and pasted from the far side
+  // of it landed back where it came from, off screen, looking like nothing had
+  // happened at all. Only a paste with no usable cursor (over the chrome, or the
+  // mouse never moved) still falls back to that.
   function pasteClipboard(anchor, opts) {
     if (!clipboard || !clipboard.nodes.length) return;
     nodesPastedAt = performance.now();
-    // Keyboard paste cascades by a fixed offset; a context-menu "Paste here"
-    // drops the group's top-left at the cursor (anchor, in world units).
     let dx, dy;
     if (anchor) {
+      // Repeat pastes from the SAME spot still cascade, so a second ⌘V doesn't
+      // hide exactly behind the first; moving the cursor resets that.
+      const near = lastPasteAnchor &&
+        Math.abs(lastPasteAnchor.x - anchor.x) < 1 && Math.abs(lastPasteAnchor.y - anchor.y) < 1;
+      pasteCount = near ? pasteCount + 1 : 0;
+      lastPasteAnchor = { x: anchor.x, y: anchor.y };
       let minX = Infinity, minY = Infinity;
       for (const item of clipboard.nodes) { minX = Math.min(minX, item.data.x); minY = Math.min(minY, item.data.y); }
-      dx = anchor.x - minX; dy = anchor.y - minY;
+      const step = 24 * pasteCount;
+      dx = anchor.x - minX + step; dy = anchor.y - minY + step;
     } else {
+      lastPasteAnchor = null;
       dx = dy = 24 * (++pasteCount);
     }
     const idMap = {};
@@ -4502,11 +4533,6 @@
   // ════════════════════════════════════════════════════════
   const MAX_IMG_DIM = 1600;                 // px, longest edge after downscale
   const MAX_IMG_BYTES = 1.5 * 1024 * 1024;  // per-image budget after re-encode
-
-  // Last known cursor position — a pasted screenshot lands under the cursor
-  // (which may be outside the current viewport centre, or over the panel).
-  let lastClient = null;
-  document.addEventListener('pointermove', (e) => { lastClient = { x: e.clientX, y: e.clientY }; }, { passive: true });
 
   const canvasToBlob = (canvas, type, q) => new Promise((res) => canvas.toBlob(res, type, q));
 
@@ -4570,17 +4596,9 @@
     const sel = window.getSelection();
     const range = inCardBody && sel && sel.rangeCount && ae.contains(sel.anchorNode)
       ? sel.getRangeAt(0) : null;
-    // Drop point too — the mouse may move during the encode. Only trust the
-    // cursor when it's actually over a board surface; over chrome (or never
-    // moved), fall back to the viewport centre.
-    let drop = null;
-    if (!inCardBody && lastClient) {
-      const under = document.elementFromPoint(lastClient.x, lastClient.y);
-      if (under && under.closest('#viewport, #dock-viewport')) {
-        const ctx = pointerCtx(lastClient.x, lastClient.y);
-        drop = { ...ctxToWorld(ctx, lastClient.x, lastClient.y), intoDock: ctx === 'dock' };
-      }
-    }
+    // Drop point too — read now, because the mouse may move during the encode.
+    // Falls back to the viewport centre when the cursor isn't over the board.
+    const drop = inCardBody ? null : pointerDropWorld();
 
     imageFileToAsset(file).then((rec) => {
       if (inCardBody) {
@@ -6329,7 +6347,8 @@
     }
     if (!editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && clipboard) {
       e.preventDefault();
-      pasteClipboard();
+      const drop = pointerDropWorld();          // land it under the cursor
+      pasteClipboard(drop, drop && { intoDock: drop.intoDock });
       return;
     }
 
@@ -8088,8 +8107,39 @@
   // keyboard user's opening keystroke about as often as bare Tab — so the Shift
   // half would spend an attempt on a press that cannot possibly succeed.
   const BARE_MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+
+  // A gesture the APP itself is about to need is not ours to spend.
+  //
+  // A browser allows one popup per user gesture, and this hook runs FIRST — it's
+  // on pointerdown, in the capture phase, while the thing the user actually
+  // clicked runs on the click that follows. So Google's token flow used up the
+  // allowance and the app's own window.open came back null: click a button
+  // linked to a URL as your first action on the page and the tab just never
+  // opened, with nothing anywhere to say why.
+  //
+  // Deferring the action instead — running it once Drive finishes — cannot work:
+  // activation does not survive an await, so the banked window.open would be
+  // blocked exactly the same way. Yielding is what works, and it costs nothing.
+  // Reconnect is opportunistic (it rides whatever gesture comes along); opening
+  // the link the user just clicked is not. The hook stays armed, so any other
+  // input — a pan, a keypress, selecting anything — still reconnects.
+  function gestureNeedsThePopup(target) {
+    if (!target || !target.closest) return false;
+    // An external link in a card body. A node link (data-node) navigates in
+    // place and needs no window, so it isn't competing for anything.
+    const a = target.closest('a[href]');
+    if (a && !a.dataset.node && /^https?:/i.test(a.getAttribute('href') || '')) return true;
+    // A button — canvas node or pinned chip, same class and dataset — whose
+    // action opens a URL. Same deep-link exception as runButtonAction.
+    const btn = target.closest('.btn-node');
+    const act = btn && board.cards[btn.dataset.id] && board.cards[btn.dataset.id].action;
+    return !!(act && act.type === 'url' && act.target &&
+      !(deepLinkNodeId(act.target) && getNode(deepLinkNodeId(act.target))));
+  }
+
   function onDriveGesture(e) {
     if (e.type === 'keydown' && BARE_MODIFIER_KEYS.has(e.key)) return;
+    if (e.type === 'pointerdown' && gestureNeedsThePopup(e.target)) return;   // stay armed
     disarmDriveGestureHook();
     tryDriveSilentReconnect();
   }
