@@ -167,6 +167,15 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   is world-space, so dropping over the other window just lands there —
   never mix `getBoundingClientRect` with the wrong window's transform.
   Movers reparent live when the pointer crosses, so the ghost follows.
+  `pointerCtx` answers for the whole `#dock-panel` (plus `#dock-resizer`,
+  which overhangs its left border) — NOT for `#dock-viewport`. It decides
+  membership on a drop, not just which transform to measure through, so a
+  chrome-sized gap in it is a silent eject: `#dock-header` spans the panel's
+  full width, and dragging a member up toward the top of the panel counted as
+  "released over the canvas". `#dock-rail` is deliberately outside — it sits
+  over the canvas while the panel is open, and joining the ACTIVE tab because
+  the pointer is over some OTHER tab would be a worse lie than landing on the
+  canvas underneath it.
 - **Never measure a panel node for layout without checking it has a box.**
   `#dock-panel` is `display: none` while hidden or minimized, so everything
   inside measures 0 — and `renderAll` renders nodes BEFORE `syncDockPanel()`
@@ -189,7 +198,14 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   created on the canvas over those world coordinates must NOT vanish into
   the panel. The one geometric rule left: reconcile (undo/remote — never
   commit) prunes members a full region-size beyond the rect — reverted
-  cross-window drags, not deliberate placements. Presence of `dockMembers`
+  cross-window drags, not deliberate placements. That tolerance is measured
+  from the member's CENTER, so it needs a real box — and it is a second
+  consumer of the zero-box rule above: the panel boots `.hidden` (and stays
+  `display:none` while minimized), so members measured there read 0×0 and
+  their "center" collapses onto their top-left, pulling the left/top
+  thresholds half a node inward. A member parked left of or above the rect was
+  ejected by its own reload, with nothing having moved. No box, no verdict.
+  Presence of `dockMembers`
   (even `[]`) on a `kind:'frame'` card IS "this frame is docked" — absence
   means undocked; remove with `delete`, never assign `undefined` (same rule
   as any other field — see Record shape rules below).

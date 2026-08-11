@@ -231,6 +231,88 @@ test('a member dropped in the panel\'s top third stays exactly where dropped (no
   expect(await parentWorld(page.locator('.node.card'))).toBe('dock-world');
 });
 
+// The panel is a WINDOW, not just its scroll area: #dock-header (title +
+// Fit/Minimize/Undock) and #dock-resizer are inside #dock-panel but outside
+// #dock-viewport. Dragging a member up to the top of the panel used to run
+// the pointer off the viewport's rect, which read as "released over the
+// canvas" — the node was stripped from `dockMembers` and handed back to a
+// canvas that is looking somewhere else entirely, so it read as ejected.
+test('a member dragged onto the panel\'s own chrome stays a member', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 300);
+  const cardId = await card.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  const members = () => page.evaluate((frameId) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).cards[frameId].dockMembers;
+  }, frameId);
+  expect(await members()).toContain(cardId);
+
+  // release with the pointer over the title bar — still inside the panel
+  const hd = await page.locator('#dock-header').boundingBox();
+  const hb = await card.locator('.card-header').boundingBox();
+  await page.mouse.move(hb.x + 24, hb.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(hd.x + hd.width / 2, hd.y + hd.height / 2, { steps: 8 });
+  expect(await parentWorld(card)).toBe('dock-world');          // no mid-drag hand-off
+  await page.mouse.up();
+  expect(await parentWorld(card)).toBe('dock-world');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect(await members()).toContain(cardId);                   // membership is content
+
+  // same for the resize gutter straddling the panel's left border
+  const rz = await page.locator('#dock-resizer').boundingBox();
+  const hb2 = await card.locator('.card-header').boundingBox();
+  await page.mouse.move(hb2.x + 24, hb2.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(rz.x + rz.width / 2, rz.y + rz.height * 0.6, { steps: 8 });
+  await page.mouse.up();
+  expect(await parentWorld(card)).toBe('dock-world');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect(await members()).toContain(cardId);
+});
+
+// The reconcile prune (undo/remote only) forgives members up to a full
+// region-size outside the rect, measured from each member's CENTER — so it
+// needs the member's box. The panel boots `.hidden` and renderAll prunes
+// before syncDockPanel un-hides it, so every member measures 0×0 there and
+// its "center" reads as its top-left: a member parked left of or above the
+// rect was ejected by its own reload, with nothing having moved.
+test('a member parked outside the rect survives a reload with the panel still hidden', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 300);
+  const cardId = await card.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // park it just past a region-width to the LEFT of the rect — outside the
+  // tolerance by its top-left corner, comfortably inside it by its center
+  await page.addInitScript(([cardId, frameId]) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    if (!cur) return;
+    const key = 'whiteboard:board:' + cur;
+    const b = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!b || !b.cards[frameId] || !b.cards[cardId]) return;
+    const f = b.cards[frameId];
+    b.cards[cardId].x = f.x - f.w - 10;
+    localStorage.setItem(key, JSON.stringify(b));
+  }, [cardId, frameId]);
+  await page.reload();
+
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
+  const stored = await page.evaluate((frameId) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).cards[frameId].dockMembers;
+  }, frameId);
+  expect(stored).toContain(cardId);
+});
+
 test('minimize flies the region off screen to an edge tab; restore brings it back', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);

@@ -2425,6 +2425,7 @@
   // ════════════════════════════════════════════════════════
   const dockPanel = document.getElementById('dock-panel');
   const dockViewport = document.getElementById('dock-viewport');
+  const dockResizer = document.getElementById('dock-resizer');
   const dockWorld = document.getElementById('dock-world');
   const dockRail = document.getElementById('dock-rail');
   const dockActiveName = document.getElementById('dock-active-name');
@@ -2459,11 +2460,22 @@
     return { x: (cx - o.x - v.x) / v.zoom, y: (cy - o.y - v.y) / v.zoom };
   }
   function applyCtxViewport(ctx) { if (ctx === 'dock') applyDockViewport(); else applyViewport(); }
-  // Which window is under this client point right now?
+  // Which window is under this client point right now? The whole PANEL, not
+  // just its scroll area: the title bar and the resize gutter are the same
+  // window's chrome, and this answer decides MEMBERSHIP on a drop, not only
+  // which transform to measure through. Testing #dock-viewport alone left the
+  // header a dead band across the panel's full width — dragging a member up
+  // toward the top of the panel read as "released over the canvas", so it was
+  // stripped from `dockMembers` and handed back to a canvas that is usually
+  // looking somewhere else entirely: the node read as ejected, and geometry
+  // silently reassigning membership is exactly what sticky membership exists
+  // to prevent. (#dock-resizer straddles the panel's left border, so it needs
+  // its own rect to cover the few px that overhang onto the canvas.)
   function pointerCtx(cx, cy) {
     if (!dock || dock.minimized) return 'main';
-    const r = dockViewport.getBoundingClientRect();
-    return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom ? 'dock' : 'main';
+    const inRect = (r) => cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+    return inRect(dockPanel.getBoundingClientRect()) ||
+           inRect(dockResizer.getBoundingClientRect()) ? 'dock' : 'main';
   }
   // The world point under the pointer, respecting whichever window it is
   // over. THE cross-window drag primitive: a drag's delta math works in
@@ -2509,8 +2521,14 @@
             // members may live anywhere AROUND the region (the panel is a
             // free surface) — prune only genuinely-far strays, a full
             // region-size beyond the rect, i.e. reverted cross-window drags
+            // …and only against a box we can actually measure: the panel is
+            // display:none while minimized (and un-hidden only after render),
+            // so every member inside it measures 0×0 and its "center" reads as
+            // its top-left — which drags the left/top thresholds half a node
+            // inward and prunes members a pull happened to catch while the
+            // panel was down. No box, no verdict; keep it.
             const g = nodeGeom(id);
-            if (g) {
+            if (g && g.w && g.h) {
               const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
               if (cx < fd.x - fd.w || cx > fd.x + fd.w * 2 ||
                   cy < fd.y - fd.h || cy > fd.y + fd.h * 2) return false;
@@ -2823,7 +2841,7 @@
     },
   });
   // width resizer on the panel's left edge
-  document.getElementById('dock-resizer').addEventListener('pointerdown', (e) => {
+  dockResizer.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !dock) return;
     e.preventDefault();
     const pid = e.pointerId;
