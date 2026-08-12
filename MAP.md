@@ -23,14 +23,14 @@ invariants behind them — this file only says *where* things are.
 | `//  IMAGE ASSETS` | a pasted image's bytes live in IndexedDB as a Blob, NOT as a data URI inside the board JSON. |
 | `//  GOOGLE DRIVE` | opt-in per board. Auth is the Google Identity Services token flow (drive.file scope). |
 | `//  UNDO / REDO` | content snapshots (cards/iframes/connections). Viewport changes aren't tracked; text edits coalesce. |
-| `//  VIEW LAYER` | — |
+| `//  VIEW LAYER` | one CSS transform on #world is the camera, and toWorld() is its only inverse. Nearly every choice here is repaint cost: the grid moves by transform rather than background-position, and #world is promoted to a GPU layer only while panning —… |
 | `//  SVG CONNECTION LAYER` | lives inside #world, so arrows pan/zoom with the transform; we only redraw on node move. |
 | `//  NODE REGISTRY` | cards and iframes share one element map |
 | `//  SELECTION` | a set of nodes, or a single connection |
 | `//  SHARED DRAG` | move any node by a handle |
 | `//  PORTS` | hover a node to reveal handles; drag one to a target node to create a connection (Miro / FigJam model) |
 | `//  INLINE RENAME` | shared by card titles and iframe titles: double-click to edit, drag otherwise, commit on blur/Enter. |
-| `//  CARD NODE` | — |
+| `//  CARD NODE` | the per-node presentation every kind shares: the colour accent and the explicit z stamp. |
 | `//  COLOR FILTER` | a legend of the colors in use; clicking a dot spotlights those items and dims the rest. |
 | `//  BUTTON NODE` | a pill that navigates on click: fly to a board item, or open a URL in a new tab. |
 | `//  DOCKED BUTTONS` | a button dropped on a card's bottom edge becomes a full-width tab in a tray (up to 3); dropped just right of a frame's title tab (or of another button) it joins a horizontal row. |
@@ -38,21 +38,21 @@ invariants behind them — this file only says *where* things are.
 | `//  DOCKED FRAME WINDOW` | one frame's region can dock to the side as a SECOND WINDOW into the same world (#dock-panel). |
 | `//  FRAME NODE` | a named region of the board (Miro-style frame): sits behind everything, its interior is click-through, and only the title tab and resize handle are interactive. |
 | `//  IMAGE NODE` | a picture as a node in its own right, rather than a card that happens to contain one. |
-| `//  IFRAME NODE` | — |
+| `//  IFRAME NODE` | an embedded page as a node. `interact` mode is runtime only and never stored: while it is on the iframe swallows pointer input, so every canvas gesture calls exitInteract() and the user can never be trapped with frames eating the mouse. |
 | `//  CONNECTIONS` | bezier arrows, dynamically anchored |
 | `//  DELETE (any node)` | also removes attached connections |
 | `//  IMAGE PASTE` | a screenshot pasted on the canvas becomes a card holding the image; pasted while editing a card it lands inline at the caret. |
-| `//  RENDER ALL` | — |
 | `//  DEFERRED NODE HYDRATION` | first paint renders only what the user can(ish) see; the rest of the board materializes in idle chunks, nearest first. |
-| `//  CANVAS PAN / BOX-SELECT / WHEEL / DOUBLE-CLICK` | — |
+| `//  CANVAS PAN / BOX-SELECT / WHEEL / DOUBLE-CLICK` | pan by Space+drag, middle-drag or wheel; left-drag on empty canvas box-selects. A pan commits with {viewportOnly:true} so the view never bumps `version`, and every helper takes a `ctx` because the docked frame window reuses all of them… |
 | `//  TOUCH GESTURES` | one finger pans the canvas or drags a node (through the pointer handlers above); two fingers pinch-zoom/pan anywhere; long-press stands in for right-click, and on empty canvas it arms the marquee. |
-| `//  RIGHT-CLICK CONTEXT MENU` | — |
+| `//  RIGHT-CLICK CONTEXT MENU` | one menu built from an items array, so every node kind gets the same keyboard and screen-reader behaviour for free: role=menu, arrow-key navigation, and focus moved to the first item only when the menu was opened from the keyboard. |
 | `//  FIT TO CONTENT` | zoom-out-only framing of all nodes (interactive zoom-in is a 90% feature) |
-| `//  TOOLBAR + KEYBOARD` | — |
+| `//  ADD TOOLS` | one registry behind every "add a node" entry point: the palette buttons AND the canvas context menu are both generated from it, so a new node kind cannot appear in one and silently miss the other. |
 | `//  LISTBOX NAV` | shared by the three type-ahead popups below (button-link modal, node-picker, ⌘K jump): arrow keys move a `.sel` highlight between item buttons, but a class alone is silent to a screen reader — role=listbox/option + aria-activedescendant… |
+| `//  KEYBOARD` | one document-level keydown handler, and its ORDER is the design: Escape closes an open modal before anything else sees the key, an in-flight keyboard connection owns Tab/arrows/Enter next, and only then do canvas shortcuts run. |
 | `//  RICH TEXT` | card bodies are sanitized HTML, edited with a mini toolbar (bold / italic / list) and inline node links. |
 | `//  QUICK JUMP (⌘K)` | search every card/frame by its visible text and fly the viewport to the pick. Arrow keys move the highlight, Enter jumps. |
 | `//  SETTINGS` | the cog (top right). Per-device preferences: stored under their own local key, never synced or merged. |
 | `//  HELP` | the ? button (top right) and its shortcuts panel. Replaces the old always-on hint strip: complete reference on demand instead of a partial one permanently on screen. |
 | `//  BOARD LIBRARY` | picker dropdown, switch / new / rename / remove |
-| `//  BOOT` | — |
+| `//  BOOT` | the one strictly ordered sequence in the file, and the order is load-bearing: dock chrome restores before first render, the undo baseline is taken after it (so boot is never an undoable edit), the asset GC runs before the pressure check so… |

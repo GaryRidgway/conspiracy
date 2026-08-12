@@ -803,6 +803,34 @@ Invariants that took real bugs to learn — keep them:
    button hung disabled for the rest of the page's life, which read as "Drive
    just doesn't connect."
 
+   That slot is also why **concurrent `connect()` calls share one request**
+   (`inFlight`) instead of stacking. GIS keeps a single outstanding token
+   request and we keep a single resolver for it, so a second call doesn't
+   queue behind the first — it evicts it, and the answer settles whoever holds
+   the slot while the other promise hangs. Every caller wants the same one
+   thing, so there is nothing to win by asking twice. `authed()` makes this
+   unavoidable rather than theoretical: every Drive API call routes through it,
+   so two overlapping calls with an expired token are two overlapping
+   `connect()`s. The success callback also adopts the token *before* looking
+   for someone to hand it to — a token that arrives with nobody waiting is
+   still a valid token, and dropping it is how a completed sign-in left the app
+   reading as never connected. (Only a longer-lived token may replace one we
+   already hold, so a late straggler can't downgrade the session.)
+9. **The board-menu Connect button and the status-strip reconnect chip are one
+   action reachable two ways**, so they carry the same guards: bail if already
+   connected, spend the first-gesture hook, connect interactively, then
+   `maybeReconcileCurrent()` rather than waiting out a `SYNC_POLL_MS` tick.
+   Connect had none of the three. Its own click fired a silent reconnect on the
+   way out of the window — and a blocked popup re-arms that hook, which is
+   exactly the state that sends a user to the button — so the two raced for the
+   one outstanding token request and the loser's answer was eaten: the popup
+   completed and the menu still said "not connected", while the chip worked.
+   Note when testing this: a microtask checkpoint runs between the button's own
+   handler and the window-level hook, so a stub that answers `requestAccessToken`
+   *synchronously* is already connected by the time the hook looks — the one
+   state where the hook stands down. Only a deferred answer, like a real popup,
+   reproduces it.
+
 ### Merge semantics (`mergeBoards`, pure, tested)
 
 Per collection → per record → per field, diffed against the base:

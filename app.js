@@ -440,6 +440,7 @@
     let tokenClient = null, accessToken = null, tokenExpiry = 0;
     let gisLoaded = false;
     let pendingAuth = null;   // resolver for the in-flight connect(); see connect()
+    let inFlight = null;      // …and the promise every concurrent caller shares
 
     const configured = () => !!cfg.googleClientId;
     const tokenValid = () => !!accessToken && Date.now() < tokenExpiry - 60000;
@@ -478,10 +479,22 @@
 
     // Request (or silently refresh) an access token. `interactive` shows the
     // Google account chooser / consent popup; a refresh can be silent.
+    //
+    // Concurrent callers SHARE one request, they don't stack. GIS keeps a single
+    // outstanding token request and we keep a single resolver for it, so a second
+    // connect() landing on top of the first doesn't queue behind it — it evicts
+    // it, and the answer settles whoever holds the slot at fire time while the
+    // other promise hangs forever. Every caller wants the same one thing, an
+    // access token, so there is nothing to gain by asking twice and a hang to
+    // lose. (A rider inherits the outstanding request's answer, silent or not:
+    // an interactive caller can therefore inherit a silent refusal. It offers
+    // its own button again, which is a far better outcome than a hang, and the
+    // app no longer starts two on purpose — see the Connect button.)
     async function connect(interactive = true) {
       if (!configured()) throw new Error('Google Drive is not configured (missing client ID in config.js).');
       await ensureGis();
-      return new Promise((resolve, reject) => {
+      if (inFlight) return inFlight;
+      const p = new Promise((resolve, reject) => {
         // The token client is created ONCE but every connect() needs its own
         // settlement, so the resolver lives in a slot the callbacks read at fire
         // time. Closing over the first call's resolve/reject instead left every
@@ -495,12 +508,21 @@
             scope: SCOPE,
             callback: (resp) => {
               const p = pendingAuth; pendingAuth = null;
-              if (!p) return;
-              if (resp && resp.error) { p.reject(new Error(resp.error)); return; }
-              accessToken = resp.access_token;
-              tokenExpiry = Date.now() + (resp.expires_in || 3600) * 1000;
-              persistToken();
-              p.resolve(accessToken);
+              if (resp && resp.error) { if (p) p.reject(new Error(resp.error)); return; }
+              // Adopt the token BEFORE looking for someone to hand it to. One
+              // that arrives with nobody waiting is still a valid token, and
+              // dropping it — what the old `if (!p) return` did to any request
+              // whose slot had been evicted — is how a sign-in the user actually
+              // completed left the app reading as never connected. A late
+              // straggler still mustn't downgrade the session, so only a
+              // longer-lived token may replace one we already hold.
+              const expiry = Date.now() + (resp.expires_in || 3600) * 1000;
+              if (p || expiry > tokenExpiry) {
+                accessToken = resp.access_token;
+                tokenExpiry = expiry;
+                persistToken();
+              }
+              if (p) p.resolve(accessToken);
             },
             error_callback: (err) => {
               const p = pendingAuth; pendingAuth = null;
@@ -510,6 +532,13 @@
         }
         tokenClient.requestAccessToken({ prompt: interactive ? '' : 'none' });
       });
+      inFlight = p;
+      // Free the slot however it settles. The caller holds `p`, so this branch
+      // only clears state — it must swallow the rejection or it becomes an
+      // unhandled one on top of the caller's own handling.
+      const done = () => { if (inFlight === p) inFlight = null; };
+      p.then(done, done);
+      return p;
     }
     function signOut() {
       if (accessToken && window.google && google.accounts) {
@@ -1124,7 +1153,11 @@
   if (redoBtn) redoBtn.addEventListener('click', redo);
 
   // ════════════════════════════════════════════════════════
-  //  VIEW LAYER
+  //  VIEW LAYER — one CSS transform on #world is the camera, and toWorld()
+  //  is its only inverse. Nearly every choice here is repaint cost: the grid
+  //  moves by transform rather than background-position, and #world is
+  //  promoted to a GPU layer only while panning — never while scaling, or
+  //  the text bitmap-blurs.
   // ════════════════════════════════════════════════════════
   const viewport = document.getElementById('viewport');
   const world = document.getElementById('world');
@@ -1621,7 +1654,11 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  CARD NODE
+  //  CARD NODE — the per-node presentation every kind shares: the colour
+  //  accent and the explicit z stamp. Both are ordinary data fields, so they
+  //  persist, three-way-merge and undo for free; a colour edit deliberately
+  //  writes each docked button's own field too, because the assembly reads
+  //  as one object.
   // ════════════════════════════════════════════════════════
   // ── Node color coding ──────────────────────────────────────────────────
   // A per-node accent used to tint the heading and border (see .colored CSS).
@@ -3568,7 +3605,10 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  IFRAME NODE
+  //  IFRAME NODE — an embedded page as a node. `interact` mode is runtime
+  //  only and never stored: while it is on the iframe swallows pointer input,
+  //  so every canvas gesture calls exitInteract() and the user can never be
+  //  trapped with frames eating the mouse.
   // ════════════════════════════════════════════════════════
   let interactiveId = null; // which iframe is in interact mode (runtime only)
 
@@ -4759,9 +4799,6 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER ALL
-  // ════════════════════════════════════════════════════════
-  // ════════════════════════════════════════════════════════
   //  DEFERRED NODE HYDRATION — first paint renders only what
   //  the user can(ish) see; the rest of the board materializes
   //  in idle chunks, nearest first. Connections tolerate a
@@ -4967,7 +5004,11 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  CANVAS PAN / BOX-SELECT / WHEEL / DOUBLE-CLICK
+  //  CANVAS PAN / BOX-SELECT / WHEEL / DOUBLE-CLICK — pan by Space+drag,
+  //  middle-drag or wheel; left-drag on empty canvas box-selects. A pan
+  //  commits with {viewportOnly:true} so the view never bumps `version`, and
+  //  every helper takes a `ctx` because the docked frame window reuses all of
+  //  them against its own viewport.
   // ════════════════════════════════════════════════════════
   // Pan: hold Space + drag (anywhere), middle-mouse drag, or scroll/two-finger.
   // Box-select: left-drag on empty canvas.
@@ -5272,7 +5313,10 @@
   }, true);
 
   // ════════════════════════════════════════════════════════
-  //  RIGHT-CLICK CONTEXT MENU
+  //  RIGHT-CLICK CONTEXT MENU — one menu built from an items array, so every
+  //  node kind gets the same keyboard and screen-reader behaviour for free:
+  //  role=menu, arrow-key navigation, and focus moved to the first item only
+  //  when the menu was opened from the keyboard.
   // ════════════════════════════════════════════════════════
   const contextMenu = document.createElement('div');
   contextMenu.id = 'context-menu';
@@ -5819,11 +5863,10 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  TOOLBAR + KEYBOARD
+  //  ADD TOOLS — one registry behind every "add a node" entry point: the
+  //  palette buttons AND the canvas context menu are both generated from it,
+  //  so a new node kind cannot appear in one and silently miss the other.
   // ════════════════════════════════════════════════════════
-  // One registry for every "add a node" entry point: the palette buttons AND
-  // the canvas context menu ("Add X here") are both generated from it, so a
-  // new node type can't appear in one and silently miss the other.
   const ADD_TOOLS = [
     { btn: 'addCard', menu: 'Add card here', at: (w) => createCard(w.x - 120, w.y - 24) },
     { btn: 'addFrameNode', menu: 'Add frame here', at: (w) => createFrameNode(w.x - 320, w.y - 200) },
@@ -6361,6 +6404,15 @@
     announceTimer = setTimeout(() => { announcer.textContent = msg; }, 150);
   }
 
+  // ════════════════════════════════════════════════════════
+  //  KEYBOARD — one document-level keydown handler, and its ORDER is the
+  //  design: Escape closes an open modal before anything else sees the key,
+  //  an in-flight keyboard connection owns Tab/arrows/Enter next, and only
+  //  then do canvas shortcuts run. `onCanvas` (focus on the bare page) and
+  //  `editing` (a field or contenteditable has focus) are the gates every
+  //  new binding must check — focus in the chrome keeps its native meaning,
+  //  so Tab still traverses the toolbar and Enter still presses a button.
+  // ════════════════════════════════════════════════════════
   document.addEventListener('keydown', (e) => {
     // close any open modal first, whatever else is going on
     if (e.key === 'Escape') {
@@ -8261,11 +8313,35 @@
 
   if (driveConnectBtn) {
     driveConnectBtn.addEventListener('click', async () => {
+      // This button and the reconnect chip below are ONE action reachable two
+      // ways, so they carry the same three guards. They didn't, and the chip was
+      // the one that worked: Connect appeared dead for a while and only the chip
+      // brought Drive back.
+      //
+      // Opening the board menu already spends a silent reconnect, so we can
+      // arrive here connected — asking again would be a popup for nothing.
+      if (DRIVE.isConnected()) { updateDriveUI(); return; }
       driveConnectBtn.disabled = true;
+      // And this very click fires ANOTHER silent reconnect on its way out of the
+      // window unless the hook is spent here (a blocked popup re-arms it, which
+      // is exactly the state that makes a user reach for this button). The two
+      // then raced for GIS's single outstanding token request and the loser's
+      // answer was eaten: the popup completed, the menu still said "not
+      // connected". connect() now shares that request rather than evicting it, so
+      // this no longer decides whether connecting works — but it still spends one
+      // of the three silent retries on a request that never goes out, and it's
+      // what the chip has always done.
+      disarmDriveGestureHook();
       setDriveState('syncing', 'Drive: connecting…');
       try { await DRIVE.connect(true); rememberDriveOptIn(); }
       catch (e) { console.error(e); setDriveState('error', 'Drive: connection failed'); }
-      finally { driveConnectBtn.disabled = false; updateDriveUI(); }
+      finally {
+        driveConnectBtn.disabled = false;
+        updateDriveUI();
+        // Catch the open board up now rather than at the next poll tick — the
+        // chip's whole point, and connecting from the menu earns it too.
+        if (DRIVE.isConnected()) maybeReconcileCurrent();
+      }
     });
     driveSaveBtn.addEventListener('click', linkCurrentBoardToDrive);
     openDriveBtn.addEventListener('click', openFromDrive);
@@ -8478,7 +8554,12 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  BOOT
+  //  BOOT — the one strictly ordered sequence in the file, and the order is
+  //  load-bearing: dock chrome restores before first render, the undo
+  //  baseline is taken after it (so boot is never an undoable edit), the
+  //  asset GC runs before the pressure check so it measures what is still
+  //  referenced, and the Drive reconnect goes last — it has to ask for a
+  //  token inside a real gesture's activation window.
   // ════════════════════════════════════════════════════════
   const library = ensureLibrary();
   currentBoardId = pickInitialBoardId(library);

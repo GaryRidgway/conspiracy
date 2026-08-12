@@ -2939,6 +2939,13 @@ const GIS_STUB = `
         // prompt:'' is our interactive ask; prompt:'none' is the silent one
         window.__gis.calls.push((opts && opts.prompt) === 'none' ? 'silent' : 'interactive');
         if (window.__order) window.__order.push('drive:token');   // ordering tests
+        // Deferred mode: hold the answer until the test releases it, so a second
+        // request can land while the first is still outstanding. Real GIS answers
+        // a popup and is never instant, so an instant stub hides every race.
+        if (window.__gis.defer) {
+          window.__gis.settle = () => cfg.callback({ access_token: 'stub-token', expires_in: 3600 });
+          return;
+        }
         if (window.__gis.grant) cfg.callback({ access_token: 'stub-token', expires_in: 3600 });
         // A definitive answer arrives on the normal callback as resp.error; a
         // request that never got through arrives on error_callback as a type.
@@ -3088,6 +3095,64 @@ test('the Drive chip escalates to an interactive connect when the silent path is
     await page.click('#driveReconnectBtn');
     await expect(page.locator('#driveReconnectBtn')).toBeHidden();
     expect(await gisCalls(page)).toEqual(['silent', 'interactive']);
+  });
+
+// The board menu's Connect button and the status-strip chip are ONE action
+// reachable two ways, so what's true of one has to be true of the other. It
+// wasn't: only the chip spent the first-gesture hook, so a click on Connect
+// kicked off a silent reconnect alongside its own interactive request. A blocked
+// popup re-arms that hook, which is precisely the state that sends a user to the
+// button — so Connect read as dead and only the chip brought Drive back.
+test('Connect in the board menu asks for one token, exactly like the reconnect chip',
+  { tag: ['@boards', '@chrome'] }, async ({ page }) => {
+    // grant:false is the blocked-popup refusal — it says nothing about the
+    // session, so the hook re-arms and is live when the click below lands.
+    await bootOptedIn(page, { grant: false });
+    await page.click('#boardMenuBtn');
+    expect(await gisCalls(page)).toEqual(['silent']);
+    await expect(page.locator('#driveConnectBtn')).toBeVisible();
+
+    // Deferred, and load-bearing: a microtask checkpoint runs between the
+    // button's own handler and the window-level hook, so an INSTANT stub is
+    // already connected by the time the hook looks — which is the one state
+    // where the hook stands down, and it hides the whole bug. A real popup is
+    // still open at that moment.
+    await page.evaluate(() => { window.__gis.defer = true; });
+    await page.click('#driveConnectBtn');
+    // one gesture, one ask — nothing riding along behind this request
+    await expect.poll(() => gisCalls(page)).toEqual(['silent', 'interactive']);
+
+    await page.evaluate(() => window.__gis.settle());   // the user finishes the popup
+    await expect(page.locator('#driveConnectBtn')).toBeHidden();
+    await expect(page.locator('#drive-state')).toHaveText(/connected/i);
+    await expect(page.locator('#driveReconnectBtn')).toBeHidden();
+  });
+
+// …and the primitive underneath, because the app is not the only thing that can
+// overlap two connects: every Drive API call funnels through authed(), which
+// asks for a token when the old one expires. Two of those at once used to evict
+// each other's resolver, so one promise hung forever and whatever awaited it
+// never finished.
+test('two overlapping Drive connects share one token request and both settle',
+  { tag: '@boards' }, async ({ page }) => {
+    await bootOptedIn(page, { grant: true });
+    await page.evaluate(() => { window.__gis.defer = true; });
+
+    const out = await page.evaluate(async () => {
+      const D = window.__wb_drive;
+      const a = D.connect(true), b = D.connect(false);
+      await new Promise((r) => setTimeout(r, 0));      // let both reach GIS
+      window.__gis.settle();
+      // Race each against a timer: a hung promise has to report as a value, not
+      // as a suite-wide timeout, or the failure says nothing about the bug.
+      const settles = (p) => Promise.race([
+        p.then(() => 'settled', () => 'settled'),
+        new Promise((r) => setTimeout(() => r('hung'), 300)),
+      ]);
+      return { a: await settles(a), b: await settles(b),
+               calls: window.__gis.calls, connected: D.isConnected() };
+    });
+    expect(out).toEqual({ a: 'settled', b: 'settled', calls: ['interactive'], connected: true });
   });
 
 // ── Three-way merge (per-node) — the core "don't clobber unedited things" logic.
