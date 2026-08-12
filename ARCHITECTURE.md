@@ -2,8 +2,9 @@
 
 An infinite-canvas whiteboard: vanilla JS, no build step, no runtime
 dependencies. Three files are the whole app — `index.html` (static shell,
-modals, toolbars), `styles.css`, and `app.js` (~6,600 lines, one IIFE, all
-logic). `config.js` holds the Google OAuth client id + Picker API key
+modals, toolbars), `styles.css`, and `app.js` (one IIFE, all logic — long
+enough that you navigate it by its section banners, not by reading it
+end to end). `config.js` holds the Google OAuth client id + Picker API key
 (origin-restricted, safe to commit — see SETUP-google-drive.md).
 
 Deployed as static files to GitHub Pages from `main`
@@ -13,6 +14,41 @@ Deployed as static files to GitHub Pages from `main`
 This document records the invariants that are easy to break because they are
 *not* visible from the code you happen to be editing. Read the section for the
 area you're touching before changing it.
+
+`MAP.md` is the companion to this file: it lists every `app.js` section and how
+to grep to it. This file says *why* the code is shaped the way it is; MAP.md
+says *where* to find it.
+
+<!-- toc:start -->
+**Contents**
+
+- [Data model](#data-model)
+  - [Node kinds: buttons, frames and images are cards](#node-kinds-buttons-frames-and-images-are-cards)
+  - [Docked buttons: derived x/y, still stored](#docked-buttons-derived-xy-still-stored)
+  - [Pinned nodes: chrome, not canvas](#pinned-nodes-chrome-not-canvas)
+  - [Docked frame window (#dock-panel, DOCKED FRAME WINDOW section)](#docked-frame-window-dock-panel-docked-frame-window-section)
+  - [Record shape rules (the merge depends on these)](#record-shape-rules-the-merge-depends-on-these)
+- [The mutation pipeline](#the-mutation-pipeline)
+  - [Board switching](#board-switching)
+  - [Viewport is per-device, never content](#viewport-is-per-device-never-content)
+- [Persistence (localStorage)](#persistence-localstorage)
+  - [Image assets (IndexedDB whiteboard → assets)](#image-assets-indexeddb-whiteboard--assets)
+  - [Storage pressure (checkStoragePressure, settings meter)](#storage-pressure-checkstoragepressure-settings-meter)
+- [Drive sync](#drive-sync)
+  - [Folder layout](#folder-layout)
+  - [Batched save model](#batched-save-model)
+  - [Reconcile state machine (reconcileAttempt)](#reconcile-state-machine-reconcileattempt)
+  - [Merge semantics (mergeBoards, pure, tested)](#merge-semantics-mergeboards-pure-tested)
+  - [Known limitations (accepted, not bugs)](#known-limitations-accepted-not-bugs)
+- [View layer](#view-layer)
+- [Interaction model](#interaction-model)
+  - [Accessibility: known limitations (deliberate, scoped)](#accessibility-known-limitations-deliberate-scoped)
+  - [Touch input (TOUCH GESTURES section in app.js)](#touch-input-touch-gestures-section-in-appjs)
+- [Security boundaries](#security-boundaries)
+- [Tests](#tests)
+- [Conventions](#conventions)
+- [Deferred optimizations (decisions, not backlog noise)](#deferred-optimizations-decisions-not-backlog-noise)
+<!-- toc:end -->
 
 ## Data model
 

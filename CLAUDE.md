@@ -8,6 +8,10 @@ No build step, no frameworks, no runtime dependencies: `index.html` +
 kinds, or keyboard handling** — it records invariants that were learned
 from real data-loss bugs and are invisible from any single code site.
 
+**Use `MAP.md` to navigate `app.js` instead of reading it end to end** — it
+lists every section with a one-line gist and a unique grep marker
+(`grep -n '//  PORTS' app.js`). Generated; see Commands.
+
 ## Commands
 
 - `npm test` — full Playwright suite (spins up `python3 -m http.server 8123`
@@ -15,10 +19,15 @@ from real data-loss bugs and are invisible from any single code site.
   treated as failures.
 - `npm run test:<bucket>` — one feature area while iterating (~4s vs ~33s).
   Buckets: `canvas` `cards` `connections` `frames` `buttons` `boards` `nav`
-  `select` `undo` `chrome` `a11y` `dock` `touch`. Every test carries a
+  `select` `undo` `chrome` `a11y` `dock` `touch` `docs`. Every test carries a
   Playwright `tag:`; tag new tests (cross-cutting tests take two tags).
   Buckets are for iteration only — the FULL suite still gates every commit.
-- No build/lint step. The app runs by serving the repo root.
+- `npm run map` — regenerate `MAP.md` + the `ARCHITECTURE.md` contents from
+  the `app.js` section banners. Run it after adding, removing or retitling a
+  section; the `@docs` tests fail while either is stale.
+- No build/lint step **for the app** — it runs by serving the repo root, and
+  nothing in `tools/` runs at load or deploy time. `tools/` only regenerates
+  committed docs, so it is not the build step this rule forbids.
 
 ## Hard rules
 

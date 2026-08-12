@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "test": "playwright test",
+    "map": "node tools/build-map.js",
     "test:a11y": "playwright test --grep @a11y",
     "test:boards": "playwright test --grep @boards",
     "test:buttons": "playwright test --grep @buttons",
@@ -13,6 +14,7 @@
     "test:chrome": "playwright test --grep @chrome",
     "test:connections": "playwright test --grep @connections",
     "test:dock": "playwright test --grep @dock",
+    "test:docs": "playwright test --grep @docs",
     "test:frames": "playwright test --grep @frames",
     "test:nav": "playwright test --grep @nav",
     "test:select": "playwright test --grep @select",
