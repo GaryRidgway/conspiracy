@@ -612,6 +612,68 @@ test('a Drive pull landing after load recovers dock state a stale local snapshot
   expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
 });
 
+// …and the recovery has to have something left to recover FROM. The panel's
+// arrangement (per-tab pan/zoom, width, active tab) is per-device chrome on the
+// viewport key, and a viewport save rewrites that whole key — so while a stale
+// snapshot leaves `dock` null, an ordinary canvas pan used to rewrite the key
+// with no dock at all. The arrangement was gone before the pull that needed it
+// arrived, and deriveDockTabs had nothing to prefer but defaults.
+test('a pan during the sync race keeps the arrangement the pull has to recover', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  const cardId = await card.getAttribute('data-id');
+  await dockViaMenu(page);
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+
+  // give the tab a distinctive pan, then let the debounced save land. The pan
+  // applies on a rAF, so poll for it — reading the transform straight back
+  // captures the pre-pan fit and silently makes the assertion meaningless.
+  const fitted = await dockTransform(page);
+  const pv = await page.locator('#dock-viewport').boundingBox();
+  await page.evaluate(([x, y]) => {
+    document.getElementById('dock-viewport').dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 90, deltaY: 70, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+  }, [pv.x + 100, pv.y + 100]);
+  await expect.poll(() => dockTransform(page)).not.toBe(fitted);
+  const panned = await dockTransform(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.waitForTimeout(500);
+
+  const { boardKey, goodContent } = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return { boardKey: 'whiteboard:board:' + cur, goodContent: JSON.parse(localStorage.getItem('whiteboard:board:' + cur)) };
+  });
+  await page.addInitScript(([boardKey, frameId]) => {
+    const b = JSON.parse(localStorage.getItem(boardKey));
+    delete b.cards[frameId];
+    localStorage.setItem(boardKey, JSON.stringify(b));
+  }, [boardKey, frameId]);
+  await page.reload();
+  await expect(page.locator('#dock-panel')).toBeHidden();     // dock is null: content lags Drive
+
+  // an ordinary canvas pan while the panel is down — a viewport-only commit,
+  // so it rewrites the very key the arrangement lives on
+  await page.evaluate(() => {
+    document.getElementById('viewport').dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 130, deltaY: 40, clientX: 400, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await page.waitForTimeout(600);
+  const chrome = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return JSON.parse(localStorage.getItem('whiteboard:viewport:' + cur)).dock;
+  });
+  expect(chrome).toBeTruthy();                                // arrangement not erased
+  expect(chrome.tabs.map((t) => t.frameId)).toContain(frameId);
+
+  // the pull lands: the frame docks again AT THE ARRANGEMENT IT HAD
+  await page.evaluate((content) => {
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content);
+  }, goodContent);
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
+  expect(await dockTransform(page)).toBe(panned);
+});
+
 // ════════════════════════════════════════════════════════════════════════
 //  LEGACY DOCK MIGRATION
 //  Dock membership used to live only in the per-device chrome key. Adopt an

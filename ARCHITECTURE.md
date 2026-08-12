@@ -227,7 +227,22 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   every full or partial board replacement (boot, board-switch, undo/redo,
   Drive pull/merge) via `reconcileToBoard`, so a frame's dock survives a
   race where local content briefly lagged Drive — there's no separate
-  "restore once at load" step to race against. `migrateLegacyDockMembers`
+  "restore once at load" step to race against.
+  **`dock === null` means "content says nothing is docked right now", NOT
+  "there is no arrangement"** — and three places have to agree on that, or the
+  recovery above has nothing left to recover. (1) `saveViewport` rewrites the
+  WHOLE viewport key, so while `dock` is null it carries the stored chrome
+  forward verbatim instead of omitting it; otherwise one ordinary pan during
+  the Drive race (or between an undo and its redo) erases the width, active
+  tab and per-tab pan/zoom that `deriveDockTabs` was going to prefer.
+  (2) `deriveDockTabs` falls back to `loadDockChrome()` when handed no
+  `prevDock`, or a dock recovered mid-session comes back at zoom 1 in whatever
+  tab sorts first — it is the reconciler between content and chrome, so
+  reading the chrome is its job, not just its callers'. (3) `reconcileToBoard`
+  applies the PANEL's transform as well as the canvas's, since a reconcile can
+  bring a dock into existence; without it the restored tab viewport lives in
+  the model but paints as identity until the next gesture.
+  `migrateLegacyDockMembers`
   is a one-time upgrade path: it adopts a device's pre-existing per-device
   membership into `dockMembers` the first time a frame lacks the field.
 - Arrows: both ends in one window → that window's SVG (`#dock-connections`

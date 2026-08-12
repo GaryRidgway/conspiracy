@@ -803,11 +803,18 @@
   // yanking one device's view to another's when a remote change is pulled).
   const contentForStore = (b) => { const { viewport, ...rest } = b; return rest; };
   const viewportKey = (id) => 'whiteboard:viewport:' + id;
-  function loadViewport(id, fallback) {
+  // The whole per-device view record for a board — pan/zoom AND the dock chrome
+  // hanging off it. One reader, because everything that writes this key writes
+  // it whole: a partial write is how the dock arrangement gets lost.
+  function readViewportKey(id) {
     try {
       const raw = localStorage.getItem(viewportKey(id));
-      if (raw) { const v = JSON.parse(raw); return { x: +v.x || 0, y: +v.y || 0, zoom: +v.zoom || 1 }; }
-    } catch (e) { /* ignore */ }
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function loadViewport(id, fallback) {
+    const v = readViewportKey(id);
+    if (v) return { x: +v.x || 0, y: +v.y || 0, zoom: +v.zoom || 1 };
     return fallback || { x: 0, y: 0, zoom: 1 };
   }
   function saveViewport(id) {
@@ -821,6 +828,20 @@
       payload.dock = { width: dock.width, minimized: dock.minimized, active: dock.active,
         tabs: dock.tabs.map((t) => ({ frameId: t.frameId,
           x: t.viewport.x, y: t.viewport.y, zoom: t.viewport.zoom })) };
+    } else {
+      // No live dock is not the same as no arrangement. `dock` is null whenever
+      // the CONTENT currently says nothing is docked — including while a stale
+      // local snapshot lags a Drive pull that is about to hand the frames back,
+      // and between an undo and its redo. This key is the only copy of the
+      // arrangement `deriveDockTabs` prefers on the way back, and a pan rewrites
+      // the whole key, so dropping the chrome here means an ordinary pan during
+      // that window destroys the panel's width, active tab and per-tab pan/zoom
+      // before the recovery can use them. Carry it forward verbatim (same shape
+      // loadDockChrome reads) and let deriveDockTabs decide what still qualifies
+      // — it keeps only tabs whose frame still carries `dockMembers`, so a
+      // genuinely undocked frame's entry is inert.
+      const prev = readViewportKey(id);
+      if (prev && prev.dock) payload.dock = prev.dock;
     }
     try { localStorage.setItem(viewportKey(id), JSON.stringify(payload)); } catch (e) { /* quota */ }
   }
@@ -830,8 +851,8 @@
   // [{frameId, viewport}] } so deriveDockTabs can treat it like a previous dock.
   function loadDockChrome(id) {
     try {
-      const raw = localStorage.getItem(viewportKey(id));
-      const d = raw && JSON.parse(raw).dock;
+      const v = readViewportKey(id);
+      const d = v && v.dock;
       if (!d) return null;
       // accept the single-frame shape from before tabs existed
       const rawTabs = d.tabs || (d.frameId ? [{ frameId: d.frameId, x: d.x, y: d.y, zoom: d.zoom }] : []);
@@ -853,6 +874,13 @@
       return c.kind === 'frame' && Array.isArray(c.dockMembers);
     }));
     if (!remaining.size) return null;
+    // Content says something IS docked but we hold no dock in memory: this is
+    // the stale-snapshot race (a pull delivering frames this device hadn't seen)
+    // or an undo/redo crossing a dock. The user's arrangement isn't gone, it's
+    // just on disk — read it rather than defaulting, or a recovered dock comes
+    // back at zoom 1 in the wrong tab. Cheap: only reachable when a dock exists
+    // in content, and idempotent for the boot callers that pass it in already.
+    if (!prevDock) prevDock = loadDockChrome(currentBoardId);
     const tabs = [];
     if (prevDock) for (const t of prevDock.tabs) {
       if (remaining.has(t.frameId)) { tabs.push(t); remaining.delete(t.frameId); }
@@ -869,8 +897,8 @@
   // device's copy lands in `dockMembers`, this is a no-op for that frame).
   function migrateLegacyDockMembers(id) {
     try {
-      const raw = localStorage.getItem(viewportKey(id));
-      const d = raw && JSON.parse(raw).dock;
+      const v = readViewportKey(id);
+      const d = v && v.dock;
       const rawTabs = d && (d.tabs || (d.frameId ? [d] : []));
       if (!rawTabs) return false;
       let migrated = false;
@@ -973,9 +1001,12 @@
     // they don't touch content, aren't undoable, and must NOT bump the version
     // or trigger a Drive push — just persist the viewport to its own local key.
     if (opts && opts.viewportOnly) { scheduleViewportSave(); return; }
-    // Docked-frame window membership follows geometry, so any content change
-    // can move a node across the boundary — recompute (and reparent) at the
-    // same chokepoint. No-op while nothing is docked.
+    // Membership is STICKY, not geometric: this pass reassigns nobody. It
+    // re-derives the id→tab index from the member lists and reparents/stows
+    // whatever an edit moved between windows (a duplicate following its source,
+    // a button following its root, a deleted member leaving). Unpruned on
+    // purpose — only reconcile prunes, because an in-panel edit may overhang
+    // the region freely. No-op while nothing is docked.
     recomputeDockMembers();
     // Docked buttons re-derive their x/y at the chokepoint, so whatever
     // mutated content (a drag, typing that grew a card, a color change)
@@ -4907,6 +4938,13 @@
     }
     for (const id of Object.keys(board.connections)) renderConnection(id);
     applyViewport();                 // before layoutAttachments — see renderAll
+    // …and the PANEL's transform too, for the same reason renderAll applies
+    // both: a reconcile can bring a dock into existence (a pull delivering the
+    // frames, a redo re-docking one) or switch which tab is active, and the
+    // panel would otherwise keep whatever transform was last applied — identity,
+    // if there was no dock at boot. The tab's stored pan/zoom is restored in the
+    // model by deriveDockTabs above; this is what paints it.
+    applyDockViewport();
     recomputeDockMembers({ prune: true });   // undo/remote may have moved members out
     syncDockPanel();                 // docked frame's title may have changed
     layoutAttachments();
