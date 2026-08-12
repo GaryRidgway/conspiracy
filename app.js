@@ -817,6 +817,11 @@
     if (v) return { x: +v.x || 0, y: +v.y || 0, zoom: +v.zoom || 1 };
     return fallback || { x: 0, y: 0, zoom: 1 };
   }
+  // Deleting a board takes its per-device view record with it: pan/zoom and the
+  // dock arrangement are keyed by board id, and nothing ever reads them again
+  // (ids are random, never reused), so leaving them behind is dead weight
+  // against the same localStorage ceiling checkStoragePressure warns about.
+  function clearViewport(id) { try { localStorage.removeItem(viewportKey(id)); } catch (e) { /* ignore */ } }
   function saveViewport(id) {
     const v = board.viewport;
     const payload = { x: v.x, y: v.y, zoom: v.zoom };
@@ -8356,6 +8361,7 @@
     saveLibrary(lib);
     localStorage.removeItem(boardKey(id));   // device board: content is gone
     clearBase(id);                           // drop any merge base too
+    clearViewport(id);                       // …and this device's view/dock arrangement
     if (id !== currentBoardId) { renderBoardMenu(); return; }
     currentBoardId = null;                    // so we don't re-save the removed board
     if (!lib.length) {

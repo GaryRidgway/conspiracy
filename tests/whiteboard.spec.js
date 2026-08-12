@@ -823,6 +823,37 @@ test('board picker: deleting a board demands typed confirmation', { tag: '@board
   await expect(page.locator('.board-row')).toHaveCount(1);
 });
 
+test('deleting a board takes its per-device view record with it', { tag: '@boards' }, async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'Keep me' });
+  await page.keyboard.press('Escape');
+  await page.click('#boardMenuBtn');
+  await page.click('#newBoardBtn');                       // "Board 2" opens and is current
+  const doomed = await page.evaluate(() => localStorage.getItem('whiteboard:current'));
+
+  // pan it, so the board has a per-device view record of its own on disk
+  await page.evaluate(() => {
+    document.getElementById('viewport').dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 120, deltaY: 40, clientX: 400, clientY: 400, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => page.evaluate((id) => localStorage.getItem('whiteboard:viewport:' + id), doomed))
+    .not.toBeNull();
+
+  await page.click('#boardMenuBtn');
+  await page.locator('.board-row.current .board-remove').click();
+  await page.keyboard.type('DELETE');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#delete-board-modal')).toBeHidden();
+  await expect(page.locator('.card-title')).toHaveText('Keep me');
+
+  // content, merge base and view record are all gone — nothing will ever read
+  // them again (board ids are random and never reused)
+  expect(await page.evaluate((id) => [
+    localStorage.getItem('whiteboard:board:' + id),
+    localStorage.getItem('whiteboard:base:' + id),
+    localStorage.getItem('whiteboard:viewport:' + id),
+  ], doomed)).toEqual([null, null, null]);
+});
+
 test('Reset view returns viewport to origin and 100%', { tag: ['@canvas', '@nav'] }, async ({ page }) => {
   // pan away first
   await drag(page, { x: 600, y: 400 }, { x: 300, y: 250 });
