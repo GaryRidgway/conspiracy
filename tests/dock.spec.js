@@ -612,6 +612,59 @@ test('a Drive pull landing after load recovers dock state a stale local snapshot
   expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
 });
 
+// The reconcile prune drops members that ended up a full region outside their
+// frame — an edit to SYNCED content, made on the pull path, outside commit().
+// The base and watermark filed alongside a pull describe what Drive holds, so
+// they must be taken BEFORE that prune runs: taken after, they'd record the
+// repair as already-synced, it would never push, and the next merge would read
+// it as the other device re-adding the member — back in, pruned again, once per
+// sync forever. The prune instead rides a version bump like any other edit.
+test('a prune on the pull path is a versioned local edit, not a lie about Drive', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  const cardId = await card.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // what "Drive" sends: the member still listed, but parked far outside the
+  // region — the disagreement a per-field merge produces when it takes one
+  // device's position edit and the other's membership edit
+  const pulled = await page.evaluate((cardId) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
+    b.cards[cardId].x = 3000;
+    b.version = 42;
+    return b;
+  }, cardId);
+  await page.evaluate((content) => {
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content, '77');
+  }, pulled);
+
+  // the prune ran locally…
+  expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('world');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  const state = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const entry = JSON.parse(localStorage.getItem('whiteboard:library')).find((b) => b.id === cur);
+    return {
+      base: JSON.parse(localStorage.getItem('whiteboard:base:' + cur)),
+      local: JSON.parse(localStorage.getItem('whiteboard:board:' + cur)),
+      syncedLocalVersion: entry.syncedLocalVersion,
+      driveVersion: entry.driveVersion,
+    };
+  });
+  // …but the base still says what Drive actually holds, unpruned at v42
+  expect(state.base.cards[frameId].dockMembers).toContain(cardId);
+  expect(state.base.version).toBe(42);
+  expect(state.syncedLocalVersion).toBe(42);
+  expect(state.driveVersion).toBe('77');
+  // …and the prune is a real local edit past that watermark, so it will push
+  expect(state.local.cards[frameId].dockMembers).not.toContain(cardId);
+  expect(state.local.version).toBe(43);
+});
+
 // …and the recovery has to have something left to recover FROM. The panel's
 // arrangement (per-tab pan/zoom, width, active tab) is per-device chrome on the
 // viewport key, and a viewport save rewrites that whole key — so while a stale

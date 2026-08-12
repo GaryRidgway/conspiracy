@@ -198,7 +198,15 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   created on the canvas over those world coordinates must NOT vanish into
   the panel. The one geometric rule left: reconcile (undo/remote — never
   commit) prunes members a full region-size beyond the rect — reverted
-  cross-window drags, not deliberate placements. That tolerance is measured
+  cross-window drags, not deliberate placements. When that prune fires it EDITS
+  SYNCED CONTENT, so on the pull path it rides a `version` bump and a save like
+  any other edit — and the base and watermark for that pull are filed BEFORE
+  reconcile runs, because `applyPulledBoard` does `board = content` and the
+  prune then mutates the caller's object in place. Filed afterwards they record
+  the repair as already-synced: it never pushes, and the next merge reads it as
+  the OTHER device re-adding the member, so back it comes and the next prune
+  drops it again, once per sync forever. (Same trap the push path calls out when
+  it deep-snapshots before `updateFile`.) That tolerance is measured
   from the member's CENTER, so it needs a real box — and it is a second
   consumer of the zero-box rule above: the panel boots `.hidden` (and stays
   `display:none` while minimized), so members measured there read 0×0 and

@@ -7608,9 +7608,24 @@
   }
 
   // ── Sync reconcile (last-write-wins, with a prompt on true divergence) ──
+  // Fingerprint of every docked frame's member list. Cheap (a handful of frames)
+  // and enough to tell whether a reconcile's prune edited synced content.
+  const dockListsSig = () => JSON.stringify(Object.keys(board.cards)
+    .filter((k) => Array.isArray(board.cards[k].dockMembers))
+    .map((k) => [k, board.cards[k].dockMembers]));
   // Replace a board's content in place (cache + live view + history baseline).
-  function applyPulledBoard(id, content) {
+  function applyPulledBoard(id, content, driveVersion) {
     saveBoardContent(id, content);
+    // The base and the watermark record WHAT DRIVE ACTUALLY HOLDS, so they are
+    // filed here — before the swap below hands `content` to reconcileToBoard,
+    // whose prune edits a frame's `dockMembers` in place (`board` IS `content`
+    // from here on). Filed afterwards they'd describe a local repair as already
+    // synced: it would never push, and the base would disagree with Drive
+    // permanently instead of self-correcting. Same trap the push path calls out.
+    if (driveVersion != null) {
+      saveBase(id, content);
+      setDriveSyncMeta(id, content.version, driveVersion);
+    }
     if (id === currentBoardId) {
       content.viewport = board.viewport;   // viewport is local-only: don't let a pull move the view
       board = content;
@@ -7622,7 +7637,15 @@
       // reconcileToBoard prunes whatever genuinely went away, which is the only
       // part a remote change can actually invalidate.
       interactiveId = null;
+      const dockListsBefore = dockListsSig();
       reconcileToBoard();       // derives dock from the pulled cards' dockMembers
+      // Reconcile's prune may have dropped far strays from a frame's member
+      // list. That's an edit to synced content, so own it as one — version and
+      // save, and it pushes on the next tick like any other edit. Unversioned it
+      // sat in memory contradicting the base filed above, and the next merge read
+      // it as the OTHER device re-adding the member: back it came, only for the
+      // next prune to drop it again, once per sync forever.
+      if (dockListsSig() !== dockListsBefore) { board.version++; scheduleSave(); }
       lastContent = contentSnapshot();
       updateHistoryButtons();
     }
@@ -8032,9 +8055,7 @@
       setDriveState('syncing', 'Drive: updating…');
       const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
       if (editedMeanwhile()) return 'retry';         // edited during the fetch → merge instead
-      applyPulledBoard(id, content);
-      saveBase(id, content);
-      setDriveSyncMeta(id, content.version, meta.version);
+      applyPulledBoard(id, content, meta.version);   // files the base + watermark itself
       updateDriveUI();
       await pullDriveAssets(layout, content).catch(assetSyncFailed);
       return 'done';
@@ -8064,9 +8085,7 @@
       const g = await guardedUpdate(entry, merged, meta.version);
       if (g.stale) return 'retry';                   // don't apply locally either — retry re-merges
       if (editedMeanwhile()) return 'retry';         // edited during the write → re-merge those in
-      applyPulledBoard(id, merged);
-      saveBase(id, merged);
-      setDriveSyncMeta(id, merged.version, g.res.version);
+      applyPulledBoard(id, merged, g.res.version);
       updateDriveUI();
       setDriveState('connected', conflicts
         ? 'Drive: merged (' + conflicts + ' kept this device)'
@@ -8080,9 +8099,7 @@
     // no base to merge against (first divergence / legacy board) → ask
     const choice = await openConflictModal(entry.name);
     if (choice === 'drive') {
-      applyPulledBoard(id, remoteContent);
-      saveBase(id, remoteContent);
-      setDriveSyncMeta(id, remoteContent.version, meta.version);
+      applyPulledBoard(id, remoteContent, meta.version);
       await pullDriveAssets(layout, remoteContent).catch(assetSyncFailed);
     } else if (choice === 'local') {
       await pushDriveAssets(layout, localBoard).catch(assetSyncFailed);
