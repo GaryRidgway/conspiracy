@@ -173,11 +173,42 @@
   const LIB_KEY = 'whiteboard:library';
   const CURRENT_KEY = 'whiteboard:current';
   const boardKey = (id) => 'whiteboard:board:' + id;
+  // EVERY localStorage write goes through here. Quota exhaustion is the one
+  // storage error that actually happens against a fixed ~5MB ceiling, and it was
+  // swallowed everywhere except the board-content write — so the library, the
+  // merge base, the viewport and the settings each failed in silence.
+  //
+  // The library is the sharp one, because it is an INDEX: the content write
+  // succeeds, its index entry doesn't, and the board vanishes from the picker
+  // while its bytes sit on disk occupying the very space that caused the
+  // failure. The user sees a board disappear and has no way to reach it, or the
+  // space it's holding. `adoptOrphanBoards` at boot is the other half of this.
+  //
+  // Returns false rather than throwing: callers that can degrade (a viewport, a
+  // merge base) carry on, and only the ones that can't say so.
+  let writeFailed = false;
+  function writeKey(key, value) {
+    try { localStorage.setItem(key, value); return true; }
+    catch (e) {
+      console.error('Storage write failed', key, e);
+      setSaveState('error');
+      // A write that actually failed outranks the predictive pressure check —
+      // it's evidence, not a forecast. Say it once, and latch the prediction
+      // quiet afterwards rather than letting an earlier forecast mute this.
+      if (!writeFailed) {
+        writeFailed = true;
+        storageWarned = true;
+        showStorageNotice('This browser is out of storage, so that change could not be saved. ' +
+          'Export a board you don’t need here, or delete one, then try again.');
+      }
+      return false;
+    }
+  }
   // Merge base: the board content as it stood at the last successful sync — the
   // common ancestor a three-way merge diffs against. Stored per Drive board.
   const baseKey = (id) => 'whiteboard:base:' + id;
   function saveBase(id, content) {
-    try { localStorage.setItem(baseKey(id), JSON.stringify(contentForStore(content))); } catch (e) { /* quota */ }
+    writeKey(baseKey(id), JSON.stringify(contentForStore(content)));
   }
   function loadBase(id) {
     try { const raw = localStorage.getItem(baseKey(id)); return raw ? JSON.parse(raw) : null; }
@@ -822,7 +853,7 @@
     try { const a = JSON.parse(localStorage.getItem(LIB_KEY)); return Array.isArray(a) ? a : []; }
     catch { return []; }
   }
-  function saveLibrary(lib) { try { localStorage.setItem(LIB_KEY, JSON.stringify(lib)); } catch (e) { /* quota */ } }
+  function saveLibrary(lib) { return writeKey(LIB_KEY, JSON.stringify(lib)); }
   function libraryEntry(id) { return loadLibrary().find((b) => b.id === id) || null; }
   function touchLibrary(id) {
     const lib = loadLibrary();
@@ -921,7 +952,7 @@
       const prev = readViewportKey(id);
       if (prev && prev.dock) payload.dock = prev.dock;
     }
-    try { localStorage.setItem(viewportKey(id), JSON.stringify(payload)); } catch (e) { /* quota */ }
+    writeKey(viewportKey(id), JSON.stringify(payload));
   }
   // Per-device dock CHROME only — width/minimized/active tab, and each tab's
   // own pan/zoom. Does NOT decide which nodes are docked; that comes from
@@ -1020,8 +1051,7 @@
   // Drive's local cache) ignore the result — for them a lost write is
   // re-derivable, not the user's only copy.
   function saveBoardContent(id, b) {
-    try { localStorage.setItem(boardKey(id), JSON.stringify(contentForStore(b))); return true; }
-    catch (e) { console.error('Save failed', e); return false; }
+    return writeKey(boardKey(id), JSON.stringify(contentForStore(b)));
   }
 
   // Build/repair the library: migrate the legacy single-board key, then
@@ -1034,12 +1064,13 @@
       const migrated = normalizeBoard(safeParse(legacy));
       saveBoardContent(id, migrated);
       // viewport is now a separate local key; preserve the legacy board's view
-      try { localStorage.setItem(viewportKey(id), JSON.stringify(migrated.viewport)); } catch (e) { /* quota */ }
+      writeKey(viewportKey(id), JSON.stringify(migrated.viewport));
       lib.unshift({ id, name: 'My board', mode: 'device', updatedAt: Date.now() });
       localStorage.removeItem(STORAGE_KEY);
-      localStorage.setItem(CURRENT_KEY, id);   // open the just-migrated board
+      writeKey(CURRENT_KEY, id);   // open the just-migrated board
       saveLibrary(lib);
     }
+    if (adoptOrphanBoards(lib)) saveLibrary(lib);
     if (!lib.length) {
       const id = newBoardId();
       saveBoardContent(id, blankBoard());
@@ -1047,6 +1078,34 @@
       saveLibrary(lib);
     }
     return lib;
+  }
+  // Board content on disk that the library doesn't list. The library is an
+  // index, so losing an entry (a quota-failed saveLibrary, a tab killed between
+  // the content write and the index write) doesn't lose the BOARD — it makes it
+  // unreachable, which looks identical to the user and is worse, because the
+  // bytes still occupy the space that caused the failure. Re-adopt them.
+  //
+  // This can't resurrect a deliberate delete: `removeBoard` removes the content
+  // key too, so a deleted board leaves nothing here to find. A delete
+  // interrupted between those two writes IS re-adopted, which is the right
+  // answer — that delete didn't happen.
+  function adoptOrphanBoards(lib) {
+    const known = new Set(lib.map((b) => b.id));
+    const prefix = boardKey('');
+    const found = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        // exact prefix only — `whiteboard:base:`/`whiteboard:viewport:` are
+        // per-board keys too, and adopting one of those as a board is nonsense
+        if (k && k.startsWith(prefix) && !known.has(k.slice(prefix.length))) found.push(k.slice(prefix.length));
+      }
+    } catch (e) { return false; }   // storage unreadable: nothing to recover from
+    for (const id of found) {
+      lib.push({ id, name: 'Recovered board', mode: 'device', updatedAt: Date.now() });
+      console.warn('Adopted a board missing from the library', id);
+    }
+    return found.length > 0;
   }
   function safeParse(s) { try { return JSON.parse(s); } catch { return {}; } }
 
@@ -7619,7 +7678,7 @@
   const settings = { flyTo: true };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* absent/corrupt → defaults */ }
   function saveSettings() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* quota */ }
+    writeKey(SETTINGS_KEY, JSON.stringify(settings));
   }
   const settingsBtn = document.getElementById('settingsBtn');
   const settingsPanel = document.getElementById('settings-panel');
@@ -7846,7 +7905,7 @@
   // Remember that the user opted into Drive so we can silently reconnect on the
   // next visit (no popup). Set only after a real connection; cleared on Sign out.
   const DRIVE_OPTED_KEY = 'whiteboard:drive:opted';
-  const rememberDriveOptIn = () => { try { localStorage.setItem(DRIVE_OPTED_KEY, '1'); } catch (e) { /* quota */ } };
+  const rememberDriveOptIn = () => { writeKey(DRIVE_OPTED_KEY, '1'); };
   const forgetDriveOptIn = () => { try { localStorage.removeItem(DRIVE_OPTED_KEY); } catch (e) { /* quota */ } };
 
   const stripBoardExt = (n) => (n || 'Untitled board').replace(/\.whiteboard\.json$/i, '').replace(/\.json$/i, '');
@@ -8675,7 +8734,7 @@
   // Load a board's content into view (no save of the previous board).
   function loadAndShow(id) {
     currentBoardId = id;
-    localStorage.setItem(CURRENT_KEY, id);
+    writeKey(CURRENT_KEY, id);
     board = loadBoardContent(id);
     if (migrateLegacyDockMembers(id)) { board.version++; saveBoardContent(id, board); }
     // this device's docked-frame CHROME (view preference, like the viewport)
@@ -8858,7 +8917,7 @@
   // ════════════════════════════════════════════════════════
   const library = ensureLibrary();
   currentBoardId = pickInitialBoardId(library);
-  localStorage.setItem(CURRENT_KEY, currentBoardId);
+  writeKey(CURRENT_KEY, currentBoardId);
   board = loadBoardContent(currentBoardId);
   if (migrateLegacyDockMembers(currentBoardId)) { board.version++; saveBoardContent(currentBoardId, board); }
   // docked-frame window CHROME: restore before first render (see loadAndShow)

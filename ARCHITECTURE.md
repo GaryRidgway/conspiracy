@@ -34,6 +34,7 @@ says *where* to find it.
   - [Viewport is per-device, never content](#viewport-is-per-device-never-content)
 - [Persistence (localStorage)](#persistence-localstorage)
   - [Image assets (IndexedDB whiteboard → assets)](#image-assets-indexeddb-whiteboard--assets)
+  - [Every localStorage write goes through writeKey](#every-localstorage-write-goes-through-writekey)
   - [Storage pressure (checkStoragePressure, settings meter)](#storage-pressure-checkstoragepressure-settings-meter)
 - [Drive sync](#drive-sync)
   - [Folder layout](#folder-layout)
@@ -797,6 +798,32 @@ rectangle even when the picture is a hexagon.
 - Browser storage is **evictable** by default; `ASSETS.persist()` asks for an
   exemption at boot. It's a request, not a guarantee, which is why a large
   image library still wants its Drive copy.
+
+### Every localStorage write goes through `writeKey`
+
+Quota exhaustion is the one storage error that actually happens against a fixed
+~5MB ceiling, and every write except the board content used to swallow it — the
+library, the merge base, the viewport, the settings, the Drive opt-in flag.
+
+**The library is the sharp one, because it is an index.** The content write
+succeeds, its index entry doesn't, and the board vanishes from the picker while
+its bytes sit on disk occupying the very space that caused the failure: the
+user watches a board disappear with no way to reach it *or* to reclaim what
+it's holding. `writeKey` reports (console + `setSaveState('error')` + one
+storage notice, latched per session) and returns false; `adoptOrphanBoards` at
+boot is the other half, re-adopting `whiteboard:board:*` keys the library
+doesn't list. It can't resurrect a deliberate delete — `removeBoard` removes
+the content key too — and a delete interrupted between those two writes *is*
+re-adopted, which is correct: that delete didn't happen.
+
+`#saveState` is **not** the durable signal here, and a test says so. It tracks
+the content write, so the next successful one flips it back to "saved" — true
+of the content, no longer true of the library. The notice (no auto-dismiss) is
+what's still saying it a moment later.
+
+A real failed write also latches `storageWarned`, so the *predictive* pressure
+check below stays quiet afterwards rather than the reverse: evidence outranks a
+forecast.
 
 ### Storage pressure (`checkStoragePressure`, settings meter)
 

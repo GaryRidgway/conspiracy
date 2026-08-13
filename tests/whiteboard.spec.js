@@ -751,6 +751,51 @@ test('a rejected local write reports "save failed", not "saved"', { tag: '@board
   await expect(page.locator('.visually-hidden[aria-live="polite"]')).toContainText(/save failed/i);
 });
 
+// The library is an INDEX, so a quota failure there doesn't lose the board — it
+// makes it unreachable, which looks the same to the user and is worse, since the
+// bytes still occupy the space that caused the failure. It used to fail in
+// silence: every write except the board content swallowed its own quota error.
+test('a rejected library write is reported, not swallowed', { tag: '@boards' }, async ({ page }) => {
+  await page.evaluate(() => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (k === 'whiteboard:library') throw new DOMException('quota', 'QuotaExceededError');
+      return real.call(this, k, v);
+    };
+  });
+  await page.click('#boardMenuBtn');
+  await page.click('#newBoardBtn');
+  // The notice is the assertion, not #saveState: the indicator tracks the
+  // CONTENT write, and the very next one succeeds and clears it back to
+  // "saved" — true of the content, and no longer true of the library. Only the
+  // notice (no auto-dismiss) still says so a moment later.
+  await expect(page.locator('#storage-notice')).toBeVisible();
+  await expect(page.locator('#storage-notice .notice-text')).toContainText(/out of storage/i);
+});
+
+// The other half of the same failure: content on disk with no index entry. The
+// board is still there, so boot re-adopts it rather than leaving the user with
+// an invisible board they can neither open nor delete to reclaim the space.
+test('a board whose library entry went missing is recovered at boot', { tag: '@boards' }, async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'Orphaned but alive' });
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  // drop just the index entry, exactly as a failed saveLibrary would leave it
+  const id = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const lib = JSON.parse(localStorage.getItem('whiteboard:library')).filter((b) => b.id !== cur);
+    localStorage.setItem('whiteboard:library', JSON.stringify(lib));
+    return cur;
+  });
+  await page.reload();
+  // it opens with its content intact — a blank stand-in would be the failure
+  await expect(page.locator('.card-title')).toHaveText('Orphaned but alive');
+  const lib = await page.evaluate(() => JSON.parse(localStorage.getItem('whiteboard:library')));
+  expect(lib.map((b) => b.id)).toContain(id);
+  // and it's reachable from the picker again, which is the whole point
+  await page.click('#boardMenuBtn');
+  await expect(page.locator(`.board-row[data-id="${id}"]`)).toBeVisible();
+});
+
 test('board picker: create, switch, and isolate content between boards', { tag: '@boards' }, async ({ page }) => {
   // start with one board; put a card on it
   await makeCardAt(page, 350, 300, { title: 'On board one' });
