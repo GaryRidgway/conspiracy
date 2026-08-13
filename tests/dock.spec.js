@@ -579,6 +579,59 @@ test('jumping to a node in the panel pans the panel, not the canvas', { tag: ['@
 //  frame (with its dockMembers intact), the very next reconcile picks it
 //  back up automatically.
 // ════════════════════════════════════════════════════════════════════════
+// A board reaching a browser that has never seen it arrives as CONTENT ONLY —
+// Drive carries no per-device chrome, so there is no stored width, no active
+// tab and no per-tab zoom to fall back on. The dock has to rebuild from the
+// records alone. Handing those nodes back to the canvas instead would read as
+// the other browser having silently undocked everything, which is the whole
+// reason membership is content and not chrome.
+test('a board arriving on a device that has never seen it rebuilds its dock from content alone',
+  { tag: '@dock' }, async ({ page }) => {
+    await page.evaluate(() => {
+      const id = 'b_freshdevice';
+      const content = {
+        schema: 1, version: 5,
+        cards: {
+          c_frame1: { x: 0, y: 0, w: 600, h: 400, kind: 'frame', title: 'Research', dockMembers: ['c_mem1', 'c_mem2'] },
+          c_mem1: { x: 40, y: 60, title: 'Member one', body: '' },
+          c_mem2: { x: 40, y: 200, title: 'Member two', body: '' },
+          c_item1: { x: 900, y: 0, title: 'Item tab', body: '', dockMembers: [] },
+          c_loose: { x: 1600, y: 0, title: 'On the canvas', body: '' },
+        },
+        iframes: {}, connections: {},
+      };
+      const lib = JSON.parse(localStorage.getItem('whiteboard:library'));
+      lib.unshift({ id, name: 'From another browser', mode: 'device', updatedAt: Date.now() });
+      localStorage.setItem('whiteboard:library', JSON.stringify(lib));
+      localStorage.setItem('whiteboard:board:' + id, JSON.stringify(content));
+      localStorage.setItem('whiteboard:current', id);
+      // deliberately NO whiteboard:viewport:b_freshdevice — that key is what a
+      // device which HAS seen this board would have, and this one hasn't
+    });
+    await page.reload();
+    await expect(page.locator('#dock-panel')).toBeVisible();
+
+    // both flavors of tab come back, named, in the rail
+    await expect(page.locator('#dock-rail .dock-rail-tab')).toHaveText(['Research', 'Item tab']);
+    // a region tab renders its members in the panel's world…
+    await expect(page.locator('#dock-world [data-id="c_mem1"]')).toHaveCount(1);
+    await expect(page.locator('#dock-world [data-id="c_mem2"]')).toHaveCount(1);
+    // …and its frame is stowed off the canvas rather than sitting there twice
+    await expect(page.locator('[data-id="c_frame1"]')).toHaveClass(/frame-docked/);
+    // an item tab IS the panel
+    await expect(page.locator('#dock-item [data-id="c_item1"]')).toHaveCount(1);
+    // and nothing that wasn't docked got swept in
+    await expect(page.locator('#world [data-id="c_loose"]')).toHaveCount(1);
+
+    // Boot must not DIRTY synced content to achieve any of that: a version bump
+    // here would push a no-op change at every device that opens the board.
+    const stored = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('whiteboard:board:b_freshdevice')));
+    expect(stored.version).toBe(5);
+    expect(stored.cards.c_frame1.dockMembers).toEqual(['c_mem1', 'c_mem2']);
+    expect(stored.cards.c_item1.dockMembers).toEqual([]);
+  });
+
 test('a Drive pull landing after load recovers dock state a stale local snapshot dropped', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
