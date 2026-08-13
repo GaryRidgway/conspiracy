@@ -35,6 +35,19 @@
     };
   }
 
+  // The document's own top-level names. Anything else up there is a field this
+  // build has never heard of — mergeBoards carries it through rather than
+  // rebuilding the document without it, and `schema` is how a future build says
+  // the fields we DO know have changed meaning. See "Forward compatibility".
+  const BOARD_COLLECTIONS = ['cards', 'iframes', 'connections'];
+  const BOARD_FIELDS = new Set(['schema', 'version', 'viewport', ...BOARD_COLLECTIONS]);
+  // A board written by a NEWER deploy. Additive change is safe on its own (the
+  // unknown fields ride through untouched), but a schema bump is the signal that
+  // a field we already read now means something else — and no amount of
+  // preservation survives being misread. Builds that see this stop touching the
+  // board instead of syncing a wrong interpretation of it back over the original.
+  const schemaTooNew = (content) => Number(content && content.schema) > SCHEMA_VERSION;
+
   let board = blankBoard();   // the open board's content (set at boot)
   let currentBoardId = null;
 
@@ -117,11 +130,27 @@
       version: Math.max(local.version || 0, remote.version || 0) + 1,
       viewport: local.viewport || remote.viewport || { x: 0, y: 0, zoom: 1 },
     };
-    for (const coll of ['cards', 'iframes', 'connections']) {
+    for (const coll of BOARD_COLLECTIONS) {
       const res = mergeCollection(base[coll] || {}, local[coll] || {}, remote[coll] || {});
       merged[coll] = res.out;
       for (const c of res.conflicts) conflictItems.push({ coll, id: c.id, alt: c.alt, keptSide: c.keptSide });
     }
+    // Everything ELSE at the top level came from a build that knows something we
+    // don't — Pages ships continuously, so "the other device is a version ahead"
+    // is the normal case, not the exotic one. Rebuilding the document from the
+    // fixed list above would silently delete that work, and the victim is always
+    // whoever upgraded FIRST. Carry it through instead, at whole-value
+    // granularity (local wins a true tie): we can't merge inside a shape we
+    // can't read, and coarse is recoverable where a drop is not. The build that
+    // understands the field merges it properly; this path only has to not
+    // destroy it. mergeRecord is exactly the field-wise three-way we want, so
+    // hand it the unknown keys and nothing else.
+    const unknownOf = (b) => {
+      const o = {};
+      for (const k of Object.keys(b || {})) if (!BOARD_FIELDS.has(k)) o[k] = b[k];
+      return o;
+    };
+    Object.assign(merged, mergeRecord(unknownOf(base), unknownOf(local), unknownOf(remote))[0]);
     const normalized = normalizeBoard(merged);
     // label each conflicted item from the merged content, for the notice
     for (const it of conflictItems) {
@@ -811,6 +840,21 @@
     if (driveVersion != null) e.driveVersion = String(driveVersion);
     saveLibrary(lib);
   }
+  // Remember that Drive holds a board written to a schema this build can't read,
+  // so the next tick doesn't re-download it every SYNC_POLL_MS to learn the same
+  // thing. Self-clearing: the deploy that raises SCHEMA_VERSION past this value
+  // isn't blocked by it, and files the field away on its first successful pull.
+  function setRemoteSchema(id, schema) {
+    const lib = loadLibrary();
+    const e = lib.find((b) => b.id === id);
+    if (!e) return;
+    const want = Number(schema) > SCHEMA_VERSION ? Number(schema) : undefined;
+    if (e.remoteSchema === want) return;                 // unchanged → don't churn the library
+    if (want === undefined) delete e.remoteSchema; else e.remoteSchema = want;
+    saveLibrary(lib);
+  }
+  const schemaBlocked = (entry) => Number(entry && entry.remoteSchema) > SCHEMA_VERSION;
+  const SCHEMA_BLOCK_TEXT = 'Drive: app out of date — reload';
 
   function loadBoardContent(id) {
     let b;
@@ -7749,6 +7793,10 @@
     if (!DRIVE.isConnected() || reconciling.has(currentBoardId)) return;
     const entry = libraryEntry(currentBoardId);
     if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;   // non-Drive board: leave as-is
+    // This runs on every commit, so without it the next keystroke would replace
+    // the "app out of date" message with a cheerful "changes pending…" — which
+    // is a lie: those changes are never going to reach Drive from this build.
+    if (schemaBlocked(entry)) { setDriveState('error', SCHEMA_BLOCK_TEXT); return; }
     if (currentBoardFullySynced()) setDriveState('connected', 'Drive: synced');
     else setDriveState('pending', 'Drive: changes pending…');
   }
@@ -7858,6 +7906,10 @@
       // push would silently overwrite them.
       const meta = await DRIVE.getMeta(picked.id);
       const content = normalizeBoard(await DRIVE.getFile(picked.id));
+      // Refuse the open outright rather than caching a board we'd misread: once
+      // it's local the user edits it, and the first sync pushes our wrong
+      // reading back over the original. Nothing has been written yet here.
+      if (schemaTooNew(content)) { setDriveState('error', SCHEMA_BLOCK_TEXT); return; }
       const lib = loadLibrary();
       let entry = lib.find((b) => b.driveFileId === picked.id);
       let id;
@@ -8309,6 +8361,10 @@
   async function reconcileAttempt(id) {
     const entry = libraryEntry(id);
     if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return 'done';
+    // Drive is holding a board from a newer build. Nothing this pass could do is
+    // safe: a push overwrites it with our misreading, a pull adopts fields we'd
+    // then re-serialize wrongly. Stand down until the app itself is updated.
+    if (schemaBlocked(entry)) { setDriveState('error', SCHEMA_BLOCK_TEXT); return 'done'; }
     const isCurrent = id === currentBoardId;
     const localBoard = isCurrent ? board : loadBoardContent(id);
     const localVersion = localBoard.version;
@@ -8339,6 +8395,8 @@
     if (remoteChanged && !localChanged) {            // Drive is newer → pull
       setDriveState('syncing', 'Drive: updating…');
       const content = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+      setRemoteSchema(id, content.schema);
+      if (schemaTooNew(content)) { setDriveState('error', SCHEMA_BLOCK_TEXT); return 'done'; }
       if (editedMeanwhile()) return 'retry';         // edited during the fetch → merge instead
       applyPulledBoard(id, content, meta.version);   // files the base + watermark itself
       updateDriveUI();
@@ -8362,6 +8420,10 @@
     }
     // both sides changed since the last sync
     const remoteContent = normalizeBoard(await DRIVE.getFile(entry.driveFileId));
+    setRemoteSchema(id, remoteContent.schema);
+    // Covers the merge AND the no-base prompt below: "keep Drive" would adopt a
+    // document we can't read, "keep this device" would overwrite it.
+    if (schemaTooNew(remoteContent)) { setDriveState('error', SCHEMA_BLOCK_TEXT); return 'done'; }
     const base = loadBase(id);
     if (base) {                                      // three-way merge: keep both sides' edits
       setDriveState('syncing', 'Drive: merging…');

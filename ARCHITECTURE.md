@@ -27,6 +27,7 @@ says *where* to find it.
   - [Docked buttons: derived x/y, still stored](#docked-buttons-derived-xy-still-stored)
   - [Pinned nodes: chrome, not canvas](#pinned-nodes-chrome-not-canvas)
   - [Docked side window (#dock-panel, DOCKED SIDE WINDOW section)](#docked-side-window-dock-panel-docked-side-window-section)
+  - [Forward compatibility (the merge must not delete what it can't read)](#forward-compatibility-the-merge-must-not-delete-what-it-cant-read)
   - [Record shape rules (the merge depends on these)](#record-shape-rules-the-merge-depends-on-these)
 - [The mutation pipeline](#the-mutation-pipeline)
   - [Board switching](#board-switching)
@@ -76,16 +77,14 @@ Button nodes (`kind:'button'`, with `action:{type:'node'|'url', target}`), frame
 nodes (`kind:'frame'`, with `title`, `w`, `h`, `moveContents?`) and image nodes
 (`kind:'image'`, with `asset`, `w`, `h`, `title?`) live in
 the **cards collection**, not their own collections. This is deliberate:
-`mergeBoards` iterates the fixed list `['cards','iframes','connections']`, and
-so do export/import, undo snapshots, clipboard, and color coding. A new
-top-level collection would be **silently dropped** by the merge code in every
-already-deployed client during sync. Adding a new node type = a new `kind`
-on cards; `renderCard()` dispatches on it.
+`mergeBoards` iterates `BOARD_COLLECTIONS`, and so do export/import, undo
+snapshots, clipboard, and color coding. Adding a new node type = a new `kind`
+on cards; `renderCard()` dispatches on it — a new top-level collection would
+have to be taught to all of them.
 
-The same applies to any new **top-level field**: `mergeBoards` rebuilds the
-document from a fixed field list (`schema`, `version`, `viewport`, the three
-collections), so new persistent data must live on records *inside* those
-collections, never beside them.
+The same applies to any new **top-level field**: new persistent data belongs on
+records *inside* those collections, never beside them. This is now a rule about
+**this** build's reach, not about data safety — see *Forward compatibility*.
 
 Adding a kind means touching more than `renderCard()`. `CARD_KIND_LABEL` is the
 one place that names a kind for the node picker, ⌘K and the context menu's
@@ -467,6 +466,41 @@ The invariants:
   before the move and re-shows the placeholder until `load` fires (4s
   bail-out, as some pages never fire it). Without it the element stays
   `.loaded` over a blank box and the embed reads as having disappeared.
+
+### Forward compatibility (the merge must not delete what it can't read)
+
+`main` auto-deploys, so **"the other device is one version ahead" is the
+ordinary case**, not the exotic one — a tab left open overnight is an old
+client, and a phone that reloaded this morning is a new one. Two mechanisms
+cover the two ways that hurts, and they answer different failure modes:
+
+- **Additive change rides through.** `mergeBoards` merges `BOARD_COLLECTIONS`
+  per-record as always, then hands every *other* top-level key to `mergeRecord`
+  and assigns the result. An unknown field or a future collection is preserved
+  rather than dropped. Granularity is the whole value (local wins a true tie):
+  we can't merge inside a shape we can't read, and coarse is recoverable where a
+  drop is not. `normalizeBoard` already passes extra keys through, and
+  `contentForStore` only strips `viewport`, so a preserved field survives to
+  both localStorage and Drive. The build that *understands* the field merges it
+  properly; this path only has to not destroy it.
+- **Breaking change stops the sync.** Preservation is no help when a field we
+  already read changes meaning — that is exactly what a `schema` bump announces.
+  `schemaTooNew(content)` gates every path that would adopt or overwrite remote
+  content (`reconcileAttempt`'s pull and merge branches, and `openFromDrive`,
+  which refuses the open outright rather than caching a board we'd misread).
+  The observed schema is filed on the library entry as `remoteSchema` so the
+  10s tick stops re-downloading the file to relearn it, and
+  `refreshDriveStatus` re-asserts the message — without that, the next
+  keystroke replaces "app out of date" with "changes pending…", which is a lie.
+  Self-clearing: the deploy that raises `SCHEMA_VERSION` past the stored value
+  isn't blocked, and files the field away on its first successful pull.
+
+**The payoff is deferred, and that's the point.** Clients already in the wild
+still drop what they don't know — this only protects boards once the *older*
+side of a pair is running this build or later. It was shipped ahead of any need
+for it, because a compatibility guard added at the moment it's wanted protects
+nobody. Bump `SCHEMA_VERSION` only for a genuinely breaking reinterpretation,
+and only once enough time has passed that the guard is widely deployed.
 
 ### Record shape rules (the merge depends on these)
 

@@ -3540,6 +3540,74 @@ test('merge: a field deleted on one side stays deleted', { tag: '@boards' }, asy
   expect('label' in merged.connections.k).toBe(false);          // gone, not undefined
 });
 
+// ── Forward compatibility: `main` auto-deploys, so "the other device is one
+//    version ahead" is the ordinary case. A merge that rebuilds the document
+//    from a fixed field list deletes whatever the newer build added, and the
+//    victim is always whoever upgraded first. ──
+
+// A future top-level collection (the shape ARCHITECTURE forbids adding *today*,
+// precisely because older clients used to drop it) must survive a round trip
+// through a build that has never heard of it.
+test('merge: a top-level collection this build does not know survives', { tag: '@boards' }, async ({ page }) => {
+  const base = boardOf({ a: cardRecordAt(0, 0, 'A') });
+  const local = boardOf({ a: cardRecordAt(0, 0, 'A EDITED') });     // this (old) build edited a card
+  const remote = boardOf({ a: cardRecordAt(0, 0, 'A') });
+  remote.layers = { L1: { name: 'Sketch', hidden: false } };        // a newer build added this
+  const { merged, conflicts } = await merge(page, base, local, remote);
+  expect(conflicts).toBe(0);
+  expect(merged.cards.a.title).toBe('A EDITED');                    // our own edit still lands
+  expect(merged.layers).toEqual({ L1: { name: 'Sketch', hidden: false } });
+});
+
+// Preserved, but at whole-value granularity — we can't merge inside a shape we
+// can't read. Local wins the tie, same rule as every other conflict.
+test('merge: an unknown top-level field edited on both sides keeps the local value', { tag: '@boards' }, async ({ page }) => {
+  const base = boardOf({}); base.layers = { L1: { name: 'orig' } };
+  const local = boardOf({}); local.layers = { L1: { name: 'mine' } };
+  const remote = boardOf({}); remote.layers = { L1: { name: 'theirs' } };
+  const { merged } = await merge(page, base, local, remote);
+  expect(merged.layers).toEqual({ L1: { name: 'mine' } });
+});
+
+// Field preservation handles ADDITIVE change. A schema bump is how a future
+// build says a field we already read now means something else, and no amount of
+// preservation survives being misread — so this build stops touching the board
+// rather than syncing its wrong interpretation back over the original.
+test('a Drive board written to a newer schema is neither pulled nor overwritten',
+  { tag: '@boards' }, async ({ page }) => {
+    const mine = await page.evaluate(() => {
+      const raw = localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current'));
+      return JSON.parse(raw);
+    });
+    const theirs = { ...mine, schema: 99, cards: { future1: { x: 0, y: 0, title: 'from the future' } } };
+    await bootWithFakeDrive(page, {
+      files: [
+        { id: 'root1', name: 'My Drive', folder: true, parents: [] },
+        { id: 'fold1', name: 'Board', folder: true, parents: ['root1'] },
+        { id: 'asst1', name: 'assets', folder: true, parents: ['fold1'] },
+        { id: 'file1', name: 'Board.whiteboard.json', json: JSON.stringify(theirs), version: 7, parents: ['fold1'] },
+      ],
+      // driveVersion is stale, so the remote reads as changed → the pull branch
+      entry: { mode: 'drive', driveFileId: 'file1', driveFolderId: 'fold1', driveAssetsFolderId: 'asst1',
+               syncedLocalVersion: mine.version, driveVersion: '1' },
+    });
+
+    await expect(page.locator('#drive-state')).toHaveText(/out of date/);
+    // Neither direction ran: the newer board is still intact on Drive…
+    expect(await driveCalls(page)).not.toContain('updateFile');
+    const remoteNow = await page.evaluate(() => JSON.parse(window.__drive.files.file1.json));
+    expect(remoteNow.schema).toBe(99);
+    expect(remoteNow.cards.future1).toBeTruthy();
+    // …and it was not adopted locally either
+    await expect(page.locator('[data-id="future1"]')).toHaveCount(0);
+
+    // The block is remembered, so the next tick doesn't re-download to re-learn
+    // it — and an ordinary edit can't replace the warning with "changes pending".
+    expect((await libEntry(page)).remoteSchema).toBe(99);
+    await addCardAt(page, 300, 300);
+    await expect(page.locator('#drive-state')).toHaveText(/out of date/);
+  });
+
 // The Drive conflict prompt exists but stays hidden for normal (device-board) use.
 test('Drive conflict modal is present and hidden by default', { tag: '@boards' }, async ({ page }) => {
   await expect(page.locator('#conflict-modal')).toBeHidden();
