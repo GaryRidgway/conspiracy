@@ -26,7 +26,7 @@ says *where* to find it.
   - [Node kinds: buttons, frames and images are cards](#node-kinds-buttons-frames-and-images-are-cards)
   - [Docked buttons: derived x/y, still stored](#docked-buttons-derived-xy-still-stored)
   - [Pinned nodes: chrome, not canvas](#pinned-nodes-chrome-not-canvas)
-  - [Docked frame window (#dock-panel, DOCKED FRAME WINDOW section)](#docked-frame-window-dock-panel-docked-frame-window-section)
+  - [Docked side window (#dock-panel, DOCKED SIDE WINDOW section)](#docked-side-window-dock-panel-docked-side-window-section)
   - [Record shape rules (the merge depends on these)](#record-shape-rules-the-merge-depends-on-these)
 - [The mutation pipeline](#the-mutation-pipeline)
   - [Board switching](#board-switching)
@@ -93,6 +93,14 @@ Delete item, so a kind that forgets it reads as "Card" everywhere. What a kind
 does NOT need is a place in `mergeBoards`, undo, clipboard, color coding, dock
 membership or `frameContents` — those are all kind-blind, which is the whole
 payoff for staying inside the cards collection.
+
+Two allowlists are deliberately **opt-in** rather than kind-blind, and a new
+kind joins them only when someone has thought about what it means there:
+`PINNABLE_KINDS` (may this ride the chrome as a chip?) and `DOCKABLE_KINDS`
+(may this own a tab in the side panel — and, for a non-frame, BE that panel?).
+Both are enforced at the point that
+*derives* the feature, so a kind added to or removed from either one heals
+itself — see *Pinned nodes* and *Docked side window*.
 
 ### Docked buttons: derived x/y, still stored
 
@@ -184,18 +192,105 @@ the board to every device. Invariants:
   (`duplicateNodes`, `copyNodes`, `setNodesColor`) — never the
   selection-based wrappers, which can't see pinned ids.
 
-### Docked frame window (`#dock-panel`, DOCKED FRAME WINDOW section)
+### Docked side window (`#dock-panel`, DOCKED SIDE WINDOW section)
 
-Frames can dock to the right edge as **tabs sharing one second window into
-the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
+A frame's region, or a single card or embed, can dock to the right edge as
+**tabs sharing one panel** — bespoke work areas reachable from the edge rail.
+The invariants:
 
-- **Exclusive model**: while docked, a region's nodes render in
-  `#dock-world` instead of `#world`. The frame itself leaves the canvas
+- **Two flavors of tab, and they are not the same feature.** A **region tab**
+  (`kind:'frame'`) makes the panel a **second window into the same world**:
+  its members render in `#dock-world` under that tab's own pan/zoom, the frame
+  itself stows off the canvas, and the panel is a free work surface you can
+  drag things into. An **item tab** (a plain card or an embed) makes the panel
+  **the node itself**: it fills `#dock-item`, its button tray across the
+  bottom, with no world, no camera and no members — so the width splitter
+  resizes *the item*, and there is nothing to get lost in. Exactly one of the
+  two containers is live at a time (`#dock-panel.item-mode` swaps them).
+  Three predicates keep this straight and they are **not** interchangeable:
+  `dockOwnsRegion(id)` asks only about the KIND, so it answers before a node is
+  docked and after it isn't (what `dockNode`/`undockNode` need);
+  `isRegionTab(id)` adds "…and is docked right now" (what the canvas asks when
+  deciding whether a frame is stowed chrome — using the kind-only test here
+  hides every frame from the marquee); and `isDockItem(id)` asks "is this node
+  part of an item tab", true for the owner and for a button on its tray, which
+  is the single question every "no world here" guard asks.
+- **An item keeps its element and its untouched `x`/`y`** — only the render
+  target changes, the same bargain a pinned node makes with its chip, and the
+  same self-heal: drop `dockMembers` and it renders back exactly where it was.
+  `tabMembers()` prepends the owner to its own tab so `dockMembers`,
+  `worldFor`, stowing, hydration, delete and undo all treat it as an ordinary
+  occupant needing no parallel path. What makes the CSS work without touching
+  a single renderer is **`position: static`**: it makes the inline `left`/`top`
+  every renderer writes simply not apply. An inline `width`/`height` *would*
+  win, though, so `renderIframe` clears those while `isDockItem(id)` — and
+  `recomputeDockMembers` re-renders any node that crosses the item boundary,
+  since reparenting alone would leave an embed at its stored width inside a
+  panel that is supposed to be deciding it.
+- **One title row, whichever kind of tab is showing.** An item brings its own
+  title row, so `#dock-header` would be the *second* one: `#dock-panel.item-mode`
+  hides that header outright, and the dock's own controls (minimize, undock)
+  live in the NODE's row instead, as `.dock-ctl` buttons in the card/embed
+  header template. CSS reveals them **by ancestry** (`#dock-item > .node
+  .dock-ctl`), so there is no state to keep in sync and nothing to clean up on
+  undock — back on the canvas they hide themselves. The embed's "zoom the canvas
+  to this" button hides the same way, having nothing to say while the embed *is*
+  the panel. A region tab is the mirror image: its frame's title tab is stowed
+  off the canvas, so the panel header IS that row, and it carries the frame's
+  own copy-link (`#dockLinkBtn`) which would otherwise be unreachable while
+  docked. Two consequences for the header pill: it only ever names a region, so
+  its inline rename needs no "does this kind have a title field" guard, and the
+  rail-tab menu offers Rename for regions only — an item's own title is right
+  there in the panel to edit in place.
+- **An item has no world presence, and that is ONE property, not a list of
+  exemptions: `nodeGeom(id)` returns null for it.** Its stored `x`/`y` are a
+  parked canvas position — where it will land when it undocks — so "no
+  geometry" is simply the truth, and it is a truth every consumer already
+  handles, because lazy hydration made null the normal answer for a node
+  without a box. Stating it once buys all of: arrows collapse (`pathBetween`),
+  the marquee and Alt+Arrow spatial nav skip it, Tab drops it from the reading
+  order, a `moveContents` frame can't sweep it up, and `fitToNodes` ignores it.
+  This is the same bargain a pinned node makes by never entering `nodeEls` at
+  all (see *Pinned nodes*), and the same warning applies: **do not add
+  per-system special cases for docked items** — the first version of this did,
+  and Tab order and spatial nav were quietly wrong because two systems never
+  got their case. The guards that remain are the ones geometry can't express:
+  `startNodeDrag` refuses an item (a drag mutates records, not boxes), the
+  renderers clear an item's inline `width`/`height` (a CSS concern),
+  `layoutRoot` lays a tray out with flexbox instead of derived x/y, the panel's
+  pan/zoom and Fit stand down (`dockItemShowing()`), and `pointerCtx` answers
+  `'main'` over the whole panel so a card dragged onto an item tab can't join a
+  tab that renders nothing but its own owner and vanish.
+- **Two consumers took the anchor without checking, and must keep their
+  guards**: `startConnectionDrag` and `startKbConnect` both need the source's
+  border to draw a rubber band from, so they bail when there is no geometry —
+  and an item's ports are hidden in CSS so the pointer gesture isn't offered at
+  all. Nothing is lost that undocking doesn't give back: an arrow already
+  touching an item keeps its record and reappears when it lands. Before the
+  null, these two silently *aimed* a connection from a node with no position.
+- **Which kinds may own a tab is an allowlist** (`DOCKABLE_KINDS`, checked via
+  `isDockable`), widened one kind at a time exactly like `PINNABLE_KINDS`. It
+  is enforced in `deriveDockTabs` rather than at the entry points, so a kind
+  that *leaves* the set renders back on the canvas at its untouched `x`/`y` (an
+  item's `x`/`y` are never touched, which is what makes that free) —
+  which is also precisely what an older deployed client does with an owner kind
+  it has never heard of. Unlike `healPins`, the now-inert field is **left in
+  the data**: `dockMembers` is the entire record of "this is docked", so
+  stripping it would undock the node on every device that *does* understand the
+  kind. `image` is deliberately out of the set for now (its crop/shape gestures
+  want their own pass); `button` is out because a button already docks *to* a
+  node — see *Docked buttons*.
+- **Exclusive model**: while docked, a tab's nodes render in the panel
+  instead of `#world`. A docked frame leaves the canvas
   entirely (`.frame-docked` is `visibility: hidden` — not display, so its
-  tab rect stays measurable for docked-button layout). A node still has
-  exactly ONE element; `nodeEls` stays a single map. Never render a node
-  in both. Inactive tabs' members stay parented in the panel with
-  `.dock-stowed` (also visibility) — hidden but measurable.
+  tab rect stays measurable for docked-button layout); an item tab's owner must
+  **never** get that class, since it is the thing the panel exists to show. A
+  node still has exactly ONE element; `nodeEls` stays a single map. Never
+  render a node in both. Inactive tabs' members stay parented in the panel with
+  `.dock-stowed` (visibility, so world geometry stays measurable) — except
+  inside `#dock-item`, where the rule is `display: none`, because an item has
+  no geometry worth measuring and a visible-but-hidden one would still hold the
+  flex row open.
 - **One shared coordinate space.** Both windows view the same world units;
   only the transform differs. All screen→world conversions go through
   `ctxToWorld(ctx, x, y)` / `pointerWorld(e)` (which picks the window under
@@ -221,51 +316,79 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   re-measured it. It now bails on a zero box and a `ResizeObserver`
   (`frameWrapResize`) re-runs the layout when a box appears — which covers boot,
   un-minimize, and any future render-order change without depending on one.
-- **Membership is STICKY, not geometric.** Each docked frame carries an
-  explicit member list on its OWN card record (`dockMembers` — real, synced
-  content, like any other field): seeded center-in-rect when the frame
-  docks, then changed ONLY by gestures — drop over the panel joins the
+- **Membership is STICKY, not geometric** — and it is a REGION tab's feature
+  only. Each docked node carries an
+  explicit member list on its OWN record (`dockMembers` — real, synced
+  content, like any other field; on an **iframe record** when an embed owns the
+  tab, which is why `dockListsSig` and `deriveDockTabs` read both collections):
+  seeded center-in-rect when a frame docks, then
+  changed ONLY by gestures — drop over the panel joins the
   active tab, drop over the canvas leaves, panel-menu creations/pastes
   join, duplicates of members follow their source, and docked-button
-  assemblies follow their root. **The drop/creation position is law** — the
+  assemblies follow their root. An **item tab's list is empty for its whole
+  docked life**: it has no free surface beside the node, and a member added to
+  one would be reparented into `#dock-item` and stack under the owner
+  (`addToDockTab` refuses non-region targets). The owner is never *listed* in
+  its own array either — `tabMembers` prepends it instead, and two entries
+  would let a prune write it out of its own tab.
+  **The drop/creation position is law** — the
   panel is a free work surface, so members may live outside the frame's
   rect; never clamp placements to the region. Geometry must never silently
   reassign: the docked region's canvas ghost is invisible, so a node
   created on the canvas over those world coordinates must NOT vanish into
-  the panel. The one geometric rule left: reconcile (undo/remote — never
-  commit) prunes members a full region-size beyond the rect — reverted
-  cross-window drags, not deliberate placements. When that prune fires it EDITS
-  SYNCED CONTENT, so on the pull path it rides a `version` bump and a save like
-  any other edit — and the base and watermark for that pull are filed BEFORE
-  reconcile runs, because `applyPulledBoard` does `board = content` and the
-  prune then mutates the caller's object in place. Filed afterwards they record
-  the repair as already-synced: it never pushes, and the next merge reads it as
-  the OTHER device re-adding the member, so back it comes and the next prune
-  drops it again, once per sync forever. (Same trap the push path calls out when
-  it deep-snapshots before `updateFile`.) That tolerance is measured
-  from the member's CENTER, so it needs a real box — and it is a second
-  consumer of the zero-box rule above: the panel boots `.hidden` (and stays
-  `display:none` while minimized), so members measured there read 0×0 and
-  their "center" collapses onto their top-left, pulling the left/top
-  thresholds half a node inward. A member parked left of or above the rect was
-  ejected by its own reload, with nothing having moved. No box, no verdict.
+  the panel.
   Presence of `dockMembers`
-  (even `[]`) on a `kind:'frame'` card IS "this frame is docked" — absence
+  (even `[]`) on a dockable record IS "this node is docked" — absence
   means undocked; remove with `delete`, never assign `undefined` (same rule
   as any other field — see Record shape rules below).
-- **Split between synced content and per-device chrome.** Which frames are
+- **WHERE a member sits must never decide whether it IS one — there is no
+  geometric prune, and adding one back will eject real work.** A reconcile
+  (undo/redo, a Drive pull) used to drop members whose centre had ended up a
+  full region-size beyond the rect, meaning to tidy up after a reverted
+  cross-window drag. No tolerance can work, because the panel is a free surface
+  **with its own camera**: pan it down to reach empty space, drop a card there,
+  and that card is legitimately hundreds of world px outside a rect it was never
+  required to sit in. Three things made it look harmless for years, and each is
+  a reason to be suspicious of the next such idea. (1) It needed a real box, and
+  the panel is `display:none` while `renderAll` reconciles, so a RELOAD always
+  kept the member and only mid-session reconciles ejected it — same board,
+  opposite answers, which reads as random rather than as a rule. (2) Its stated
+  target needs no help: membership and position are both content, so one undo
+  restores both. (3) The eject is destructive past undo — it rewrites the very
+  list the snapshot would have restored, so redo can't bring it back. What is
+  left unrepaired is a merge artifact (one device adds the member, the other
+  moves the card on the canvas): the node sits in the panel at odd coordinates,
+  which Fit or a pan finds and a drag undoes. Cheap to recover from, unlike
+  deleted work. A reconcile still drops ids that stopped being members *at all*
+  — the node is gone, or it pinned itself to the chrome — and because that is
+  still an edit to SYNCED CONTENT made outside `commit()`, the pull path still
+  versions it: see the next bullet but one.
+- **A reconcile-time member drop rides a `version` bump and a save**, and the
+  base and watermark for a pull are filed BEFORE `reconcileToBoard` runs —
+  `applyPulledBoard` does `board = content`, so the repair mutates the caller's
+  object in place. Filed afterwards they record the repair as already-synced: it
+  never pushes, and the next merge reads it as the OTHER device re-adding the
+  member, so back it comes and the next reconcile drops it again, once per sync
+  forever. (Same trap the push path calls out when it deep-snapshots before
+  `updateFile`.) `dockListsSig` is the fingerprint that detects it, and it reads
+  both collections because an embed can own a tab.
+- **Split between synced content and per-device chrome.** Which nodes are
   docked, and their membership, is board content — it merges per-record/
-  per-field exactly like any other card field (non-overlapping edits to
-  different frames' `dockMembers` both survive; the same frame's membership
+  per-field exactly like any other field (non-overlapping edits to
+  different owners' `dockMembers` both survive; the same owner's membership
   edited on both sides is a conflict, local wins, surfaced in merge review
   like any other field conflict) and rides undo via the normal content
   snapshot. Active tab, minimized state, panel width, and each tab's own
   pan/zoom are ephemeral per-device arrangement — `{width, minimized,
-  active, tabs: [{frameId, viewport}]}` rides `whiteboard:viewport:<id>`,
+  active, tabs: [{nodeId, viewport}]}` rides `whiteboard:viewport:<id>`,
   never touches board content, never bumps `version`, never syncs, and
   restoring it on every ⌘Z would yank the panel around unrelated undos.
+  (`loadDockChrome` also accepts `frameId`, the name `nodeId` had while only
+  frames could own a tab: this key is the only copy of an arrangement, so
+  dropping the old spelling would silently reset every existing user's panel
+  width, active tab and per-tab pan/zoom on the upgrade that renamed it.)
   `deriveDockTabs(prevDock)` is the single place that reconciles the two:
-  given whatever `board.cards` currently says is docked, it rebuilds
+  given whatever the board's records currently say is docked, it rebuilds
   `dock.tabs`, preferring `prevDock`'s existing tab order/viewport/chrome
   for tabs that still qualify and defaulting fresh ones. It runs after
   every full or partial board replacement (boot, board-switch, undo/redo,
@@ -288,23 +411,31 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   the model but paints as identity until the next gesture.
   `migrateLegacyDockMembers`
   is a one-time upgrade path: it adopts a device's pre-existing per-device
-  membership into `dockMembers` the first time a frame lacks the field.
+  membership into `dockMembers` the first time a frame lacks the field. It
+  reads `frameId`/`members` and nothing else — that chrome predates both the
+  rename and non-frame owners, so a frame is all it can hold.
 - Arrows: both ends in one window → that window's SVG (`#dock-connections`
   vs `#connections`, entries move via appendChild); one end each →
   hidden, records intact. `url(#…)` marker refs resolve document-wide.
 - While docked a frame can't move or resize (its rect anchors its tab's
-  contents); undock first. Deleting it (or losing it to undo/remote merge)
-  closes its tab — `deriveDockTabs` just won't find `dockMembers` on it
-  anymore; the last tab closing hides the panel.
-- **Undocking moves the region, not the camera** (`landRegionInView`). The
-  panel has its own pan/zoom, so a frame's world position is usually far
+  contents); undock first. An item can't either, for the opposite reason — it
+  has no world coordinates at all. Deleting an owner (or
+  losing it to undo/remote merge) closes its tab — `deriveDockTabs` just won't
+  find `dockMembers` on it anymore; the last tab closing hides the panel.
+- **Undocking moves the contents, not the camera** (`landInView`, given the
+  rect being landed and everything travelling with it). Order matters for an
+  item: **re-render before measuring**, because its box was the panel's until
+  the renderer puts its own `w`/`h` back. The
+  panel has its own pan/zoom, so a docked node's world position is usually far
   from wherever the canvas is looking; handing it back at those coordinates
-  put it off screen, which read as the contents vanishing. The frame grows
-  to enclose its members, then frame and members translate by ONE delta to
+  put it off screen, which read as the contents vanishing. A frame grows
+  to enclose its members first, then everything translates by ONE delta to
   the centre of `visibleRect()` — rigid, so relative layout and every
-  internal arrow survive. It then zooms out if the region overflows the
-  view, never in. Skipped entirely when the frame is already fully visible:
-  no point dirtying content to nudge what the user is looking at. Same
+  internal arrow survive. It then zooms out if the contents overflow the
+  view, never in. Skipped entirely when they are already fully visible:
+  no point dirtying content to nudge what the user is looking at — which is
+  also what makes the drag-out-to-canvas undock leave a node exactly where it
+  was dropped. Same
   bargain as `unpinNode`, and the same cost — position becomes a per-device
   artifact that syncs, so another device sees the region jump. The move is
   content and rides undock's own `commit()` as one undo step; the zoom is
@@ -312,11 +443,26 @@ the same world** — bespoke work areas with per-tab pan/zoom. The invariants:
   `dockMembers` INDEX, not the stored array: the array omits buttons
   attached to a member, which still have to travel.
 - Main-canvas geometry consumers exclude members: fit, marquee (per-window
-  via `ctx`), `findSnapTarget` (same-window only). `frameViewState`
-  treats panel embeds as visible while open, far while minimized.
-  Navigation (`frameNode`) into a member pans the PANEL.
+  via `ctx`), `findSnapTarget` (same-window only), and the frame-carry set.
+  `frameViewState` treats panel embeds as visible while open, far while
+  minimized. Navigation (`frameNode`) into a member pans the PANEL; into a
+  REGION it fits the region (a stowed frame has no element to centre on); into
+  an ITEM it just raises the tab, which is the whole of arriving.
+- **A docked card keeps its button tray**, and the two flavors get there
+  differently. In a region the buttons follow their root through
+  `recomputeDockMembers` and `layoutAttachments` re-derives world x/y from the
+  root's record — plain world math, no window awareness needed. In an item tab
+  `layoutRoot` bails out early instead and lets `#dock-item-tray` lay them out
+  with flexbox, because the "derived" position would be measured against a box
+  the panel owns and then **written into the button's record**.
+- **`layoutRoot` bails on a zero box**, the same "no box, no verdict" rule the
+  prune follows and for a sharper reason: everything in the panel measures 0
+  while it is minimized (`display: none`), and `#dock-world` is hidden outright
+  whenever an item tab is the active one, so a tray derived then doesn't just
+  paint wrong — it writes bogus `x`/`y` into synced records.
 - Reparenting an `<iframe>` element reloads its page — embeds crossing the
-  boundary (or dock/undock of a region containing them) reload. Inherent
+  boundary (or dock/undock of a region containing them, or of the embed
+  itself) reload. Inherent
   browser behavior; accepted, but not silent: `markIframeReloading()` runs
   before the move and re-shows the placeholder until `load` fires (4s
   bail-out, as some pages never fire it). Without it the element stays

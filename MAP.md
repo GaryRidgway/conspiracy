@@ -35,7 +35,7 @@ invariants behind them — this file only says *where* things are.
 | `//  BUTTON NODE` | a pill that navigates on click: fly to a board item, or open a URL in a new tab. |
 | `//  DOCKED BUTTONS` | a button dropped on a card's bottom edge becomes a full-width tab in a tray (up to 3); dropped just right of a frame's title tab (or of another button) it joins a horizontal row. |
 | `//  PIN DOCK` | nodes pinned to the chrome beside the tool palette, so they ride the viewport (quick-nav buttons). |
-| `//  DOCKED FRAME WINDOW` | one frame's region can dock to the side as a SECOND WINDOW into the same world (#dock-panel). |
+| `//  DOCKED SIDE WINDOW` | a frame's region, or a single card or embed, can dock to the side as a SECOND WINDOW into the same world (#dock-panel). |
 | `//  FRAME NODE` | a named region of the board (Miro-style frame): sits behind everything, its interior is click-through, and only the title tab and resize handle are interactive. |
 | `//  IMAGE NODE` | a picture as a node in its own right, rather than a card that happens to contain one. |
 | `//  IFRAME NODE` | an embedded page as a node. `interact` mode is runtime only and never stored: while it is on the iframe swallows pointer input, so every canvas gesture calls exitInteract() and the user can never be trapped with frames eating the mouse. |

@@ -822,6 +822,13 @@ body.space-pan #viewport.panning,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Fit moves a camera and the link button reaches a node whose own title row is
+   hidden — both are region-tab affordances (see #dock-item below) */
+#dockFitBtn.hidden, #dockLinkBtn.hidden { display: none; }
+/* An ITEM tab makes the node the panel, and the node brings its own title row —
+   so this header would be the SECOND one. It stands down instead, and the dock's
+   controls appear inside that row (.dock-ctl below). */
+#dock-panel.item-mode #dock-header { display: none; }
 #dock-viewport {
   position: relative;
   flex: 1;
@@ -839,6 +846,75 @@ body.space-pan #viewport.panning,
   transform-origin: 0 0;
 }
 #dock-connections { position: absolute; overflow: visible; }
+
+/* ── Item tabs: the node IS the panel ────────────────────────────────────
+   A card or embed docks as the whole work area rather than as something
+   floating in a world, so #dock-item fills the viewport and the node fills
+   #dock-item. Two consequences that are the whole point: the width splitter
+   resizes the ITEM (a card rewraps, an embed re-lays out through its existing
+   ResizeObserver), and there is no camera to get lost in.
+
+   The node keeps its one element and its untouched x/y record — it is only
+   RENDERED differently, the same bargain a pinned node makes with its chip.
+   `position: static` is doing real work here: it makes the inline left/top
+   every renderer writes simply not apply, so no !important and no render-path
+   special case is needed to neutralize world coordinates. */
+#dock-item { display: none; }
+#dock-panel.item-mode #dock-world { display: none; }
+#dock-panel.item-mode #dock-item {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+#dock-item > .node {
+  position: static;
+  /* the node comes first whatever order it was appended in: recomputeDockMembers
+     reparents it after #dock-item-tray, which is already in the markup */
+  order: 0;
+  flex: 1;
+  min-height: 0;
+  /* .card hugs its widest child between a min and a max — here the panel
+     decides instead */
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+/* An inactive item tab yields no space at all: .dock-stowed's visibility trick
+   exists to keep world geometry measurable, and an item has no geometry worth
+   measuring — left visible-but-hidden it would still hold the flex row open. */
+#dock-item > .dock-stowed,
+#dock-item-tray > .dock-stowed { display: none; }
+#dock-item > .node.selected { border-radius: 0; }
+/* The panel's own controls, carried in the node's title row and revealed by
+   ancestry alone — no state to keep in sync, and they hide themselves the
+   moment the node goes back to the canvas. */
+.dock-ctl { display: none; }
+#dock-item > .node .dock-ctl { display: inline-flex; }
+/* "zoom the canvas to this embed" has nothing to say while the embed fills the
+   panel — frameNode() would only raise the tab it is already showing */
+#dock-item > .node .iframe-zoom { display: none; }
+/* Ports offer a gesture an item can't complete: a connection drag has to leave
+   the source's border, and an item has no world geometry to take one from (see
+   nodeGeom). Arrows to an existing endpoint are hidden by the same fact, so
+   nothing here is lost that undocking doesn't give back. */
+#dock-item > .node .port { display: none; }
+/* the tray keeps reading as one assembly with the card above it */
+#dock-item-tray {
+  order: 1;
+  display: flex;
+  flex: 0 0 auto;
+}
+#dock-item-tray:empty { display: none; }
+#dock-item-tray > .btn-node {
+  position: static;
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+}
 /* Edge rail: one vertical tab per docked frame, hugging the panel's left
    edge while it's open and the screen's right edge while minimized. Tabs
    tint with their frame's color (border + text — flat faces, no fills). */

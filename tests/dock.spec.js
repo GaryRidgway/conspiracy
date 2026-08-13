@@ -1,13 +1,14 @@
 // ════════════════════════════════════════════════════════════════════════
-//  DOCKED FRAME WINDOW
-//  Right-click a frame → "Dock to side panel": the frame's region becomes a
-//  second window (#dock-panel) into the same world. Exclusive model — while
-//  docked, the region's nodes live in #dock-world (the canvas shows only the
-//  frame's collapsed tab), so every node still has exactly one element.
-//  Both windows share world coordinates, which is what makes cross-window
-//  drags work. Membership is STICKY, not geometric: an explicit `dockMembers`
-//  list on the frame's own card record, so it's board content that syncs and
-//  undoes. Only the arrangement (active tab, minimized, width, per-tab
+//  DOCKED SIDE WINDOW
+//  Right-click a frame, card or embed → "Dock to side panel". A FRAME's region
+//  becomes a second window (#dock-panel) into the same world: its nodes live in
+//  #dock-world, every node still has exactly one element, both windows share
+//  world coordinates (which is what makes cross-window drags work), and
+//  membership is STICKY — an explicit `dockMembers` list on the frame's own
+//  record, board content that syncs and undoes. A CARD or EMBED instead becomes
+//  THE PANEL: it fills #dock-item with no world, no camera and no members, so
+//  the width splitter resizes the item (see ITEM TABS at the foot of this
+//  file). Only the arrangement (active tab, minimized, width, per-region-tab
 //  pan/zoom) is per-device view state riding the viewport key.
 // ════════════════════════════════════════════════════════════════════════
 import { test, expect } from '@playwright/test';
@@ -27,6 +28,10 @@ async function dockViaMenu(page) {
   await expect(page.locator('#dock-panel')).toBeVisible();
 }
 const parentWorld = (loc) => loc.evaluate((el) => el.parentElement.id);
+// #dock-world is a 0x0 transform holder, so "is it visible" is always false —
+// whether it's the live container is a question about `display`.
+const worldDisplay = (page) => page.evaluate(() =>
+  getComputedStyle(document.getElementById('dock-world')).display);
 const mainTransform = (page) => page.evaluate(() => document.getElementById('world').style.transform);
 const dockTransform = (page) => page.evaluate(() => document.getElementById('dock-world').style.transform);
 
@@ -276,13 +281,13 @@ test('a member dragged onto the panel\'s own chrome stays a member', { tag: '@do
   expect(await members()).toContain(cardId);
 });
 
-// The reconcile prune (undo/remote only) forgives members up to a full
-// region-size outside the rect, measured from each member's CENTER — so it
-// needs the member's box. The panel boots `.hidden` and renderAll prunes
-// before syncDockPanel un-hides it, so every member measures 0×0 there and
-// its "center" reads as its top-left: a member parked left of or above the
-// rect was ejected by its own reload, with nothing having moved.
-test('a member parked outside the rect survives a reload with the panel still hidden', { tag: '@dock' }, async ({ page }) => {
+// WHERE a member sits never decides whether it is one. The panel is a free
+// surface with its own camera: pan it to reach empty space, drop a card there,
+// and that card is legitimately far outside a rect it was never required to sit
+// in. A reconcile used to prune members a region-size beyond the rect, meaning
+// to tidy up after a reverted cross-window drag, and ejected real work instead —
+// see the two tests below for the gestures that produced it.
+test('a member parked far outside the rect stays a member across a reload', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 300);
   const cardId = await card.getAttribute('data-id');
@@ -290,8 +295,7 @@ test('a member parked outside the rect survives a reload with the panel still hi
   await dockViaMenu(page);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
 
-  // park it just past a region-width to the LEFT of the rect — outside the
-  // tolerance by its top-left corner, comfortably inside it by its center
+  // park it several region-widths away, in both directions
   await page.addInitScript(([cardId, frameId]) => {
     const cur = localStorage.getItem('whiteboard:current');
     if (!cur) return;
@@ -299,7 +303,8 @@ test('a member parked outside the rect survives a reload with the panel still hi
     const b = JSON.parse(localStorage.getItem(key) || 'null');
     if (!b || !b.cards[frameId] || !b.cards[cardId]) return;
     const f = b.cards[frameId];
-    b.cards[cardId].x = f.x - f.w - 10;
+    b.cards[cardId].x = f.x - f.w * 3;
+    b.cards[cardId].y = f.y + f.h * 4;
     localStorage.setItem(key, JSON.stringify(b));
   }, [cardId, frameId]);
   await page.reload();
@@ -612,14 +617,15 @@ test('a Drive pull landing after load recovers dock state a stale local snapshot
   expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('dock-world');
 });
 
-// The reconcile prune drops members that ended up a full region outside their
-// frame — an edit to SYNCED content, made on the pull path, outside commit().
-// The base and watermark filed alongside a pull describe what Drive holds, so
-// they must be taken BEFORE that prune runs: taken after, they'd record the
-// repair as already-synced, it would never push, and the next merge would read
-// it as the other device re-adding the member — back in, pruned again, once per
-// sync forever. The prune instead rides a version bump like any other edit.
-test('a prune on the pull path is a versioned local edit, not a lie about Drive', { tag: '@dock' }, async ({ page }) => {
+// A reconcile still drops ids that stopped being members at all — the node
+// deleted on the other device, or pinned to the chrome — and that is an edit to
+// SYNCED content, made on the pull path, outside commit(). The base and
+// watermark filed alongside a pull describe what Drive holds, so they must be
+// taken BEFORE the reconcile runs: taken after, they'd record the repair as
+// already-synced, it would never push, and the next merge would read it as the
+// other device re-adding the member — back in, dropped again, once per sync
+// forever. The repair instead rides a version bump like any other edit.
+test('a reconcile-time member drop is a versioned local edit, not a lie about Drive', { tag: '@dock' }, async ({ page }) => {
   await addFrame(page);
   const card = await addCardAt(page, 640, 360);
   const cardId = await card.getAttribute('data-id');
@@ -627,13 +633,13 @@ test('a prune on the pull path is a versioned local edit, not a lie about Drive'
   await dockViaMenu(page);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
 
-  // what "Drive" sends: the member still listed, but parked far outside the
-  // region — the disagreement a per-field merge produces when it takes one
-  // device's position edit and the other's membership edit
+  // what "Drive" sends: the member still listed on the frame, but its own card
+  // record deleted — the disagreement a per-field merge produces when it takes
+  // one device's delete and the other's membership edit
   const pulled = await page.evaluate((cardId) => {
     const cur = localStorage.getItem('whiteboard:current');
     const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
-    b.cards[cardId].x = 3000;
+    delete b.cards[cardId];
     b.version = 42;
     return b;
   }, cardId);
@@ -641,8 +647,8 @@ test('a prune on the pull path is a versioned local edit, not a lie about Drive'
     window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content, '77');
   }, pulled);
 
-  // the prune ran locally…
-  expect(await parentWorld(page.locator(`.node.card[data-id="${cardId}"]`))).toBe('world');
+  // the repair ran locally…
+  await expect(page.locator(`.node.card[data-id="${cardId}"]`)).toHaveCount(0);
   await expect(page.locator('#saveState')).toHaveText(/saved/i);
 
   const state = await page.evaluate(() => {
@@ -655,14 +661,99 @@ test('a prune on the pull path is a versioned local edit, not a lie about Drive'
       driveVersion: entry.driveVersion,
     };
   });
-  // …but the base still says what Drive actually holds, unpruned at v42
+  // …but the base still says what Drive actually holds, unrepaired at v42
   expect(state.base.cards[frameId].dockMembers).toContain(cardId);
   expect(state.base.version).toBe(42);
   expect(state.syncedLocalVersion).toBe(42);
   expect(state.driveVersion).toBe('77');
-  // …and the prune is a real local edit past that watermark, so it will push
+  // …and the repair is a real local edit past that watermark, so it will push
   expect(state.local.cards[frameId].dockMembers).not.toContain(cardId);
   expect(state.local.version).toBe(43);
+});
+
+// The bug this pair exists for, in the words it was reported in: "I drag a card
+// into the frame, and then when I do anything else it gets ejected." The card
+// lands in the panel, saves as a member, sits there visibly — and then the next
+// undo (or the next Drive pull, same code path) hands it back to the canvas and
+// rewrites the member list, so redo can't bring it back either.
+//
+// It hid for so long because it needed a real box to measure, and the panel is
+// display:none while renderAll runs: a RELOAD always kept the member, and only
+// mid-session reconciles ejected it. Same board, opposite answers, which reads
+// as random rather than as a rule.
+test('a card placed in the panel survives an undo of an unrelated edit', { tag: ['@dock', '@undo'] }, async ({ page }) => {
+  await addFrame(page);
+  await dockViaMenu(page);
+  const card = await addCardAt(page, 170, 620);
+  const cardId = await card.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+
+  // pan the panel down to reach empty space under the region — the ordinary way
+  // to get room in a bespoke work area, and what puts a drop outside the rect
+  const p = await page.locator('#dock-viewport').boundingBox();
+  for (let i = 0; i < 8; i++) {
+    await page.evaluate(([x, y]) => {
+      document.getElementById('dock-viewport').dispatchEvent(new WheelEvent('wheel',
+        { deltaY: 200, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }, [p.x + p.width / 2, p.y + p.height / 2]);
+  }
+  const hb = await card.locator('.card-header').boundingBox();
+  await drag(page, { x: hb.x + 24, y: hb.y + hb.height / 2 },
+                   { x: p.x + p.width / 2, y: p.y + p.height / 2 });
+  expect(await parentWorld(card)).toBe('dock-world');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // "anything else": one unrelated card, then undo it
+  await addCardAt(page, 260, 200);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  expect(await parentWorld(card)).toBe('dock-world');
+  const stored = await page.evaluate((fid) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).cards[fid].dockMembers;
+  }, frameId);
+  expect(stored).toContain(cardId);        // and the list itself wasn't rewritten
+});
+
+// The same reconcile reached down the other path, where the eject also EDITED
+// SYNCED CONTENT and travelled to every device on the next push.
+test('a card placed in the panel survives a Drive pull', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const card = await addCardAt(page, 640, 360);
+  const cardId = await card.getAttribute('data-id');
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await dockViaMenu(page);
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+
+  // a pull that carries the member far outside the region — a per-field merge
+  // taking one device's position edit and the other's membership edit
+  const pulled = await page.evaluate((cid) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
+    b.cards[cid].x = 4000;
+    b.cards[cid].y = 4000;
+    b.version = 42;
+    return b;
+  }, cardId);
+  await page.evaluate((content) => {
+    window.__wb_applyPulledBoard(localStorage.getItem('whiteboard:current'), content, '77');
+  }, pulled);
+
+  // it is somewhere odd in the panel — which Fit or a pan finds, and a drag
+  // undoes — rather than silently handed back to the canvas
+  expect(await parentWorld(card)).toBe('dock-world');
+  const state = await page.evaluate(() => {
+    const cur = localStorage.getItem('whiteboard:current');
+    return {
+      local: JSON.parse(localStorage.getItem('whiteboard:board:' + cur)),
+      base: JSON.parse(localStorage.getItem('whiteboard:base:' + cur)),
+    };
+  });
+  expect(state.local.cards[frameId].dockMembers).toContain(cardId);
+  expect(state.local.version).toBe(42);          // nothing to repair, nothing to push
+  expect(state.base.cards[frameId].dockMembers).toContain(cardId);
 });
 
 // …and the recovery has to have something left to recover FROM. The panel's
@@ -716,7 +807,7 @@ test('a pan during the sync race keeps the arrangement the pull has to recover',
     return JSON.parse(localStorage.getItem('whiteboard:viewport:' + cur)).dock;
   });
   expect(chrome).toBeTruthy();                                // arrangement not erased
-  expect(chrome.tabs.map((t) => t.frameId)).toContain(frameId);
+  expect(chrome.tabs.map((t) => t.nodeId)).toContain(frameId);
 
   // the pull lands: the frame docks again AT THE ARRANGEMENT IT HAD
   await page.evaluate((content) => {
@@ -1014,4 +1105,401 @@ test('restoring a minimized panel sizes its embeds', { tag: ['@dock', '@frames']
 
   await expect.poll(async () => (await page.locator('.iframe-frame').boundingBox()).width)
     .toBeCloseTo(before.width, 0);
+});
+
+
+// ════════════════════════════════════════════════════════════════════════
+//  ITEM TABS — a single card or embed docks as THE PANEL, not as something
+//  floating in a second world. The node fills #dock-item (its attached button
+//  tray across the bottom), so the width splitter resizes the item itself and
+//  there is no camera to get lost in. It keeps its one element and its
+//  untouched x/y record — only the render target changes, the same bargain a
+//  pinned node makes with its chip — which is why it has no world presence for
+//  arrows, marquee, pans, drags or drops to reach.
+// ════════════════════════════════════════════════════════════════════════
+async function addFreeButton(page) {
+  const before = await page.locator('.btn-node').count();
+  await page.click('#addButton');
+  await expect(page.locator('#button-link-modal')).toBeVisible();
+  await page.keyboard.press('Escape');       // a link isn't needed to dock
+  await expect(page.locator('.btn-node')).toHaveCount(before + 1);
+  const id = await page.locator('.btn-node').last().getAttribute('data-id');
+  return page.locator(`.btn-node[data-id="${id}"]`);
+}
+async function addEmbed(page) {
+  await page.click('#addFrame');
+  await expect(page.locator('#frame-modal')).toBeVisible();
+  await page.fill('#frame-url', EMBED_URL);
+  await page.click('#frame-add');
+  await expect(page.locator('#frame-modal')).toBeHidden();
+  return page.locator('.node.iframe-node');
+}
+// Dock any node through its own context menu — the one entry point every
+// dockable kind shares.
+async function dockNodeVia(page, target) {
+  await target.click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Dock to side panel' }).click();
+  await expect(page.locator('#dock-panel')).toBeVisible();
+}
+const storedRecord = (page, id) => page.evaluate((nid) => {
+  const cur = localStorage.getItem('whiteboard:current');
+  const b = JSON.parse(localStorage.getItem('whiteboard:board:' + cur));
+  return b.cards[nid] || b.iframes[nid];
+}, id);
+const setPanelWidth = (page, w) => page.evaluate((width) => {
+  const r = document.getElementById('dock-resizer').getBoundingClientRect();
+  const y = r.top + r.height / 2;
+  const target = innerWidth - width;
+  const send = (type, x) => document.getElementById('dock-resizer').dispatchEvent(
+    new PointerEvent(type, { pointerId: 7, button: 0, buttons: 1, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+  send('pointerdown', r.left + r.width / 2);
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, buttons: 1, clientX: target, clientY: y, bubbles: true }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, clientX: target, clientY: y, bubbles: true }));
+}, w);
+
+test('a docked card becomes the panel: it fills #dock-item and the splitter resizes it', { tag: ['@dock', '@cards'] }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  const id = await card.getAttribute('data-id');
+  await dockNodeVia(page, card.locator('.card-header'));
+
+  // the node itself is the panel's content — not a member of a world
+  expect(await parentWorld(card)).toBe('dock-item');
+  await expect(page.locator('#dock-panel')).toHaveClass(/item-mode/);
+  expect(await worldDisplay(page)).toBe('none');            // no second window here
+  await expect(card).toBeVisible();
+  await expect(card).not.toHaveClass(/frame-docked/);
+
+  // it FILLS the panel viewport, both axes
+  const vp = await page.locator('#dock-viewport').boundingBox();
+  let bb = await card.boundingBox();
+  expect(bb.width).toBeCloseTo(vp.width, 0);
+  expect(bb.height).toBeCloseTo(vp.height, 0);
+
+  // …and the width splitter resizes the ITEM, which is the whole point
+  await setPanelWidth(page, 620);
+  const vp2 = await page.locator('#dock-viewport').boundingBox();
+  expect(vp2.width).toBeGreaterThan(vp.width + 100);
+  bb = await card.boundingBox();
+  expect(bb.width).toBeCloseTo(vp2.width, 0);
+
+  // "docked" is still just the presence of dockMembers on its own record, and
+  // an item tab's list is empty for its whole docked life
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect((await storedRecord(page, id)).dockMembers).toEqual([]);
+});
+
+test('a docked card keeps its button tray across the bottom of the panel', { tag: ['@dock', '@buttons'] }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  const btn = await addFreeButton(page);
+  const cb = await card.boundingBox();
+  const b0 = await btn.boundingBox();
+  await drag(page, { x: b0.x + b0.width / 2, y: b0.y + b0.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height + 10 });
+  await expect(btn).toHaveClass(/attached-bottom/);
+
+  await dockNodeVia(page, card.locator('.card-header'));
+
+  // the tray follows its root into the panel and lays out beneath it — by
+  // flexbox, not by the derived world x/y the canvas uses
+  expect(await parentWorld(btn)).toBe('dock-item-tray');
+  await expect(btn).toBeVisible();
+  const cbb = await card.boundingBox(), bbb = await btn.boundingBox();
+  const vp = await page.locator('#dock-viewport').boundingBox();
+  expect(bbb.y).toBeGreaterThan(cbb.y + cbb.height - 2);     // under the card
+  expect(bbb.width).toBeCloseTo(vp.width, 0);                // full width of the panel
+  expect(bbb.y + bbb.height).toBeCloseTo(vp.y + vp.height, 0);   // flush with the bottom
+
+  // and the stored position was NOT rewritten from the panel's box
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const rec = await storedRecord(page, await btn.getAttribute('data-id'));
+  expect(rec.attachedTo).toBe(await card.getAttribute('data-id'));
+  expect(rec.x).toBeGreaterThan(0);
+});
+
+test('an embed docks as the panel and stays docked across a reload', { tag: ['@dock', '@frames'] }, async ({ page }) => {
+  const embed = await addEmbed(page);
+  const id = await embed.getAttribute('data-id');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const stored = await storedRecord(page, id);
+  await dockNodeVia(page, embed.locator('.iframe-label'));
+
+  expect(await parentWorld(embed)).toBe('dock-item');
+  const vp = await page.locator('#dock-viewport').boundingBox();
+  const bb = await embed.boundingBox();
+  expect(bb.width).toBeCloseTo(vp.width, 0);
+  expect(bb.height).toBeCloseTo(vp.height, 0);
+  // the panel sizing it must not rewrite its stored box — that's synced
+  // content, and the panel's width is per-device
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const after = await storedRecord(page, id);
+  expect([after.w, after.h]).toEqual([stored.w, stored.h]);
+  expect(after.dockMembers).toEqual([]);
+
+  await page.reload();
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(page.locator(`.node.iframe-node[data-id="${id}"]`))).toBe('dock-item');
+});
+
+test('undocking an item restores its own size and lands it in view', { tag: ['@dock', '@nav'] }, async ({ page }) => {
+  const embed = await addEmbed(page);
+  const id = await embed.getAttribute('data-id');
+  const before = await nodePos(embed);
+  await dockNodeVia(page, embed.locator('.iframe-label'));
+
+  await embed.locator('.dock-undock').click();   // the dock's control, in the item's own row
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect(await parentWorld(embed)).toBe('world');
+  const after = await nodePos(embed);
+  expect([after.w, after.h]).toEqual([before.w, before.h]);   // panel size didn't stick
+  expect(await storedRecord(page, id)).not.toHaveProperty('dockMembers');
+  // and it came back where the user can see it
+  const bb = await embed.boundingBox();
+  expect(bb.x).toBeGreaterThan(-1);
+  expect(bb.y).toBeGreaterThan(-1);
+});
+
+test('an item tab has no world: no pan, no marquee, and its arrows hide', { tag: '@dock' }, async ({ page }) => {
+  const a = await addCardAt(page, 480, 260);
+  const b = await addCardAt(page, 820, 300);
+  await a.hover();
+  const port = a.locator('.port.right');
+  const pb = await port.boundingBox();
+  const tb = await b.boundingBox();
+  await drag(page, { x: pb.x + pb.width / 2, y: pb.y + pb.height / 2 },
+                   { x: tb.x + tb.width / 2, y: tb.y + tb.height / 2 });
+  await expect(page.locator('#connections .conn')).toHaveCount(1);
+
+  await dockNodeVia(page, a.locator('.card-header'));
+  // the arrow's record survives, but it has nowhere to point: an item is laid
+  // out by the panel, so its stored x/y no longer say where it is
+  await expect(page.locator('#connections .conn')).toHaveCount(1);
+  await expect(page.locator('#connections .conn')).toBeHidden();
+  await expect(page.locator('#dock-connections .conn')).toHaveCount(0);
+
+  // the panel's camera is gone with it — a wheel over the panel doesn't pan it
+  const t0 = await dockTransform(page);
+  const vp = await page.locator('#dock-viewport').boundingBox();
+  await page.evaluate(([x, y]) => {
+    document.getElementById('dock-viewport').dispatchEvent(new WheelEvent('wheel',
+      { deltaX: 90, deltaY: 70, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+  }, [vp.x + 60, vp.y + 60]);
+  expect(await dockTransform(page)).toBe(t0);
+  // …and Fit, which only means something with a camera, is out of the header
+  await expect(page.locator('#dockFitBtn')).toBeHidden();
+});
+
+test('an item tab takes no members: a card dropped on the panel stays on the canvas', { tag: '@dock' }, async ({ page }) => {
+  const owner = await addCardAt(page, 500, 220);
+  const ownerId = await owner.getAttribute('data-id');
+  await dockNodeVia(page, owner.locator('.card-header'));
+
+  const other = await addCardAt(page, 200, 620);
+  const hb = await other.locator('.card-header').boundingBox();
+  const panel = await page.locator('#dock-viewport').boundingBox();
+  await drag(page, { x: hb.x + 24, y: hb.y + hb.height / 2 },
+                   { x: panel.x + panel.width / 2, y: panel.y + panel.height / 2 });
+
+  // the panel is the item, not a work surface: nothing joined it
+  expect(await parentWorld(other)).toBe('world');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  expect((await storedRecord(page, ownerId)).dockMembers).toEqual([]);
+});
+
+test('a card tab and a frame tab share the rail, one container live at a time', { tag: '@dock' }, async ({ page }) => {
+  await addFrame(page);
+  const inside = await addCardAt(page, 640, 360);
+  await dockViaMenu(page);
+  await expect(page.locator('#dock-active-name')).toHaveText('Frame');
+
+  const card = await addCardAt(page, 200, 620);              // outside the region
+  await card.locator('.card-title').dblclick();
+  await page.keyboard.type('Reference');
+  await page.keyboard.press('Enter');
+  await dockNodeVia(page, card.locator('.card-header'));
+
+  await expect(page.locator('.dock-rail-tab')).toHaveCount(2);
+  await expect(page.locator('#dock-active-name')).toHaveText('Reference');
+  expect(await parentWorld(card)).toBe('dock-item');
+  expect(await worldDisplay(page)).toBe('none');              // the region tab's world stands down
+  await expect(inside).toBeHidden();
+
+  // switching back: the world returns and the item stands down
+  await page.locator('.dock-rail-tab', { hasText: 'Frame' }).click();
+  await expect(page.locator('#dock-active-name')).toHaveText('Frame');
+  await expect(page.locator('#dock-panel')).not.toHaveClass(/item-mode/);
+  expect(await worldDisplay(page)).not.toBe('none');
+  await expect(inside).toBeVisible();
+  await expect(card).toBeHidden();                            // stowed, and taking no space
+  expect(await parentWorld(card)).toBe('dock-item');
+});
+
+// An item brings its own title row, so the panel's header would be the SECOND
+// one. It stands down instead and the dock's controls move into that row — one
+// row, whichever kind of tab is showing.
+test('an item tab has exactly one title row, carrying the dock controls', { tag: '@dock' }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  await card.locator('.card-title').dblclick();
+  await page.keyboard.type('Sources');
+  await page.keyboard.press('Enter');
+  await dockNodeVia(page, card.locator('.card-header'));
+
+  await expect(page.locator('#dock-header')).toBeHidden();
+  await expect(card.locator('.card-header')).toBeVisible();
+  await expect(card.locator('.card-title')).toHaveText('Sources');
+  // the node's own buttons stay, and the dock's two join them
+  await expect(card.locator('.copy-link')).toBeVisible();
+  await expect(card.locator('.dock-min')).toBeVisible();
+  await expect(card.locator('.dock-undock')).toBeVisible();
+
+  // both work from there
+  await card.locator('.dock-min').click();
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await page.locator('.dock-rail-tab').first().click();
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  await card.locator('.dock-undock').click();
+  await expect(page.locator('#dock-panel')).toBeHidden();
+
+  // …and back on the canvas they hide themselves again — ancestry is the only
+  // state involved, so nothing has to remember to clean them up
+  expect(await parentWorld(card)).toBe('world');
+  await expect(card.locator('.dock-min')).toBeHidden();
+  await expect(card.locator('.dock-undock')).toBeHidden();
+});
+
+// The region tab's side of the same complaint: its frame's title tab is stowed
+// off the canvas while docked, so the frame's own copy-link was unreachable.
+// The panel header is that row for a region, and now carries it.
+test('a region tab keeps one title row, with the frame own link button on it', { tag: '@dock' }, async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await addFrame(page);
+  await dockViaMenu(page);
+  await expect(page.locator('#dock-header')).toBeVisible();
+  await expect(page.locator('#dockLinkBtn')).toBeVisible();
+  await expect(page.locator('#dockFitBtn')).toBeVisible();
+  await expect(page.locator('.frame-node')).toBeHidden();      // no second row
+  // it copies a link to the frame, like the tab button on the canvas would
+  const frameId = await page.locator('.frame-node').getAttribute('data-id');
+  await page.locator('#dockLinkBtn').click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('#node=' + frameId);
+});
+
+test('undo walks back over docking a card, and redo puts it back', { tag: ['@dock', '@undo'] }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  await dockNodeVia(page, card.locator('.card-header'));
+  expect(await parentWorld(card)).toBe('dock-item');
+
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  expect(await parentWorld(card)).toBe('world');
+  await page.keyboard.press('Control+Shift+z');
+  await expect(page.locator('#dock-panel')).toBeVisible();
+  expect(await parentWorld(card)).toBe('dock-item');
+});
+
+// ── "no world position" is ONE property ──────────────────────────────────
+// An item's stored x/y are a parked canvas position, not where it is. Rather
+// than telling each geometry consumer about docked items one at a time,
+// nodeGeom returns null for them — the answer lazy hydration already taught
+// every consumer to handle. The first two of these three were genuinely broken
+// while the exemption was a pile of per-system special cases; the third was
+// only ever LATENT, and the note on it says why it is still worth pinning.
+test('a docked item drops out of Tab order and arrow-key navigation', { tag: ['@dock', '@a11y'] }, async ({ page }) => {
+  const near = await addCardAt(page, 300, 300);
+  const far = await addCardAt(page, 620, 300);
+  const docked = await addCardAt(page, 460, 300);       // between them on the canvas
+  const dockedId = await docked.getAttribute('data-id');
+  await dockNodeVia(page, docked.locator('.card-header'));
+  expect(await parentWorld(docked)).toBe('dock-item');
+
+  // Tab cycles the canvas in reading order; the docked card is no longer part
+  // of it, at its parked coordinates or anywhere else
+  await page.mouse.click(60, 180);                       // canvas focus, nothing selected
+  const seen = [];
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('Tab');
+    seen.push(await page.evaluate(() => {
+      const el = document.querySelector('.node.selected');
+      return el && el.dataset.id;
+    }));
+  }
+  expect(seen).not.toContain(dockedId);
+
+  // and Alt+Arrow (spatial nav) from the left card reaches the far one, not
+  // the docked one parked between them
+  await near.locator('.card-header').click();   // header, not body: keep focus on the canvas
+  await expect(near).toHaveClass(/selected/);
+  await page.keyboard.press('Alt+ArrowRight');
+  await expect(far).toHaveClass(/selected/);
+});
+
+// Latent, not live: `frameContents` carries what sits FULLY inside the rect, and
+// a docked item measures the panel (≈420×720 here), which is too big for an
+// ordinary frame to contain — so the sweep was prevented by accident rather
+// than on purpose. Narrow the panel, enlarge the frame, and the accident stops
+// holding. Pinned here because the exemption shouldn't depend on a coincidence
+// of sizes.
+test('a "move items with frame" frame cannot sweep up a docked item', { tag: ['@dock', '@frames'] }, async ({ page }) => {
+  // a card parked where a frame will later sit, then docked away
+  const docked = await addCardAt(page, 640, 340);
+  const dockedId = await docked.getAttribute('data-id');
+  await dockNodeVia(page, docked.locator('.card-header'));
+  expect(await parentWorld(docked)).toBe('dock-item');
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const before = await page.evaluate((id) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const c = JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).cards[id];
+    return { x: c.x, y: c.y };
+  }, dockedId);
+
+  // a frame over those same world coordinates, set to carry its contents
+  await addFrame(page);
+  await page.locator('.frame-node .frame-tab').click({ button: 'right' });
+  await page.locator('#context-menu .ctx-item', { hasText: 'Move items with frame' }).click();
+  const tab = await page.locator('.frame-node .frame-tab').boundingBox();
+  await drag(page, { x: tab.x + 40, y: tab.y + tab.height / 2 },
+                   { x: tab.x + 40 - 160, y: tab.y + tab.height / 2 + 90 });
+
+  // the frame moved; the docked card's parked position did not travel with it
+  await expect(page.locator('#saveState')).toHaveText(/saved/i);
+  const after = await page.evaluate((id) => {
+    const cur = localStorage.getItem('whiteboard:current');
+    const c = JSON.parse(localStorage.getItem('whiteboard:board:' + cur)).cards[id];
+    return { x: c.x, y: c.y };
+  }, dockedId);
+  expect(after).toEqual(before);
+  expect(await parentWorld(docked)).toBe('dock-item');
+});
+
+test('an item offers no ports, and C reports why instead of throwing', { tag: '@dock' }, async ({ page }) => {
+  const card = await addCardAt(page, 500, 300);
+  const other = await addCardAt(page, 200, 620);
+  await dockNodeVia(page, card.locator('.card-header'));
+
+  // the gesture isn't offered: a connection drag has to leave the source's
+  // border, and an item has none in world space
+  await card.hover();
+  await expect(card.locator('.port').first()).toBeHidden();
+
+  // the keyboard route says so rather than crashing on the missing anchor
+  await card.locator('.card-header').click();   // header, not body: C must reach the canvas
+  await expect(card).toHaveClass(/selected/);
+  await page.keyboard.press('c');
+  await expect(page.locator('.visually-hidden[aria-live="polite"]')).toContainText(/docked/i);
+  await expect(page.locator('.conn-temp')).toHaveCount(0);
+
+  // an arrow already touching it survives, hidden, and comes back on undock
+  await card.locator('.dock-undock').click();
+  await expect(page.locator('#dock-panel')).toBeHidden();
+  await other.hover();
+  const pb = await other.locator('.port.right').boundingBox();
+  const cb = await card.boundingBox();
+  await drag(page, { x: pb.x + pb.width / 2, y: pb.y + pb.height / 2 },
+                   { x: cb.x + cb.width / 2, y: cb.y + cb.height / 2 });
+  await expect(page.locator('#connections .conn')).toHaveCount(1);
+  await dockNodeVia(page, card.locator('.card-header'));
+  await expect(page.locator('#connections .conn')).toHaveCount(1);      // record intact
+  await expect(page.locator('#connections .conn')).toBeHidden();        // no path to draw
+  await card.locator('.dock-undock').click();
+  await expect(page.locator('#connections .conn')).toBeVisible();       // and back
 });

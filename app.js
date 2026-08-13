@@ -856,11 +856,11 @@
     const payload = { x: v.x, y: v.y, zoom: v.zoom };
     // dock CHROME (which tab is active, minimized, panel width, each tab's own
     // pan/zoom) is a per-device view preference — it rides the same local key
-    // and never touches board content. Which frames are docked, and their
-    // membership, is real content now (see each frame card's `dockMembers`).
+    // and never touches board content. Which nodes are docked, and what they
+    // contain, is real content now (see each owner record's `dockMembers`).
     if (dock) {
       payload.dock = { width: dock.width, minimized: dock.minimized, active: dock.active,
-        tabs: dock.tabs.map((t) => ({ frameId: t.frameId,
+        tabs: dock.tabs.map((t) => ({ nodeId: t.nodeId,
           x: t.viewport.x, y: t.viewport.y, zoom: t.viewport.zoom })) };
     } else {
       // No live dock is not the same as no arrangement. `dock` is null whenever
@@ -872,41 +872,51 @@
       // that window destroys the panel's width, active tab and per-tab pan/zoom
       // before the recovery can use them. Carry it forward verbatim (same shape
       // loadDockChrome reads) and let deriveDockTabs decide what still qualifies
-      // — it keeps only tabs whose frame still carries `dockMembers`, so a
-      // genuinely undocked frame's entry is inert.
+      // — it keeps only tabs whose owner still carries `dockMembers`, so a
+      // genuinely undocked node's entry is inert.
       const prev = readViewportKey(id);
       if (prev && prev.dock) payload.dock = prev.dock;
     }
     try { localStorage.setItem(viewportKey(id), JSON.stringify(payload)); } catch (e) { /* quota */ }
   }
   // Per-device dock CHROME only — width/minimized/active tab, and each tab's
-  // own pan/zoom. Does NOT decide which frames are docked; that comes from
+  // own pan/zoom. Does NOT decide which nodes are docked; that comes from
   // content (deriveDockTabs). Shaped as { width, minimized, active, tabs:
-  // [{frameId, viewport}] } so deriveDockTabs can treat it like a previous dock.
+  // [{nodeId, viewport}] } so deriveDockTabs can treat it like a previous dock.
+  // `frameId` is the same field under the name it had while only frames could
+  // own a tab: it is READ here forever, because this key is the only copy of an
+  // arrangement and dropping it would silently reset every existing user's
+  // panel width, active tab and per-tab pan/zoom on the upgrade that renamed it.
   function loadDockChrome(id) {
     try {
       const v = readViewportKey(id);
       const d = v && v.dock;
       if (!d) return null;
+      const owner = (t) => t && (t.nodeId || t.frameId);
       // accept the single-frame shape from before tabs existed
-      const rawTabs = d.tabs || (d.frameId ? [{ frameId: d.frameId, x: d.x, y: d.y, zoom: d.zoom }] : []);
-      const tabs = rawTabs.filter((t) => t && t.frameId)
-        .map((t) => ({ frameId: t.frameId, viewport: { x: +t.x || 0, y: +t.y || 0, zoom: +t.zoom || 1 } }));
+      const rawTabs = d.tabs || (owner(d) ? [{ nodeId: owner(d), x: d.x, y: d.y, zoom: d.zoom }] : []);
+      const tabs = rawTabs.filter(owner)
+        .map((t) => ({ nodeId: owner(t), viewport: { x: +t.x || 0, y: +t.y || 0, zoom: +t.zoom || 1 } }));
       if (!tabs.length) return null;
       return { width: +d.width || 420, minimized: !!d.minimized, active: d.active, tabs };
     } catch (e) { /* ignore */ }
     return null;
   }
-  // Build/refresh dock from whichever frames currently carry `dockMembers`
-  // (real, synced content) — a frame with no docked-frame ancestry in the
-  // data just doesn't get a tab, regardless of any stale per-device chrome.
+  // Build/refresh dock from whichever nodes currently carry `dockMembers`
+  // (real, synced content) — a node with no docked ancestry in the data just
+  // doesn't get a tab, regardless of any stale per-device chrome.
   // prevDock supplies chrome continuity (existing tab order/viewport/width/
   // minimized/active); brand-new tabs get a fresh default viewport.
+  // The `isDockable` gate is the allowlist, applied HERE rather than at the
+  // entry points: a kind that leaves the set stops owning a tab and renders
+  // back on the canvas at its untouched x/y, which is also what an older
+  // deployed client does with an owner kind it has never heard of. Unlike
+  // `healPins`, the stale field is left in the data on purpose — `dockMembers`
+  // is the whole record of "this is docked", so stripping it here would undock
+  // the node on every other device that does understand the kind.
   function deriveDockTabs(prevDock) {
-    const remaining = new Set(Object.keys(board.cards).filter((id) => {
-      const c = board.cards[id];
-      return c.kind === 'frame' && Array.isArray(c.dockMembers);
-    }));
+    const remaining = new Set([...Object.keys(board.cards), ...Object.keys(board.iframes)]
+      .filter((id) => Array.isArray(getNode(id).data.dockMembers) && isDockable(id)));
     if (!remaining.size) return null;
     // Content says something IS docked but we hold no dock in memory: this is
     // the stale-snapshot race (a pull delivering frames this device hadn't seen)
@@ -917,18 +927,20 @@
     if (!prevDock) prevDock = loadDockChrome(currentBoardId);
     const tabs = [];
     if (prevDock) for (const t of prevDock.tabs) {
-      if (remaining.has(t.frameId)) { tabs.push(t); remaining.delete(t.frameId); }
+      if (remaining.has(t.nodeId)) { tabs.push(t); remaining.delete(t.nodeId); }
     }
-    for (const frameId of remaining) tabs.push({ frameId, viewport: { x: 0, y: 0, zoom: 1 } });
+    for (const nodeId of remaining) tabs.push({ nodeId, viewport: { x: 0, y: 0, zoom: 1 } });
     const width = prevDock ? prevDock.width : Math.min(innerWidth * 0.6, 420);
     const minimized = prevDock ? prevDock.minimized : false;
-    const active = tabs.some((t) => t.frameId === (prevDock && prevDock.active)) ? prevDock.active : tabs[0].frameId;
+    const active = tabs.some((t) => t.nodeId === (prevDock && prevDock.active)) ? prevDock.active : tabs[0].nodeId;
     return { width, minimized, active, tabs };
   }
   // One-time migration: docked-frame membership used to live only in the
   // per-device chrome key; it's now real, synced content. Adopt this device's
   // local copy for any frame that no other device has migrated yet (once any
   // device's copy lands in `dockMembers`, this is a no-op for that frame).
+  // Reads `frameId`/`members` and nothing else: that chrome predates both the
+  // rename to `nodeId` and non-frame tab owners, so a frame is all it can hold.
   function migrateLegacyDockMembers(id) {
     try {
       const v = readViewportKey(id);
@@ -1035,12 +1047,11 @@
     // they don't touch content, aren't undoable, and must NOT bump the version
     // or trigger a Drive push — just persist the viewport to its own local key.
     if (opts && opts.viewportOnly) { scheduleViewportSave(); return; }
-    // Membership is STICKY, not geometric: this pass reassigns nobody. It
-    // re-derives the id→tab index from the member lists and reparents/stows
-    // whatever an edit moved between windows (a duplicate following its source,
-    // a button following its root, a deleted member leaving). Unpruned on
-    // purpose — only reconcile prunes, because an in-panel edit may overhang
-    // the region freely. No-op while nothing is docked.
+    // Membership is STICKY, not geometric: this pass reassigns nobody, here or
+    // anywhere else. It re-derives the id→tab index from the member lists and
+    // reparents/stows whatever an edit moved between windows (a duplicate
+    // following its source, a button following its root, a deleted member
+    // leaving). No-op while nothing is docked.
     recomputeDockMembers();
     // Docked buttons re-derive their x/y at the chokepoint, so whatever
     // mutated content (a drag, typing that grew a card, a color change)
@@ -1291,6 +1302,17 @@
     const el = nodeEls.get(id);
     const n = getNode(id);
     if (!el || !n) return null;
+    // An ITEM tab's node is laid out by the panel, so its stored x/y are a
+    // parked canvas position rather than where it is — "no geometry" is the
+    // truth, and it is a truth every consumer here already handles, because
+    // lazy hydration made null the normal answer for a node without a box.
+    // That is the whole exemption: arrows collapse (pathBetween), the marquee
+    // and spatial nav skip it, Tab drops it from the reading order, and a
+    // moveContents frame can't sweep it up. Stating it once here is the same
+    // bargain a pinned node makes by never entering nodeEls at all — see
+    // ARCHITECTURE.md → Pinned nodes, and do NOT re-add per-system special
+    // cases for docked items.
+    if (isDockItem(id)) return null;
     if (dragSizeCache) {
       let s = dragSizeCache.get(id);
       if (!s) dragSizeCache.set(id, (s = { w: el.offsetWidth, h: el.offsetHeight }));
@@ -1431,6 +1453,10 @@
   // ════════════════════════════════════════════════════════
   function startNodeDrag(id, el, e) {
     if (e.button !== 0) return;
+    // An ITEM tab's node has no world position — the panel lays it out — so
+    // there is nothing for a drag to move. Undock it to get it back on the
+    // board (the header button, or its own menu).
+    if (isDockItem(id)) return;
     e.preventDefault();
     // Return keyboard focus to the page so a follow-up ⌘/Ctrl+Z reaches us.
     // An embedded page (e.g. Google Docs) can hold focus inside its <iframe>,
@@ -1447,7 +1473,10 @@
     // move every selected node together — and a frame set to move its
     // contents also carries whatever sits fully inside it right now
     const carried = new Set(selectedNodes);
-    if (dock) for (const t of dock.tabs) carried.delete(t.frameId);   // docked rects anchor the panel — immovable
+    // immovable while docked: a REGION's rect anchors its tab's contents, and an
+    // ITEM has no world coordinates at all
+    if (dock) for (const t of dock.tabs) carried.delete(t.nodeId);
+    for (const nid of [...carried]) if (isDockItem(nid)) carried.delete(nid);
     for (const nid of [...carried]) {
       const n = getNode(nid);
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
@@ -1583,6 +1612,11 @@
 
   function startConnectionDrag(fromId, e) {
     if (e.button !== 0) return;
+    // No anchor, no connection: the rubber band has to start at the source's
+    // border, and a node with no geometry (an item tab's, laid out by the
+    // panel) has no border in world space to leave from. Its ports are hidden
+    // for the same reason, so this is the belt to that braces.
+    if (!nodeGeom(fromId)) return;
     e.preventDefault();
     e.stopPropagation();
     const pid = e.pointerId;
@@ -1713,7 +1747,7 @@
     }
     if (!changed) return;
     if (targets.some((id) => isPinned(id))) renderPinDock();   // chips tint too
-    if (targets.some((id) => isDockedFrame(id))) syncDockPanel();   // tab/pill tints too
+    if (targets.some((id) => isDockTab(id))) syncDockPanel();   // tab/pill tints too
     commit();
   }
 
@@ -1808,6 +1842,8 @@
       el.innerHTML = `
         <div class="card-header">
           <div class="card-title" title="Double-click to rename" spellcheck="false"></div>
+          <button class="dock-ctl dock-min icon-btn" title="Minimize the panel" aria-label="Minimize the panel"><span class="icon icon-remove"></span></button>
+          <button class="dock-ctl dock-undock icon-btn" title="Return this to the canvas" aria-label="Return this to the canvas"><span class="icon icon-fit_screen"></span></button>
           <button class="copy-link icon-btn" title="Copy link to this card" aria-label="Copy link to this card"><span class="icon icon-tag"></span></button>
           <button class="card-delete icon-btn" title="Delete card" aria-label="Delete card"><span class="icon icon-delete"></span></button>
         </div>
@@ -1832,6 +1868,18 @@
     return el;
   }
 
+  // The panel's own controls, living in the NODE's title row. While this node
+  // IS the panel (an item tab), #dock-header stands down and this row is the
+  // single one — so the buttons that belong to the dock have to be reachable
+  // here. CSS reveals them by ancestry (#dock-item), so there is no state to
+  // keep in sync: undock and they hide themselves.
+  function wireDockControls(id, el) {
+    const min = el.querySelector('.dock-min');
+    const undock = el.querySelector('.dock-undock');
+    if (min) min.addEventListener('click', (e) => { e.stopPropagation(); setDockMinimized(true); });
+    if (undock) undock.addEventListener('click', (e) => { e.stopPropagation(); undockNode(id); });
+  }
+
   function wireCard(id, el) {
     const header = el.querySelector('.card-header');
     const titleEl = el.querySelector('.card-title');
@@ -1839,6 +1887,7 @@
     const delBtn = el.querySelector('.card-delete');
 
     el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+    wireDockControls(id, el);
 
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
@@ -2130,11 +2179,30 @@
       (a < b ? -1 : 1));
     const t = getNode(rid);
     const tel = nodeEls.get(rid);
+    // An ITEM tab lays its assembly out with flexbox in #dock-item, so there is
+    // no derived x/y to compute — and computing one anyway would write a
+    // position measured against a box the panel owns. Just keep the ordering
+    // (the tray's DOM order is the layout) and drop the widths the canvas set.
+    if (isDockItem(rid)) {
+      tel.classList.add('has-dock');
+      bids.forEach((bid, i) => {
+        const bel = nodeEls.get(bid);
+        bel.style.width = '';
+        if (dockItemTray.children[i] !== bel) dockItemTray.appendChild(bel);
+        setDockClasses(bel, 'bottom', i === 0, i === bids.length - 1);
+      });
+      return;
+    }
     const kind = t.data.kind === 'frame' ? 'title'
       : t.data.kind === 'button' ? 'chain' : 'bottom';
     // keep the visual group-highlight fresh if a dock changed mid-selection
     const rootSel = selectedNodes.has(rid);
     for (const bid of bids) nodeEls.get(bid).classList.toggle('co-selected', rootSel);
+    // No box, no verdict: everything inside #dock-panel measures 0 while it is
+    // minimized (display:none), and #dock-world is hidden outright whenever an
+    // ITEM tab is the active one. Deriving a tray from a 0-wide root doesn't
+    // just paint wrong, it WRITES the bogus x/y into the button's record.
+    if (!tel.offsetWidth && !tel.offsetHeight) return;
     if (kind === 'bottom') {
       // full-width tray: equal tab segments sharing 1px borders
       tel.classList.add('has-dock');
@@ -2476,48 +2544,102 @@
   });
 
   // ════════════════════════════════════════════════════════
-  //  DOCKED FRAME WINDOW — one frame's region can dock to the
-  //  side as a SECOND WINDOW into the same world (#dock-panel).
-  //  Exclusive model: while docked, the region's nodes render
-  //  in #dock-world instead of #world (the canvas shows only
-  //  the frame's collapsed tab), so a node still has exactly
-  //  one element and `nodeEls` stays a single map. Both windows
-  //  share ONE world coordinate space — only the viewing
-  //  transform differs — so gesture math stays uniform through
-  //  pointerWorld()/ctxToWorld(). Membership is STICKY, not
-  //  geometric: each docked frame carries an explicit member
-  //  list (`dockMembers`) on its own card record, seeded
-  //  center-in-rect at dock time and changed only by gestures —
-  //  geometry must never silently reassign. Crossing the
-  //  boundary reparents the element. Which frames are docked
-  //  and what they contain is board CONTENT (it syncs, it
-  //  undoes); only the arrangement — active tab, minimized,
-  //  width, each tab's pan/zoom — is per-device chrome stored
-  //  with the viewport. See ARCHITECTURE.md → Docked frame
-  //  window for the full rules.
+  //  DOCKED SIDE WINDOW — a frame's region, or a single card or
+  //  embed, can dock to the side as a SECOND WINDOW into the
+  //  same world (#dock-panel). Exclusive model: while docked, a
+  //  tab's nodes render in #dock-world instead of #world, so a
+  //  node still has exactly one element and `nodeEls` stays a
+  //  single map. TWO KINDS OF TAB share the panel:
+  //  a REGION tab (frame) makes it a second WINDOW — nodes
+  //  render in #dock-world, which shares ONE world coordinate
+  //  space with #world and differs only by its viewing transform,
+  //  so gesture math stays uniform through pointerWorld() /
+  //  ctxToWorld(); membership is STICKY, an explicit `dockMembers`
+  //  list on the frame's own record, seeded center-in-rect and
+  //  changed only by gestures. An ITEM tab (card/embed) makes the
+  //  panel THE NODE: it fills #dock-item with no world, no camera
+  //  and no members, so the width splitter resizes the item
+  //  itself. An item keeps its element and its untouched x/y —
+  //  only the render target changes, the same bargain a pinned
+  //  node makes with its chip — which is also why it has no world
+  //  presence for arrows, marquee, pans or drops to reach.
+  //  Which nodes are docked and what they contain is board
+  //  CONTENT (it syncs, it undoes); only the arrangement — active
+  //  tab, minimized, width, each region tab's pan/zoom — is
+  //  per-device chrome stored with the viewport.
+  //  See ARCHITECTURE.md → Docked side window for the full rules.
   // ════════════════════════════════════════════════════════
   const dockPanel = document.getElementById('dock-panel');
   const dockViewport = document.getElementById('dock-viewport');
   const dockResizer = document.getElementById('dock-resizer');
   const dockWorld = document.getElementById('dock-world');
+  const dockItem = document.getElementById('dock-item');
+  const dockItemTray = document.getElementById('dock-item-tray');
   const dockRail = document.getElementById('dock-rail');
   const dockActiveName = document.getElementById('dock-active-name');
+  const dockFitBtn = document.getElementById('dockFitBtn');
+  const dockLinkBtn = document.getElementById('dockLinkBtn');
   const dockSvg = document.createElementNS(SVGNS, 'svg');
   dockSvg.id = 'dock-connections';
   dockWorld.appendChild(dockSvg);   // url(#…) marker refs resolve document-wide
 
-  // Multiple frames can be docked at once as TABS sharing the one panel
-  // window: every docked frame's region is stowed off the canvas, the ACTIVE
-  // tab's members are visible in the panel, the rest keep their elements
-  // hidden-but-measurable (.dock-stowed uses visibility, not display, so
-  // geometry consumers keep working). Each tab remembers its own viewport.
-  let dock = null;                  // { width, minimized, active, tabs: [{frameId, viewport}] } | null
-  const dockMembers = new Map();    // node id → frameId of the tab that owns it
+  // Several nodes can be docked at once as TABS sharing the one panel window:
+  // every docked region is stowed off the canvas, the ACTIVE tab's members are
+  // visible in the panel, the rest keep their elements hidden-but-measurable
+  // (.dock-stowed uses visibility, not display, so geometry consumers keep
+  // working). Each tab remembers its own viewport.
+  let dock = null;                  // { width, minimized, active, tabs: [{nodeId, viewport}] } | null
+  const dockMembers = new Map();    // node id → owner id of the tab holding it
   const inDock = (id) => dockMembers.has(id);
   const inActiveDock = (id) => !!dock && dockMembers.get(id) === dock.active;
-  const isDockedFrame = (id) => !!dock && dock.tabs.some((t) => t.frameId === id);
-  const activeDockTab = () => dock && dock.tabs.find((t) => t.frameId === dock.active);
-  const worldFor = (id) => (inDock(id) ? dockWorld : world);
+  const isDockTab = (id) => !!dock && dock.tabs.some((t) => t.nodeId === id);
+  const activeDockTab = () => dock && dock.tabs.find((t) => t.nodeId === dock.active);
+  // Where this node's element belongs right now. An item tab's occupants leave
+  // the world entirely: the owner fills #dock-item and its button tray sits in
+  // #dock-item-tray, both laid out by flexbox rather than by x/y.
+  function worldFor(id) {
+    if (!isDockItem(id)) return inDock(id) ? dockWorld : world;
+    return dockMembers.get(id) === id ? dockItem : dockItemTray;
+  }
+
+  // Which kinds may OWN a tab. Widen deliberately, kind by kind — the same
+  // bargain PINNABLE_KINDS makes. An embed carries no `kind` field and a plain
+  // card's is absent, so both need a name of their own here; `button` is left
+  // out because a button already docks to a node (see DOCKED BUTTONS) and
+  // `image` because its crop gestures want their own pass.
+  const DOCKABLE_KINDS = new Set(['frame', 'card', 'embed']);
+  function dockKind(id) {
+    const n = getNode(id);
+    if (!n) return null;
+    return n.type === 'iframe' ? 'embed' : (n.data.kind || 'card');
+  }
+  const isDockable = (id) => DOCKABLE_KINDS.has(dockKind(id));
+  // A region owner brings a rect that anchors its tab's contents (and is
+  // therefore immovable, unresizable and hidden while docked); a node tab owns
+  // nothing but itself. Every place the two flavors differ tests one of these,
+  // never the kind directly. `dockOwnsRegion` is a pure question about the
+  // KIND, so it answers before the node is docked and after it isn't;
+  // `isRegionTab` adds "…and is docked right now", which is what the canvas
+  // asks when it wants to know whether a frame is stowed chrome.
+  const dockOwnsRegion = (id) => dockKind(id) === 'frame';
+  const isRegionTab = (id) => isDockTab(id) && dockOwnsRegion(id);
+  // Is this node part of an ITEM tab — the owner filling the panel, or a button
+  // riding its tray? True for a stowed one too: it is still rendered as an item,
+  // just an inactive one. This is the single question every "no world here"
+  // guard asks, and `dockMembers` answers it for owner and tray alike.
+  const isDockItem = (id) => inDock(id) && !dockOwnsRegion(dockMembers.get(id));
+  // Is the panel showing an item right now? (What the panel's own chrome and
+  // its pan/zoom/marquee handlers ask.)
+  const dockItemShowing = () => !!dock && !dock.minimized && !dockOwnsRegion(dock.active);
+  // What a tab actually shows. An item tab's owner is its own first member —
+  // the single fact that makes the whole exclusive-render model (reparenting,
+  // stowing, hydration, delete, undo) treat it like any other occupant of the
+  // panel instead of needing a parallel path.
+  function tabMembers(ownerId) {
+    const n = getNode(ownerId);
+    const list = (n && n.data.dockMembers) || [];
+    return dockOwnsRegion(ownerId) ? list : [ownerId, ...list];
+  }
 
   // ── Shared-world coordinate plumbing ──
   // ctx is 'main' or 'dock'. Both map to the SAME world units; only the
@@ -2545,7 +2667,11 @@
   // to prevent. (#dock-resizer straddles the panel's left border, so it needs
   // its own rect to cover the few px that overhang onto the canvas.)
   function pointerCtx(cx, cy) {
-    if (!dock || dock.minimized) return 'main';
+    // An ITEM tab holds no world, so the panel can't be a coordinate context or
+    // a drop target while one is showing — same answer as a minimized panel.
+    // Without this a card dragged over the panel would join a tab that renders
+    // nothing but its own owner, and vanish.
+    if (!dock || dock.minimized || dockItemShowing()) return 'main';
     const inRect = (r) => cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
     return inRect(dockPanel.getBoundingClientRect()) ||
            inRect(dockResizer.getBoundingClientRect()) ? 'dock' : 'main';
@@ -2563,66 +2689,82 @@
   }
 
   // ── Membership ──
-  // The ACTIVE tab's region rect (creation clamps / fit / drop-settle target).
-  function dockFrameRect() {
-    const d = dock && board.cards[dock.active];
-    return d && d.kind === 'frame' ? { x: d.x, y: d.y, w: d.w, h: d.h } : null;
+  // The ACTIVE region's world rect — its "home view" for a fit. Only a region
+  // has one: an item tab's node is laid out by the panel, so its x/y are a
+  // parked canvas position and its measured box is the panel's width.
+  function dockRegionRect(ownerId) {
+    const oid = ownerId || (dock && dock.active);
+    const d = oid && dockOwnsRegion(oid) && getNode(oid);
+    return d ? { x: d.data.x, y: d.data.y, w: d.data.w, h: d.data.h } : null;
   }
-  // Membership is STICKY, not geometric: each frame carries an explicit
-  // member list on its OWN card record (`dockMembers` — real, synced content;
-  // seeded from the region's contents at dock time; joined by dropping over
-  // the panel or creating inside it; left by dragging out). Geometry must not
-  // silently reassign nodes — the docked region's canvas ghost is invisible,
-  // so a card created on the canvas over those world coordinates would
-  // otherwise vanish into the panel.
+  // Membership is STICKY, not geometric: each docked node carries an explicit
+  // member list on its OWN record (`dockMembers` — real, synced content;
+  // seeded from the region's contents at dock time for a frame, empty for an
+  // item tab; joined by dropping over the panel or creating inside it; left by
+  // dragging out). Geometry must not silently reassign nodes — the docked
+  // region's canvas ghost is invisible, so a card created on the canvas over
+  // those world coordinates would otherwise vanish into the panel.
+  //
+  // WHERE a member sits therefore never decides whether it is one, and there
+  // used to be one exception: a reconcile pruned members whose centre had ended
+  // up a full region-size beyond the rect, meaning to clean up after a reverted
+  // cross-window drag. It ejected real work instead, and no tolerance can fix
+  // it, because the panel is a free surface WITH ITS OWN CAMERA — pan it down
+  // to reach empty space, drop a card there, and that card is legitimately
+  // hundreds of world px outside a rect it was never required to sit in. Two
+  // things made it look harmless for a long time: it needs a real box, and the
+  // panel is display:none while renderAll prunes, so a RELOAD always kept the
+  // member — only mid-session reconciles (undo/redo, a Drive pull) ejected it,
+  // which reads as random. And the eject is destructive past undo: it rewrites
+  // the list the snapshot would have restored.
+  // Reverted drags need no help anyway: membership and position are both
+  // content, so one undo restores both. What is left unrepaired is a merge
+  // artifact (one device adds the member, the other moves the card on the
+  // canvas) — the node then sits in the panel at odd coordinates, which Fit or
+  // a pan finds and a drag undoes. Cheap to recover from, unlike deleted work.
+  //
   // recomputeDockMembers rebuilds the id→tab index from the lists and
-  // reparents/stows whatever changed. opts.prune (reconcile only — undo and
-  // remote merges) drops members whose CENTER left their region, so a
-  // reverted cross-window drag doesn't strand an off-region node in the
-  // panel. Never prune at commit — in-panel edits may overhang freely.
-  function recomputeDockMembers(opts) {
+  // reparents/stows whatever changed. It still drops members that stopped being
+  // valid at all — the node is gone, or it pinned itself to the chrome — and
+  // that is an edit to SYNCED content made outside commit(), so the pull path
+  // still has to version it (see applyPulledBoard).
+  function recomputeDockMembers() {
     if (!dock && !dockMembers.size) return false;
     const before = new Map(dockMembers);
     dockMembers.clear();
     if (dock) {
       for (const t of dock.tabs) {
-        const fd = board.cards[t.frameId];
-        const list = (fd && fd.dockMembers) || [];
-        const kept = list.filter((id) => {
-          if (!getNode(id) || isPinned(id) || isDockedFrame(id)) return false;
-          if (opts && opts.prune && fd) {
-            // members may live anywhere AROUND the region (the panel is a
-            // free surface) — prune only genuinely-far strays, a full
-            // region-size beyond the rect, i.e. reverted cross-window drags
-            // …and only against a box we can actually measure: the panel is
-            // display:none while minimized (and un-hidden only after render),
-            // so every member inside it measures 0×0 and its "center" reads as
-            // its top-left — which drags the left/top thresholds half a node
-            // inward and prunes members a pull happened to catch while the
-            // panel was down. No box, no verdict; keep it.
-            const g = nodeGeom(id);
-            if (g && g.w && g.h) {
-              const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
-              if (cx < fd.x - fd.w || cx > fd.x + fd.w * 2 ||
-                  cy < fd.y - fd.h || cy > fd.y + fd.h * 2) return false;
-            }
-          }
-          return true;
-        });
-        if (fd && kept.length !== list.length) fd.dockMembers = kept;   // a pruned stray survives the reconcile
-        for (const id of kept) if (!dockMembers.has(id)) dockMembers.set(id, t.frameId);
+        const on = getNode(t.nodeId);
+        const fd = on && on.data;
+        // An item tab's owner is its own member and can't be filtered out of
+        // itself — tabMembers prepends it, and the stored array (which is what
+        // gets written back below) never contains it.
+        const list = tabMembers(t.nodeId);
+        const stored = (fd && fd.dockMembers) || [];
+        const kept = list.filter((id) =>
+          id === t.nodeId || !(!getNode(id) || isPinned(id) || isDockTab(id)));
+        // write back the STORED shape (owner excluded) so a dropped id stays
+        // dropped past this reconcile
+        const keptStored = kept.filter((id) => id !== t.nodeId);
+        if (fd && keptStored.length !== stored.length) fd.dockMembers = keptStored;
+        for (const id of kept) if (!dockMembers.has(id)) dockMembers.set(id, t.nodeId);
       }
       // a docked-button assembly is one unit: buttons live where their root
-      // lives — including buttons attached to a docked frame's own tab,
-      // which stow with the frame
+      // lives — including buttons attached to a region tab's own frame, which
+      // stow with it, and the tray under a docked CARD, which is the whole
+      // reason a node tab's owner is an ordinary member: its buttons find it
+      // in this map and follow it into the panel with no special case.
       for (const [bid, c] of Object.entries(board.cards)) {
         if (c.kind !== 'button' || !c.attachedTo) continue;
         const root = dockRoot(bid);
         if (dockMembers.has(root)) dockMembers.set(bid, dockMembers.get(root));
-        else if (isDockedFrame(root)) dockMembers.set(bid, root);
+        else if (isDockTab(root)) dockMembers.set(bid, root);
         else dockMembers.delete(bid);
       }
     }
+    // whether an id's home is an ITEM container — the render target changes with
+    // it, so crossing this line needs a re-render, not just a reparent
+    const itemHome = (owner) => owner !== undefined && !dockOwnsRegion(owner);
     let changed = false;
     for (const id of new Set([...before.keys(), ...dockMembers.keys()])) {
       if (before.get(id) === dockMembers.get(id)) continue;
@@ -2633,6 +2775,11 @@
           worldFor(id).appendChild(el);
         }
         if (!dockMembers.has(id)) el.classList.remove('dock-stowed');   // back to the canvas
+        // An item is sized by the panel and a canvas node by its own record, so
+        // the renderer has to run again to drop (or restore) the inline box.
+        // Reparenting alone would leave an embed at its stored width inside a
+        // panel that is supposed to be deciding it.
+        if (itemHome(before.get(id)) !== itemHome(dockMembers.get(id))) renderNodeNow(id);
       }
       redrawConnectionsFor(id);        // arrows re-route (or hide) across windows
       changed = true;
@@ -2646,16 +2793,25 @@
   // (some as their own gesture, some folded into a bigger one like paste/dup).
   function addToDockTab(ids, fid) {
     if (!dock) return;
-    const targetFid = fid || dock.active;
-    const c = board.cards[targetFid];
+    const target = fid || dock.active;
+    const n = getNode(target);
+    const c = n && n.data;
     if (!c || !Array.isArray(c.dockMembers)) return;
-    for (const id of ids) if (!c.dockMembers.includes(id) && !isDockedFrame(id) && !isPinned(id)) c.dockMembers.push(id);
+    // An ITEM tab is exactly one node — it has no free surface to join, and a
+    // member added to one would be reparented into #dock-item and stack under
+    // the owner. Its list stays empty for its whole docked life.
+    if (!dockOwnsRegion(target)) return;
+    // isDockTab covers a tab owner joining someone else's list: it is already
+    // rendered as its own tab, and two homes is a fight the recompute can only
+    // resolve arbitrarily.
+    for (const id of ids) if (!c.dockMembers.includes(id) && !isDockTab(id) && !isPinned(id)) c.dockMembers.push(id);
   }
   function removeFromDock(ids) {
     if (!dock) return;
     const drop = new Set(ids);
     for (const t of dock.tabs) {
-      const c = board.cards[t.frameId];
+      const n = getNode(t.nodeId);
+      const c = n && n.data;
       if (c && Array.isArray(c.dockMembers)) c.dockMembers = c.dockMembers.filter((id) => !drop.has(id));
     }
   }
@@ -2669,78 +2825,98 @@
   }
 
   // ── Open / close / switch / minimize ──
-  // The frame menu for a docked tab — rename, colors (tabs inherit the
-  // frame's color everywhere), default view, undock, delete. Opened by
+  // The owner's menu for a docked tab — rename, colors (tabs inherit the
+  // owner's color everywhere), default view, undock, delete. Opened by
   // right-clicking the header pill or an edge-rail tab.
   function openDockTabMenu(e, fid) {
     e.preventDefault();
     e.stopPropagation();
-    const d = board.cards[fid];
-    if (!d) return;
+    const n = getNode(fid);
+    if (!n) return;
+    const d = n.data;
     const isHome = !!d.homeView;
-    openContextMenu(e.clientX, e.clientY, [
-      { label: 'Rename', action: () => { setActiveDockTab(fid); setDockMinimized(false); beginRename(dockActiveName); } },
-      { label: 'Fit region', action: () => { setActiveDockTab(fid); setDockMinimized(false); dockFitRegion(); } },
-      {
+    const items = [];
+    // Rename edits the header pill, and only a REGION has one — an item tab
+    // hides that header, and its node's own title row is right there in the
+    // panel to rename in place.
+    if (dockOwnsRegion(fid)) {
+      items.push({ label: 'Rename', action: () => { setActiveDockTab(fid); setDockMinimized(false); beginRename(dockActiveName); } });
+    }
+    items.push({ label: 'Fit to panel', action: () => { setActiveDockTab(fid); setDockMinimized(false); dockFitRegion(); } });
+    // "home view" is a frame concept (see homeFrameId) — a node tab has no
+    // region for the canvas to open onto
+    if (isRegionTab(fid)) {
+      items.push({
         label: (isHome ? '✓ ' : '') + 'Use as default view',
         action: () => {
           for (const c of Object.values(board.cards)) if (c.kind === 'frame') delete c.homeView;
           if (!isHome) d.homeView = true;
           commit();
         },
-      },
-      'sep',
-      { swatches: true, current: d.color || null, onPick: (key) => setNodesColor([fid], key) },
-      'sep',
-      { label: 'Undock', action: () => undockFrame(fid) },
-      { label: 'Delete frame', danger: true, action: () => deleteNode(fid) },
-    ]);
+      });
+    }
+    items.push('sep');
+    items.push({ swatches: true, current: d.color || null, onPick: (key) => setNodesColor([fid], key) });
+    items.push('sep');
+    items.push({ label: 'Undock', action: () => undockNode(fid) });
+    items.push({ label: 'Delete ' + nodeKind(fid).toLowerCase(), danger: true, action: () => deleteNode(fid) });
+    openContextMenu(e.clientX, e.clientY, items);
   }
   function syncDockPanel() {
     const open = !!dock;
     dockPanel.classList.toggle('hidden', !open || dock.minimized);
     dockRail.classList.toggle('hidden', !open);
     document.body.classList.toggle('docked', open && !dock.minimized);
-    // canvas ghosts: docked frames are stowed entirely off the board view
+    // canvas ghosts: a docked REGION is stowed entirely off the board view.
+    // A node tab's owner is never given this class — it has no region to
+    // anchor, so it renders in the panel as its own member instead.
     for (const el of world.querySelectorAll('.frame-node.frame-docked')) {
-      if (!isDockedFrame(el.dataset.id)) el.classList.remove('frame-docked');
+      if (!isDockTab(el.dataset.id)) el.classList.remove('frame-docked');
     }
     if (!open) { dockRail.innerHTML = ''; return; }
     for (const t of dock.tabs) {
-      const el = nodeEls.get(t.frameId);
+      const el = isRegionTab(t.nodeId) && nodeEls.get(t.nodeId);
       if (el) el.classList.add('frame-docked');
     }
-    const name = (fid) => (board.cards[fid] && board.cards[fid].title) || 'Frame';
+    const color = (id) => { const n = getNode(id); return n && n.data.color; };
+    // which of the two containers is live — a world to look into, or the item
+    // itself. This whole header stands down for an item (its node's own title
+    // row is the one row), so its buttons only ever serve a region: Fit needs a
+    // camera, and the link button stands in for a title tab stowed off canvas.
+    const region = dockOwnsRegion(dock.active);
+    dockPanel.classList.toggle('item-mode', !region);
+    dockFitBtn.classList.toggle('hidden', !region);
+    dockLinkBtn.classList.toggle('hidden', !region);
     document.documentElement.style.setProperty('--dock-w', dock.width + 'px');
-    // the panel wears the active frame's color the way canvas nodes do:
+    // the panel wears the active owner's color the way canvas nodes do:
     // tinted border + header wash, plain white text
-    if (document.activeElement !== dockActiveName) dockActiveName.textContent = name(dock.active);
-    applyNodeColor(dockPanel, board.cards[dock.active] && board.cards[dock.active].color);
-    // edge rail: one vertical tab per docked frame, in the frame's color
+    if (document.activeElement !== dockActiveName) dockActiveName.textContent = nodeTitle(dock.active);
+    applyNodeColor(dockPanel, color(dock.active));
+    // edge rail: one vertical tab per docked node, in that node's color
     dockRail.innerHTML = '';
     for (const t of dock.tabs) {
       const b = document.createElement('button');
       b.type = 'button';
-      const active = t.frameId === dock.active && !dock.minimized;
+      const active = t.nodeId === dock.active && !dock.minimized;
       b.className = 'dock-rail-tab' + (active ? ' active' : '');
-      b.textContent = name(t.frameId);
-      b.title = name(t.frameId);
+      b.textContent = nodeTitle(t.nodeId);
+      b.title = nodeTitle(t.nodeId);
       // the rail is rebuilt on every dock change, so setting these at creation
       // keeps them in sync with .active for free
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', active ? 'true' : 'false');
-      applyNodeColor(b, board.cards[t.frameId] && board.cards[t.frameId].color);
+      applyNodeColor(b, color(t.nodeId));
       b.addEventListener('click', () => {
-        if (dock.minimized) { setDockMinimized(false); setActiveDockTab(t.frameId); }
-        else if (dock.active === t.frameId) setDockMinimized(true);   // toggle away
-        else setActiveDockTab(t.frameId);
+        if (dock.minimized) { setDockMinimized(false); setActiveDockTab(t.nodeId); }
+        else if (dock.active === t.nodeId) setDockMinimized(true);   // toggle away
+        else setActiveDockTab(t.nodeId);
       });
-      b.addEventListener('contextmenu', (e) => openDockTabMenu(e, t.frameId));
+      b.addEventListener('contextmenu', (e) => openDockTabMenu(e, t.nodeId));
       dockRail.appendChild(b);
     }
   }
   function setActiveDockTab(fid) {
-    if (!dock || dock.active === fid || !dock.tabs.some((t) => t.frameId === fid)) return;
+    if (!dock || dock.active === fid || !dock.tabs.some((t) => t.nodeId === fid)) return;
     dock.active = fid;
     refreshDockStow();
     for (const cid of connEls.keys()) drawConnection(cid);   // stowed arrows follow
@@ -2750,9 +2926,9 @@
     commit({ viewportOnly: true });
     flushViewport();                   // this device's arrangement saves immediately
   }
-  // Fit the active frame's region into the panel (the tab's "home view").
+  // Fit the active tab's contents into the panel (its "home view").
   function dockFitRegion() {
-    const fr = dockFrameRect();
+    const fr = dockRegionRect();   // null for an item tab — it always fills the panel
     const t = activeDockTab();
     if (!fr || !t || dock.minimized) return;
     const r = dockViewport.getBoundingClientRect();
@@ -2768,49 +2944,61 @@
     applyDockViewport();
     commit({ viewportOnly: true });
   }
-  function dockFrame(frameId) {
-    const d = board.cards[frameId];
-    if (!d || d.kind !== 'frame') return;
-    if (isDockedFrame(frameId)) { setDockMinimized(false); setActiveDockTab(frameId); return; }
+  function dockNode(nodeId) {
+    const n = getNode(nodeId);
+    if (!n || !isDockable(nodeId) || isPinned(nodeId)) return;
+    if (isDockTab(nodeId)) { setDockMinimized(false); setActiveDockTab(nodeId); return; }
+    const d = n.data;
     exitInteract();
     hydrateAll();                      // seeding needs every node's geometry
-    // seed the tab with what sits in the region NOW (center-in-rect); from
-    // here on, membership changes only through explicit gestures
+    // A region seeds its tab with what sits inside it NOW (center-in-rect);
+    // from here on, membership changes only through explicit gestures. An item
+    // tab starts empty and STAYS empty — the tab is the node (tabMembers), and
+    // there is no free surface beside it for anything to join.
     const members = [];
-    for (const id of nodeEls.keys()) {
-      if (id === frameId || isDockedFrame(id) || isPinned(id) || inDock(id)) continue;
-      const c = board.cards[id];
-      if (c && c.kind === 'button' && c.attachedTo) continue;   // rides with its root
-      const g = nodeGeom(id);
-      if (!g) continue;
-      const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
-      if (cx >= d.x && cx <= d.x + d.w && cy >= d.y && cy <= d.y + d.h) members.push(id);
+    if (dockOwnsRegion(nodeId)) {
+      for (const id of nodeEls.keys()) {
+        if (id === nodeId || isDockTab(id) || isPinned(id) || inDock(id)) continue;
+        const c = board.cards[id];
+        if (c && c.kind === 'button' && c.attachedTo) continue;   // rides with its root
+        const g = nodeGeom(id);
+        if (!g) continue;
+        const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
+        if (cx >= d.x && cx <= d.x + d.w && cy >= d.y && cy <= d.y + d.h) members.push(id);
+      }
+    } else {
+      // it can't be a member of another tab AND a tab of its own
+      removeFromDock([nodeId]);
     }
-    d.dockMembers = members;            // real content: this frame is now docked
+    d.dockMembers = members;            // real content: this node is now docked
     dock = deriveDockTabs(dock);
-    dock.active = frameId;
+    dock.active = nodeId;
     dock.minimized = false;
     syncDockPanel();
     recomputeDockMembers();
-    dockFitRegion();
+    dockFitRegion();                   // regions only; an item needs no camera
+    layoutAttachments();               // a tray leaves world layout for the panel's
     for (const cid of connEls.keys()) drawConnection(cid);   // stow states changed
     scheduleFrameEval();
     commit();                          // membership is content; docking undoes/syncs like any edit
     flushViewport();                   // …chrome (active tab) too, immediately: survive an abrupt reload
   }
-  function undockFrame(fid) {
+  function undockNode(fid) {
     if (!dock) return;
     fid = fid || dock.active;
-    const d = board.cards[fid];
-    // The complete live member set. NOT the stored `dockMembers` array: that
+    const n = getNode(fid);
+    const d = n && n.data;
+    const region = dockOwnsRegion(fid);
+    // The complete live occupant set. NOT the stored `dockMembers` array: that
     // omits buttons attached to a member (they ride with their root, so they
     // were never listed), and they have to be enclosed and moved like anything
     // else. Captured before recomputeDockMembers clears the index.
-    const members = [...dockMembers.keys()].filter((id) => dockMembers.get(id) === fid);
+    const occupants = [...dockMembers.keys()].filter((id) => dockMembers.get(id) === fid);
+    const members = occupants.filter((id) => id !== fid);
     // members may live anywhere around the region (free surface) — grow the
     // frame to CONTAIN them all before they land back on the canvas, so an
     // undocked frame always fully encloses its contents
-    if (d && d.kind === 'frame') {
+    if (d && region) {
       const pad = 24;
       let minX = d.x, minY = d.y, maxX = d.x + d.w, maxY = d.y + d.h;
       for (const id of members) {
@@ -2823,17 +3011,22 @@
         d.x = Math.round(minX); d.y = Math.round(minY);
         d.w = Math.round(maxX - minX); d.h = Math.round(maxY - minY);
       }
-      delete d.dockMembers;             // real content: this frame is no longer docked
     }
+    if (d) delete d.dockMembers;        // real content: this node is no longer docked
     dock = deriveDockTabs(dock);
-    recomputeDockMembers();            // that region's nodes go back to the canvas
+    recomputeDockMembers();            // that tab's nodes go back to the canvas
     syncDockPanel();                   // …and the panel closes, if that was the last tab
-    // Bring the region to the user, not the camera to the region. Called AFTER
-    // syncDockPanel so visibleRect() knows whether the panel is still there.
-    if (d && d.kind === 'frame') landRegionInView(fid, members);
-    if (board.cards[fid]) renderCard(fid);   // apply the (possibly grown) rect
+    // Re-render BEFORE measuring: an item was sized by the panel, so its box is
+    // only its own again once the renderer has put its stored w/h back (and the
+    // element is out of #dock-item, where CSS was overriding them).
+    renderNodeNow(fid);
+    layoutAttachments();               // a tray goes back to derived world x/y
     const f = nodeEls.get(fid);
     if (f) f.classList.remove('frame-docked');
+    // Bring the contents to the user, not the camera to them. Called AFTER
+    // syncDockPanel so visibleRect() knows whether the panel is still there.
+    const rect = region ? { x: d.x, y: d.y, w: d.w, h: d.h } : nodeGeom(fid);
+    if (rect) landInView(rect, region ? [fid, ...members] : occupants);
     for (const cid of connEls.keys()) drawConnection(cid);
     applyDockViewport();
     scheduleFrameEval();
@@ -2841,49 +3034,49 @@
     flushViewport();
   }
 
-  // An undocking region has to arrive somewhere the user can see. The panel
-  // carries its own pan/zoom, so the frame's world position is usually nowhere
-  // near where the canvas happens to be looking — an undock that dropped it
-  // off screen read as the contents having vanished. Moving the region rather
+  // An undocking tab's contents have to arrive somewhere the user can see. The
+  // panel carries its own pan/zoom, so their world position is usually nowhere
+  // near where the canvas happens to be looking — an undock that dropped them
+  // off screen read as the contents having vanished. Moving the contents rather
   // than the camera keeps the user's place on the board, and matches what
   // unpinning a button already does (see unpinNode: "its old spot may be far
   // off"). The move is content — it syncs and rides the caller's commit as one
   // undo step with the rest of the undock. Any zoom change is view-only and
   // commits separately through setMainViewport.
-  function landRegionInView(fid, members) {
-    const d = board.cards[fid];
-    if (!d) return;
+  // `rect` is the box being landed (a frame's region, or a node tab's occupied
+  // box) and `ids` is everything that travels with it.
+  function landInView(rect, ids) {
     const r = visibleRect();
     const v = board.viewport;
     // Already sitting fully in view? Leave both the board and the camera be —
-    // no sense dirtying content to nudge a frame the user is looking at.
-    const sx = d.x * v.zoom + v.x, sy = d.y * v.zoom + v.y;
+    // no sense dirtying content to nudge what the user is looking at.
+    const sx = rect.x * v.zoom + v.x, sy = rect.y * v.zoom + v.y;
     if (sx >= r.x && sy >= r.y &&
-        sx + d.w * v.zoom <= r.x + r.w && sy + d.h * v.zoom <= r.y + r.h) return;
+        sx + rect.w * v.zoom <= r.x + r.w && sy + rect.h * v.zoom <= r.y + r.h) return;
 
-    // Rigid translation: the frame and every member shift by one delta, so
-    // relative layout (and every arrow between them) is preserved exactly.
-    const dx = Math.round((r.x + r.w / 2 - v.x) / v.zoom - (d.x + d.w / 2));
-    const dy = Math.round((r.y + r.h / 2 - v.y) / v.zoom - (d.y + d.h / 2));
+    // Rigid translation: everything shifts by one delta, so relative layout
+    // (and every arrow between them) is preserved exactly.
+    const dx = Math.round((r.x + r.w / 2 - v.x) / v.zoom - (rect.x + rect.w / 2));
+    const dy = Math.round((r.y + r.h / 2 - v.y) / v.zoom - (rect.y + rect.h / 2));
     if (dx || dy) {
-      d.x += dx; d.y += dy;
-      for (const id of members) {
+      rect.x += dx; rect.y += dy;
+      for (const id of ids) {
         const n = getNode(id);
         if (n) { n.data.x += dx; n.data.y += dy; }
       }
-      for (const id of [fid, ...members]) renderNodeNow(id);
+      for (const id of ids) renderNodeNow(id);
       layoutAttachments();      // attached buttons re-derive from their moved host
     }
 
     // Too big for the view at this zoom? Pull back just far enough. Never
     // zooms IN: a small region shouldn't commandeer the zoom the user chose.
     const pad = 24;
-    const fit = Math.min(r.w / (d.w + pad * 2), r.h / (d.h + pad * 2));
+    const fit = Math.min(r.w / (rect.w + pad * 2), r.h / (rect.h + pad * 2));
     if (fit >= v.zoom) return;
     const zoom = Math.max(MIN_ZOOM, fit);
     setMainViewport(
-      r.x + r.w / 2 - (d.x + d.w / 2) * zoom,
-      r.y + r.h / 2 - (d.y + d.h / 2) * zoom,
+      r.x + r.w / 2 - (rect.x + rect.w / 2) * zoom,
+      r.y + r.h / 2 - (rect.y + rect.h / 2) * zoom,
       zoom);
   }
 
@@ -2897,18 +3090,23 @@
   }
 
   // ── Panel chrome wiring ──
-  document.getElementById('dockFitBtn').addEventListener('click', () => dockFitRegion());
+  dockFitBtn.addEventListener('click', () => dockFitRegion());
+  dockLinkBtn.addEventListener('click', (e) => { if (dock) copyNodeLink(dock.active, e.currentTarget); });
   document.getElementById('dockMinBtn').addEventListener('click', () => setDockMinimized(true));
-  document.getElementById('dockUndockBtn').addEventListener('click', () => undockFrame());
-  // header title: rename inline, right-click = the frame menu
+  document.getElementById('dockUndockBtn').addEventListener('click', () => undockNode());
+  // header title: rename inline, right-click = the owner's menu
   dockActiveName.addEventListener('contextmenu', (e) => { if (dock) openDockTabMenu(e, dock.active); });
   makeRenamable(dockActiveName, {
     viaDblclick: true,               // double-click the pill name to rename too
+    // Only a REGION shows this pill (an item tab hides the whole header — its
+    // node's own title row is the one row), and a frame always has a title
+    // field, so there is no snippet-named owner to write a title onto here.
     onCommit: (text) => {
-      const d = dock && board.cards[dock.active];
-      if (!d) return;
-      d.title = text.trim();
-      if (nodeEls.has(dock.active)) renderCard(dock.active);   // hidden el keeps its label in sync
+      const id = dock && dock.active;
+      const n = id && getNode(id);
+      if (!n || !dockOwnsRegion(id)) { syncDockPanel(); return; }
+      n.data.title = text.trim();
+      if (nodeEls.has(id)) renderNodeNow(id);   // hidden el keeps its label in sync
       commit();
       syncDockPanel();
     },
@@ -2970,7 +3168,7 @@
     el.style.width = data.w + 'px';
     el.style.height = data.h + 'px';
     applyNodeColor(el, data.color);
-    el.classList.toggle('frame-docked', isDockedFrame(id));
+    el.classList.toggle('frame-docked', isDockTab(id));
     const nameEl = el.querySelector('.frame-name');
     if (document.activeElement !== nameEl) nameEl.textContent = data.title || 'Frame';
     return el;
@@ -2986,7 +3184,7 @@
       if (nameEl.isContentEditable) return;
       // while docked, the region's coordinates anchor the panel's contents —
       // moving or resizing it would eject everything; undock first
-      if (isDockedFrame(id)) return;
+      if (isDockTab(id)) return;
       startNodeDrag(id, el, e);
     });
     makeRenamable(nameEl, {
@@ -3001,7 +3199,7 @@
     makeBoxResizable(id, el, {
       selector: '.frame-edge, .frame-resize',
       minW: 200, minH: 140,
-      blocked: () => isDockedFrame(id),   // docked: rect is the panel's anchor
+      blocked: () => isDockTab(id),   // docked: rect is the panel's anchor
     });
   }
 
@@ -3639,6 +3837,8 @@
       el.innerHTML = `
         <div class="iframe-header">
           <span class="iframe-label" title="Double-click to rename" spellcheck="false"></span>
+          <button class="dock-ctl dock-min icon-btn" title="Minimize the panel" aria-label="Minimize the panel"><span class="icon icon-remove"></span></button>
+          <button class="dock-ctl dock-undock icon-btn" title="Return this to the canvas" aria-label="Return this to the canvas"><span class="icon icon-fit_screen"></span></button>
           <button class="iframe-edit icon-btn" title="Edit URL"><span class="icon icon-edit"></span></button>
           <button class="copy-link icon-btn" title="Copy link to this embed"><span class="icon icon-tag"></span></button>
           <span class="iframe-czoom">
@@ -3669,8 +3869,17 @@
     }
     el.style.left = data.x + 'px';
     el.style.top = data.y + 'px';
-    el.style.width = data.w + 'px';
-    el.style.height = data.h + 'px';
+    // While this embed IS the panel, the panel sizes it: writing the stored box
+    // back would fight the CSS every render. `position: static` makes left/top
+    // above harmless on their own, but an inline width/height would win, so
+    // these two are cleared instead — and restored the moment it undocks.
+    if (isDockItem(id)) {
+      el.style.width = '';
+      el.style.height = '';
+    } else {
+      el.style.width = data.w + 'px';
+      el.style.height = data.h + 'px';
+    }
     applyNodeColor(el, data.color);
     applyNodeZ(el, data);
 
@@ -3915,6 +4124,7 @@
     const handle = el.querySelector('.resize-handle');
 
     el.addEventListener('pointerdown', (e) => nodePointerSelect(id, e), true);
+    wireDockControls(id, el);
 
     header.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button')) return;
@@ -4328,6 +4538,9 @@
     // the panel's SVG; both on the canvas → the main SVG; one on each side →
     // hidden (records survive; the arrow returns when the ends reunite)
     const spanning = inDock(data.from) !== inDock(data.to);
+    // An item-tab endpoint needs no clause of its own: it has no geometry, so
+    // pathBetween returns null and the arrow collapses the way it does for a
+    // pinned or not-yet-hydrated end. The record survives either way.
     const p = spanning ? null : pathBetween(data.from, data.to);
     // an endpoint without DOM (pending hydration, or pinned to the chrome
     // dock) has no geometry — hide the arrow until both ends exist again
@@ -4400,6 +4613,8 @@
   //    the shared .drop-target outline show where it will land. ──
   let kbConnect = null;   // { fromId, targetId, temp } while aiming
   function startKbConnect(fromId) {
+    const g0 = nodeGeom(fromId);
+    if (!g0) { announce('This can’t start a connection while it’s docked'); return; }
     const targets = orderedNodeIds().filter((id) => id !== fromId);
     if (!targets.length) { announce('Nothing to connect to'); return; }
     const temp = document.createElementNS(SVGNS, 'path');
@@ -4408,7 +4623,6 @@
     (inDock(fromId) ? dockSvg : svg).appendChild(temp);
     kbConnect = { fromId, targetId: null, temp };
     // start aimed at the nearest node — most connections are local
-    const g0 = nodeGeom(fromId);
     let best = targets[0], bd = Infinity;
     for (const t of targets) {
       const g = nodeGeom(t);
@@ -4454,7 +4668,7 @@
   // ════════════════════════════════════════════════════════
   function deleteNode(id) {
     if (cropId === id) exitCrop();            // a mode can't outlive its node
-    if (isDockedFrame(id)) undockFrame(id);   // a tab can't outlive its frame
+    if (isDockTab(id)) undockNode(id);   // a tab can't outlive its owner
     // deleting a dock orphans its buttons in place (buttons that were ALSO
     // selected get their own deleteNode call in the same sweep)
     for (const c of Object.values(board.cards)) {
@@ -4934,7 +5148,7 @@
     // layout pass (the "docked button missing until the frame moves" bug)
     applyViewport();
     applyDockViewport();
-    recomputeDockMembers({ prune: true });       // drop members that left their region
+    recomputeDockMembers();                      // classes/parents after the render pass
     syncDockPanel();
     layoutAttachments();                         // classes + any layout drift
     refreshColorFilter();
@@ -4987,7 +5201,7 @@
     // if there was no dock at boot. The tab's stored pan/zoom is restored in the
     // model by deriveDockTabs above; this is what paints it.
     applyDockViewport();
-    recomputeDockMembers({ prune: true });   // undo/remote may have moved members out
+    recomputeDockMembers();          // …and again now every element exists
     syncDockPanel();                 // docked frame's title may have changed
     layoutAttachments();
     for (const id of [...selectedNodes]) if (!nodeEls.has(id)) selectedNodes.delete(id);
@@ -5085,7 +5299,8 @@
       const sel = new Set(baseSel);
       for (const id of nodeEls.keys()) {
         if ((ctx === 'dock' ? !inActiveDock(id) : inDock(id))) continue;   // marquee stays in its window
-        if (isDockedFrame(id)) continue;                 // docked outlines are stowed chrome
+        if (isRegionTab(id)) continue;                    // docked outlines are stowed chrome
+
         const g = nodeGeom(id);
         if (!g) continue;
         // frames span whole regions — mere overlap would grab them (and drag
@@ -5136,6 +5351,7 @@
   //    viewport. Handlers mirror the canvas ones with ctx:'dock'. ──
   const dockEmpty = (t) => t === dockViewport || t === dockWorld || t === dockSvg;
   dockViewport.addEventListener('pointerdown', (e) => {
+    if (dockItemShowing()) return;     // an item tab has no camera to move
     if (spaceHeld && e.button === 0) { e.preventDefault(); e.stopPropagation(); startPan(e, { ctx: 'dock' }); }
   }, true);
   dockViewport.addEventListener('pointerdown', (e) => {
@@ -5147,7 +5363,7 @@
   });
   let dockWheelRAF = 0;
   dockViewport.addEventListener('wheel', (e) => {
-    if (!dock) return;
+    if (!dock || dockItemShowing()) return;   // no camera; let the item scroll itself
     e.preventDefault();
     exitInteract();
     const v = activeDockTab().viewport;
@@ -5492,9 +5708,6 @@
           },
         });
         items.push({ label: 'Rename', action: () => beginRename(nodeEl.querySelector('.frame-name')) });
-        items.push(isDockedFrame(id)
-          ? { label: 'Undock from side panel', action: () => undockFrame(id) }
-          : { label: 'Dock to side panel', action: () => dockFrame(id) });
         items.push('sep');
       }
       if (isButton) {
@@ -5515,8 +5728,16 @@
         items.push({ shapes: true, current: imageShape(gn0.data), onPick: (key) => setImagesShape([...selectedNodes], key) });
         items.push('sep');
       }
-      // kind-agnostic on purpose: widening PINNABLE_KINDS lights this up for
-      // more node types with no further menu work
+      // Both docks are kind-agnostic here on purpose: widening PINNABLE_KINDS
+      // or DOCKABLE_KINDS lights these up for more node types with no further
+      // menu work. Docking is a single-node action — a tab has one owner — so
+      // it stands down on a multi-selection rather than silently picking one.
+      if (isDockable(id) && !isPinned(id) && !many) {
+        items.push(isDockTab(id)
+          ? { label: 'Undock from side panel', action: () => undockNode(id) }
+          : { label: 'Dock to side panel', action: () => dockNode(id) });
+        items.push('sep');
+      }
       if (gn0 && gn0.type === 'card' && PINNABLE_KINDS.has(gn0.data.kind) && !gn0.data.pinned) {
         items.push({ label: 'Pin to toolbar', action: () => pinNode(id) });
         items.push('sep');
@@ -5724,8 +5945,14 @@
   // full-window view of the embed.
   function frameNode(id) {
     // navigation into the docked window pans the PANEL, not the canvas
-    // (activating the owning tab first if it isn't the visible one)
-    if (isDockedFrame(id)) { setDockMinimized(false); setActiveDockTab(id); dockFitRegion(); return; }
+    // (activating the owning tab first if it isn't the visible one). A REGION
+    // has no element to centre on — it IS the tab's extent, so fit it; a node
+    // tab's owner is ordinary panel content and falls through to the centring
+    // path below, which is what makes "go to that docked card" land on it.
+    if (isRegionTab(id)) { setDockMinimized(false); setActiveDockTab(id); dockFitRegion(); return; }
+    // an ITEM (or a button on its tray) fills the panel already: raising its tab
+    // is the whole navigation
+    if (isDockItem(id)) { setDockMinimized(false); setActiveDockTab(dockMembers.get(id)); return; }
     if (inDock(id)) {
       setDockMinimized(false);
       setActiveDockTab(dockMembers.get(id));
@@ -6618,7 +6845,8 @@
   // moves, and a frame set to move its contents carries them along.
   function nudgeSelection(dx, dy) {
     const carried = new Set(selectedNodes);
-    if (dock) for (const t of dock.tabs) carried.delete(t.frameId);   // immovable while docked (see startNodeDrag)
+    if (dock) for (const t of dock.tabs) carried.delete(t.nodeId);   // immovable while docked (see startNodeDrag)
+    for (const nid of [...carried]) if (isDockItem(nid)) carried.delete(nid);
     for (const nid of selectedNodes) {
       const n = getNode(nid);
       if (n && n.data.kind === 'frame' && n.data.moveContents) {
@@ -7660,17 +7888,21 @@
   }
 
   // ── Sync reconcile (last-write-wins, with a prompt on true divergence) ──
-  // Fingerprint of every docked frame's member list. Cheap (a handful of frames)
-  // and enough to tell whether a reconcile's prune edited synced content.
-  const dockListsSig = () => JSON.stringify(Object.keys(board.cards)
-    .filter((k) => Array.isArray(board.cards[k].dockMembers))
-    .map((k) => [k, board.cards[k].dockMembers]));
+  // Fingerprint of every docked node's member list. Cheap (a handful of tabs)
+  // and enough to tell whether a reconcile edited synced content — it drops
+  // members that stopped being valid (the node is gone, or it pinned itself).
+  // Covers both collections: an embed can own a tab, so its record carries
+  // `dockMembers` too, and a fingerprint blind to it reports "nothing changed"
+  // for a reconcile that did change content (see applyPulledBoard).
+  const dockListsSig = () => JSON.stringify([...Object.keys(board.cards), ...Object.keys(board.iframes)]
+    .filter((k) => Array.isArray(getNode(k).data.dockMembers))
+    .map((k) => [k, getNode(k).data.dockMembers]));
   // Replace a board's content in place (cache + live view + history baseline).
   function applyPulledBoard(id, content, driveVersion) {
     saveBoardContent(id, content);
     // The base and the watermark record WHAT DRIVE ACTUALLY HOLDS, so they are
     // filed here — before the swap below hands `content` to reconcileToBoard,
-    // whose prune edits a frame's `dockMembers` in place (`board` IS `content`
+    // which can edit a frame's `dockMembers` in place (`board` IS `content`
     // from here on). Filed afterwards they'd describe a local repair as already
     // synced: it would never push, and the base would disagree with Drive
     // permanently instead of self-correcting. Same trap the push path calls out.
@@ -7686,17 +7918,18 @@
       // The selection deliberately survives. A background pull/merge arrives on
       // the sync tick with no warning, and dropping the selection then made the
       // highlight vanish out from under someone in the middle of typing —
-      // reconcileToBoard prunes whatever genuinely went away, which is the only
-      // part a remote change can actually invalidate.
+      // reconcileToBoard drops only whatever genuinely went away, which is the
+      // only part a remote change can actually invalidate.
       interactiveId = null;
       const dockListsBefore = dockListsSig();
       reconcileToBoard();       // derives dock from the pulled cards' dockMembers
-      // Reconcile's prune may have dropped far strays from a frame's member
-      // list. That's an edit to synced content, so own it as one — version and
-      // save, and it pushes on the next tick like any other edit. Unversioned it
-      // sat in memory contradicting the base filed above, and the next merge read
-      // it as the OTHER device re-adding the member: back it came, only for the
-      // next prune to drop it again, once per sync forever.
+      // Reconcile may have dropped ids that stopped being members at all — the
+      // node deleted on the other device, or pinned to the chrome. That's an edit
+      // to synced content, so own it as one — version and save, and it pushes on
+      // the next tick like any other edit. Unversioned it sat in memory
+      // contradicting the base filed above, and the next merge read it as the
+      // OTHER device re-adding the member: back it came, only to be dropped
+      // again, once per sync forever.
       if (dockListsSig() !== dockListsBefore) { board.version++; scheduleSave(); }
       lastContent = contentSnapshot();
       updateHistoryButtons();

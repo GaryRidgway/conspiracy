@@ -11,23 +11,35 @@
     <div id="world"></div>
   </div>
 
-  <!-- Docked-frame side panel: a second window into the SAME world, locked
-       to one frame's region (see ARCHITECTURE.md "Docked frame window").
-       The region's nodes render in #dock-world instead of #world while
-       docked; the panel has its own pan/zoom. -->
-  <aside id="dock-panel" class="hidden" aria-label="Docked frame">
+  <!-- Docked side panel. Two kinds of tab share it (see ARCHITECTURE.md
+       "Docked side window"): a FRAME's region becomes a second window into the
+       same world — #dock-world, with its own pan/zoom, nodes reparented out of
+       #world — while a single card or embed becomes THE PANEL ITSELF, filling
+       #dock-item with no world and no camera, so the width splitter resizes the
+       item. Exactly one of the two containers is live at a time. -->
+  <aside id="dock-panel" class="hidden" aria-label="Docked panel">
     <div id="dock-resizer" title="Drag to resize"></div>
     <div id="dock-header">
-      <!-- the active frame's title, in its color: rename inline (double-click
-           or menu), right-click for the frame menu. Switching frames lives on
-           the EDGE RAIL (#dock-rail), one vertical tab per docked frame. -->
-      <span id="dock-active-name" spellcheck="false" title="Right-click for frame options"></span>
-      <button class="btn btn-icon" id="dockFitBtn" title="Fit the frame region" aria-label="Fit the frame region"><span class="icon icon-center_focus_strong"></span></button>
-      <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen" aria-label="Minimize the docked frame"><span class="icon icon-remove"></span></button>
-      <button class="btn" id="dockUndockBtn" title="Return the frame to the canvas">Undock</button>
+      <!-- The REGION tab's title row: rename inline (double-click or menu),
+           right-click for its menu, and the frame's own copy-link — which is
+           otherwise unreachable, since a docked frame's title tab is stowed off
+           the canvas. An ITEM tab hides this whole header and puts these
+           controls in the node's own title row instead (.dock-ctl), so there is
+           never more than one. Switching tabs lives on the EDGE RAIL
+           (#dock-rail), one vertical tab per docked node. -->
+      <span id="dock-active-name" spellcheck="false" title="Right-click for tab options"></span>
+      <button class="btn btn-icon" id="dockLinkBtn" title="Copy link to this frame" aria-label="Copy link to this frame"><span class="icon icon-tag"></span></button>
+      <button class="btn btn-icon" id="dockFitBtn" title="Fit this tab's contents" aria-label="Fit this tab's contents"><span class="icon icon-center_focus_strong"></span></button>
+      <button class="btn btn-icon" id="dockMinBtn" title="Minimize — fly the contents off screen" aria-label="Minimize the docked panel"><span class="icon icon-remove"></span></button>
+      <button class="btn" id="dockUndockBtn" title="Return this tab to the canvas">Undock</button>
     </div>
     <div id="dock-viewport">
       <div id="dock-world"></div>
+      <!-- item tabs: the node fills this box, its button tray (if any) sits
+           across the bottom. No transform, no world coordinates. -->
+      <div id="dock-item">
+        <div id="dock-item-tray"></div>
+      </div>
     </div>
   </aside>
   <!-- Edge rail: one vertical tab per docked frame, always visible while
