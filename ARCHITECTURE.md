@@ -1060,16 +1060,44 @@ problems come out of that, and they have three different answers:
   every access, but the picker is *drawn* from what was there last time, so a
   board created, renamed or deleted elsewhere lingered in an already-open list.
   The listener redraws it.
-- **The open board's content → warn, and only warn.** Both tabs hold their own
-  in-memory copy and write it whole, so the last save wins and the other tab's
-  edits are gone with no error anywhere. **A three-way merge cannot rescue
-  this** the way it rescues two devices: there is no base for a purely local
-  divergence, because nothing ever recorded what the two copies last agreed on.
-  So `warnSecondTab` says it plainly, once, with no auto-dismiss, and leaves the
-  choice to the user. The real fix is an **ownership model** — one tab holds a
-  Web Lock on the open board for as long as it has it open, a second opens
-  read-only — which is a feature to design, not a guard to add, and is not
-  built.
+- **The open board's content → warn today; mergeable in principle.** Both tabs
+  hold their own in-memory copy and write it whole, so the last save wins and
+  the other tab's edits are gone with no error anywhere. `warnSecondTab` says
+  it plainly, once, with no auto-dismiss, and leaves the choice to the user.
+
+  That is a **stopgap, not the ceiling.** The reason to record this carefully:
+  the obvious framing — "there is no base for a purely local divergence, so
+  `mergeBoards` can't help" — is **wrong**, and it is wrong in the direction
+  that stops someone building the real fix. A base is exactly *the content this
+  tab last successfully wrote*, which the tab knows and simply doesn't keep.
+  Hold it, and the other tab is just a remote device: on a `storage` event,
+  `mergeBoards(lastWritten, liveBoard, e.newValue)` is the same three-way merge,
+  the same local-wins rule, and the same review panel that Drive already uses.
+
+  Four things a build of it has to answer, none of them fatal and none of them
+  free:
+  1. **Convergence.** Both tabs merge symmetrically, so A's write wakes B, whose
+     write wakes A. It settles in value, but must be made to *stop*: don't write
+     when the merged result already equals what's on disk.
+  2. **Version churn.** `mergeBoards` returns `max(local, remote) + 1`, so a
+     ping-pong inflates `version` — the Drive sync watermark — for no content
+     change.
+  3. **Undo.** The Drive pull path clears the stacks. Doing that on every
+     cross-tab save would be hostile in a way the Drive case isn't, because this
+     fires while both users are actively typing.
+  4. **Library watermarks.** Two tabs syncing one Drive board share
+     `syncedLocalVersion`; `withBoardLock` above is what keeps that honest.
+
+  The cheaper alternative is an **ownership model** — one tab holds a Web Lock
+  on the open board while it has it open, a second opens read-only. It answers
+  none of the four because it prevents the divergence instead of resolving it,
+  at the cost of a worse experience. Neither is built.
+
+  What must **not** be done is putting per-tab state *in the board document* to
+  coordinate this. Board content syncs and merges; a tab identity is per-device
+  chrome, so it would churn `version` on every tab open and push another
+  device's tab bookkeeping to Drive — see *Viewport is per-device, never
+  content*, which is the same rule.
 
 ### Merge semantics (`mergeBoards`, pure, tested)
 
