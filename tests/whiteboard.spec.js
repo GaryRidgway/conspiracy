@@ -797,23 +797,100 @@ test('a board whose library entry went missing is recovered at boot', { tag: '@b
 });
 
 // Two tabs share localStorage and neither knows the other exists. Both hold
-// their own in-memory copy of the open board and write it WHOLE, so whoever
-// saves last wins and the other's edits are gone with no error anywhere. There
-// is no base for a purely local divergence, so nothing can merge them — the
-// app's job is to stop that happening in silence.
-test('a second tab editing the same board is reported, not silent', { tag: '@boards' }, async ({ page }) => {
+// their own in-memory copy of the open board and write it WHOLE, so plain
+// last-write-wins loses the other's edits. The other tab is just a remote
+// device that syncs instantly: `diskState` is the base, so mergeBoards resolves
+// it exactly as it resolves two devices.
+const titles = (p) => p.locator('.card-title').allTextContents();
+
+test('two tabs editing one board keep both sets of edits', { tag: '@boards' }, async ({ page }) => {
   await makeCardAt(page, 350, 300, { title: 'From tab one' });
   await expect(page.locator('#saveState')).toHaveText('saved');
 
   const second = await page.context().newPage();
   await second.goto('/');
-  await expect(second.locator('#boardMenuBtn')).toBeVisible();
-  await makeCardAt(second, 500, 300, { title: 'From tab two' });
+  await expect(second.locator('.card-title')).toHaveText(['From tab one']);
+  await makeCardAt(second, 600, 300, { title: 'From tab two' });
   await expect(second.locator('#saveState')).toHaveText('saved');
 
-  await expect(page.locator('#tab-notice')).toBeVisible();
-  await expect(page.locator('#tab-notice .notice-text')).toContainText(/open in another tab/i);
+  // tab one merges tab two's card in rather than being overwritten by it
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  expect((await titles(page)).sort()).toEqual(['From tab one', 'From tab two']);
+
+  // …and the reverse direction: an edit here reaches tab two
+  await makeCardAt(page, 850, 300, { title: 'From tab one again' });
+  await expect(second.locator('.node.card')).toHaveCount(3);
+  expect((await titles(second)).sort())
+    .toEqual(['From tab one', 'From tab one again', 'From tab two']);
   await second.close();
+});
+
+// Both tabs merge symmetrically, so A's write wakes B whose write wakes A.
+// It settles in VALUE on the first round, but it has to actually stop: without
+// the "caught up" test each tab would write back a version-bumped copy of what
+// it just received, forever — and `version` is the Drive sync watermark, so
+// every round would also push a no-op to Drive.
+test('a cross-tab merge converges instead of ping-ponging', { tag: '@boards' }, async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'One' });
+  await expect(page.locator('#saveState')).toHaveText('saved');
+  const second = await page.context().newPage();
+  await second.goto('/');
+  await expect(second.locator('.card-title')).toHaveText(['One']);
+  await makeCardAt(second, 600, 300, { title: 'Two' });
+
+  await expect(page.locator('.node.card')).toHaveCount(2);
+  const read = (p) => p.evaluate(() =>
+    JSON.parse(localStorage.getItem('whiteboard:board:' + localStorage.getItem('whiteboard:current'))).version);
+
+  // let any ping-pong run: if the tabs kept waking each other the version would
+  // climb without a single edit being made
+  const settled = await read(page);
+  await page.waitForTimeout(1200);
+  expect(await read(page)).toBe(settled);
+  expect(await read(second)).toBe(settled);
+  await second.close();
+});
+
+// Both tabs changing the SAME field is a true conflict, and it gets the same
+// treatment a Drive merge gives it: this tab's value wins, and the reversible
+// review panel is offered. Driven with a synthetic StorageEvent rather than a
+// real second tab — the divergence has to straddle the 400ms save debounce
+// exactly (base = what's on disk, local = an edit that hasn't landed yet), and
+// racing two real tabs into that window is how flaky tests get written. The
+// two-real-tab path is covered above.
+test('two tabs changing the same field conflict, and this tab wins', { tag: '@boards' }, async ({ page }) => {
+  const node = await makeCardAt(page, 350, 300, { title: 'Shared' });
+  const id = await node.getAttribute('data-id');
+  await page.locator(`[data-id="${id}"] .card-body`).click();
+  await page.keyboard.type('original');
+  await expect(page.locator('#saveState')).toHaveText('saved');
+
+  await page.evaluate((cardId) => {
+    const key = 'whiteboard:board:' + localStorage.getItem('whiteboard:current');
+    const onDisk = JSON.parse(localStorage.getItem(key));      // the shared base
+
+    // this tab edits the body, and the write is still sitting in the debounce
+    const bodyEl = document.querySelector(`[data-id="${cardId}"] .card-body`);
+    bodyEl.textContent = 'mine';
+    bodyEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+
+    // the other tab, having started from the same base, saved something else
+    const remote = JSON.parse(JSON.stringify(onDisk));
+    remote.cards[cardId].body = 'theirs';
+    remote.version = onDisk.version + 1;
+    const raw = JSON.stringify(remote);
+    localStorage.setItem(key, raw);
+    window.dispatchEvent(new StorageEvent('storage', {
+      key, oldValue: JSON.stringify(onDisk), newValue: raw, storageArea: localStorage,
+    }));
+  }, id);
+
+  await expect(page.locator('#conflict-notice')).toBeVisible();
+  await expect(page.locator('#conflict-notice .notice-text')).toContainText(/kept this device/i);
+  await expect(page.locator(`[data-id="${id}"] .card-body`)).toHaveText('mine');
+  // and the losing value is recoverable, not discarded
+  await page.click('#conflict-notice .notice-show');
+  await expect(page.locator('#merge-review')).toBeVisible();
 });
 
 // The library is read from disk on every access, but the PICKER is drawn from

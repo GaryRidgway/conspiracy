@@ -1050,8 +1050,20 @@
   // rolled back to the last write that fit. Incidental callers (migration,
   // Drive's local cache) ignore the result — for them a lost write is
   // re-derivable, not the user's only copy.
-  function saveBoardContent(id, b) {
-    return writeKey(boardKey(id), JSON.stringify(contentForStore(b)));
+  // The content of the OPEN board as this tab last knew the disk to hold —
+  // refreshed wherever we write it and wherever we load it. It is the merge base
+  // against another tab: "the last state the two of us agreed on" is exactly
+  // what a three-way merge needs, and its absence is the only reason a purely
+  // local divergence ever looked unmergeable. See `mergeFromOtherTab`.
+  let diskState = null;
+  // `pre` lets a caller that already serialized the content hand it in, so the
+  // cross-tab path can record the exact bytes it wrote without stringifying the
+  // whole board a second time.
+  function saveBoardContent(id, b, pre) {
+    const raw = pre != null ? pre : JSON.stringify(contentForStore(b));
+    const ok = writeKey(boardKey(id), raw);
+    if (ok && id === currentBoardId) diskState = raw;
+    return ok;
   }
 
   // Build/repair the library: migrate the legacy single-board key, then
@@ -8114,23 +8126,20 @@
   }
 
   // ── Another tab, same device ───────────────────────────────────────────
-  // Two tabs share localStorage, and neither knows the other exists. Two
-  // distinct problems come out of that, and only one of them is fixable here.
+  // Two tabs share localStorage and neither knows the other exists. Both hold
+  // their own in-memory copy of the open board and write it WHOLE, so plain
+  // last-write-wins loses the other's edits with no error anywhere.
   //
-  // FIXABLE: the library. Every read goes back to disk, but the PICKER renders
-  // from whatever was there when it was last drawn — so a board created,
-  // renamed or deleted in the other tab lingers in this one until something
-  // else happens to redraw it.
+  // The other tab is just a remote device that syncs instantly, so it gets the
+  // machinery Drive already has. The piece that was missing is the BASE:
+  // `diskState` — the content this tab last knew the disk to hold — is exactly
+  // "what the two of us last agreed on", which is all a three-way merge needs.
+  // Live board is local, the event's newValue is remote, and `mergeBoards`
+  // resolves it with the same per-field rules, the same local-wins tie-break
+  // and the same review panel.
   //
-  // NOT FIXABLE HERE: the open board's content. Both tabs hold their own
-  // in-memory copy and write it WHOLE, so whoever saves last wins and the
-  // other's edits are gone with no error anywhere. A three-way merge can't
-  // rescue this the way it rescues two devices, because there is no base for a
-  // purely local divergence — nothing recorded what the two copies last agreed
-  // on. So this says so, plainly and without auto-dismiss, and leaves the
-  // choice to the user. A real fix is an ownership model (one tab holds a Web
-  // Lock on the open board; a second opens it read-only), which is a feature,
-  // not a guard — see ARCHITECTURE → Multiple tabs.
+  // `warnSecondTab` stays as the fallback for what a merge can't cover — no
+  // base yet, or content that won't parse — where saying so beats guessing.
   const tabNotice = document.createElement('div');
   tabNotice.id = 'tab-notice';
   tabNotice.className = 'app-notice hidden';
@@ -8145,16 +8154,86 @@
     if (tabWarned) return;                  // once per session; it can't get worse
     tabWarned = true;
     tabNotice.querySelector('.notice-text').textContent =
-      'This board is open in another tab, and both are saving over each other. ' +
-      'Close one of them — the last to save wins, and the other tab’s edits are lost.';
+      'This board is open in another tab and the two could not be merged. ' +
+      'Close one of them — otherwise the last to save wins, and the other tab’s edits are lost.';
     tabNotice.classList.remove('hidden');
   }
+
+  // Adopt merged content as the live board. Deliberately mirrors
+  // applyPulledBoard rather than reusing it: there is no Drive file here, so no
+  // base and no watermark to file, and the write has to be immediate (below).
+  function applyTabMerge(content, remoteRaw) {
+    content.viewport = board.viewport;      // per-device; never travels between tabs
+    board = content;
+    // Same bargain a Drive pull makes, for the same reason: undo snapshots
+    // can't be rebased across a merge, and an undo holding a PRE-merge snapshot
+    // would write the other tab's work straight back out. Selection and caret
+    // survive — this lands while someone is mid-sentence, and `renderCard`
+    // refuses to overwrite a focused field.
+    undoStack.length = 0; redoStack.length = 0; coalesceBase = null;
+    if (coalesceTimer) { clearTimeout(coalesceTimer); coalesceTimer = null; }
+    interactiveId = null;
+    const sigBefore = dockListsSig();
+    reconcileToBoard();
+    // Reconcile can drop dock members that stopped being members at all, which
+    // is an edit to real content — so it has to be owned, exactly as the pull
+    // path owns it, and it means our copy no longer matches what's on disk.
+    const repaired = dockListsSig() !== sigBefore;
+    if (repaired) board.version++;
+    // Anything this tab had pending is superseded — the merge folded those very
+    // edits in. Leaving the timer armed fires a redundant write, which wakes the
+    // other tab for another round of exactly nothing.
+    clearTimeout(saveTimer); saveTimer = null;
+    if (remoteRaw != null && !repaired) {
+      diskState = remoteRaw;                // disk already holds this; nothing to write
+      setSaveState('saved');
+    } else if (saveBoardContent(currentBoardId, board)) {
+      // Written NOW rather than through the 400ms debounce: `diskState` has to
+      // describe what is actually on disk, and any window where it doesn't is a
+      // window in which the next storage event merges against the wrong base.
+      // (saveBoardContent updates diskState itself; writeKey reports a failure,
+      // so don't claim "saved" over it.)
+      touchLibrary(currentBoardId);
+      setSaveState('saved');
+    }
+    lastContent = contentSnapshot();
+    updateHistoryButtons();
+  }
+
+  function mergeFromOtherTab(raw) {
+    let remote, base;
+    try {
+      remote = normalizeBoard(JSON.parse(raw));
+      base = normalizeBoard(JSON.parse(diskState));
+    } catch (e) { warnSecondTab(); return; }
+    const { merged, conflicts, conflictItems } = mergeBoards(base, board, remote);
+    // Version is decided here rather than taken from mergeBoards' max+1. When
+    // the merge only catches us up to what the other tab already wrote, nothing
+    // new exists — and `version` is the Drive sync watermark, so bumping it
+    // would push a no-op to Drive once per round. It also matters for
+    // TERMINATION: both tabs merge symmetrically, so A's write wakes B whose
+    // write wakes A. Recognising "caught up" is what makes the second tab stop
+    // instead of writing back a version-bumped copy of what it just received.
+    const caughtUp = BOARD_COLLECTIONS.every((c) => valueEqual(merged[c], remote[c]));
+    merged.version = caughtUp ? remote.version : Math.max(board.version, remote.version) + 1;
+    applyTabMerge(merged, caughtUp ? raw : null);
+    // True conflicts get the same notice and the same reversible review panel a
+    // Drive merge gets — there is nothing tab-specific about "you both edited
+    // the same field, this one won".
+    if (conflicts) showConflictNotice(conflictItems);
+  }
+
   // Fires only in the OTHER tabs, never in the one that wrote — so reaching
   // this at all means a second tab exists.
   window.addEventListener('storage', (e) => {
     if (!e.key) return;                     // a whole-store clear; nothing to target
     if (e.key === LIB_KEY) { renderBoardMenu(); updateBoardMenuLabel(); updateDriveUI(); return; }
-    if (currentBoardId && e.key === boardKey(currentBoardId)) warnSecondTab();
+    if (!currentBoardId || e.key !== boardKey(currentBoardId)) return;
+    if (e.newValue == null) return;          // the board was deleted elsewhere, not edited
+    // No base means this tab never established what the disk held, so there is
+    // nothing to diff against and a guessed base would invent a merge.
+    if (!diskState) { warnSecondTab(); return; }
+    mergeFromOtherTab(e.newValue);
   });
 
   // ── Merge review: the notice's "Review" opens this panel. The merge keeps
@@ -8812,6 +8891,10 @@
     currentBoardId = id;
     writeKey(CURRENT_KEY, id);
     board = loadBoardContent(id);
+    // What we just read IS what the disk holds — the base another tab's write
+    // will be merged against. Set before any migration below, which saves and
+    // moves it on.
+    diskState = JSON.stringify(contentForStore(board));
     if (migrateLegacyDockMembers(id)) { board.version++; saveBoardContent(id, board); }
     // this device's docked-frame CHROME (view preference, like the viewport)
     // BEFORE rendering, so members render straight into the panel; which

@@ -1060,44 +1060,55 @@ problems come out of that, and they have three different answers:
   every access, but the picker is *drawn* from what was there last time, so a
   board created, renamed or deleted elsewhere lingered in an already-open list.
   The listener redraws it.
-- **The open board's content → warn today; mergeable in principle.** Both tabs
-  hold their own in-memory copy and write it whole, so the last save wins and
-  the other tab's edits are gone with no error anywhere. `warnSecondTab` says
-  it plainly, once, with no auto-dismiss, and leaves the choice to the user.
+- **The open board's content → a three-way merge, same as Drive.** Both tabs
+  hold their own in-memory copy and write it whole, so plain last-write-wins
+  loses the other's edits with no error anywhere.
 
-  That is a **stopgap, not the ceiling.** The reason to record this carefully:
-  the obvious framing — "there is no base for a purely local divergence, so
-  `mergeBoards` can't help" — is **wrong**, and it is wrong in the direction
-  that stops someone building the real fix. A base is exactly *the content this
-  tab last successfully wrote*, which the tab knows and simply doesn't keep.
-  Hold it, and the other tab is just a remote device: on a `storage` event,
-  `mergeBoards(lastWritten, liveBoard, e.newValue)` is the same three-way merge,
-  the same local-wins rule, and the same review panel that Drive already uses.
+  **The other tab is just a remote device that syncs instantly**, and the only
+  piece that was missing is the base. `diskState` is it: the content this tab
+  last knew the disk to hold, refreshed in `saveBoardContent` (for the current
+  board) and in `loadAndShow`. That is precisely "what the two of us last agreed
+  on". Live board is local, the `storage` event's `newValue` is remote, and
+  `mergeFromOtherTab` runs `mergeBoards` — same per-field rules, same local-wins
+  tie-break, same conflict notice and reversible review panel.
 
-  Four things a build of it has to answer, none of them fatal and none of them
-  free:
-  1. **Convergence.** Both tabs merge symmetrically, so A's write wakes B, whose
-     write wakes A. It settles in value, but must be made to *stop*: don't write
-     when the merged result already equals what's on disk.
-  2. **Version churn.** `mergeBoards` returns `max(local, remote) + 1`, so a
-     ping-pong inflates `version` — the Drive sync watermark — for no content
-     change.
-  3. **Undo.** The Drive pull path clears the stacks. Doing that on every
-     cross-tab save would be hostile in a way the Drive case isn't, because this
-     fires while both users are actively typing.
-  4. **Library watermarks.** Two tabs syncing one Drive board share
-     `syncedLocalVersion`; `withBoardLock` above is what keeps that honest.
+  Four things this had to get right:
+  1. **Termination.** Both tabs merge symmetrically, so A's write wakes B whose
+     write wakes A. It settles in *value* on the first round, but it must also
+     *stop*: `caughtUp` (the merged collections `valueEqual` the remote ones)
+     means the disk already holds this, so adopt it and **don't write**.
+  2. **Version churn.** The version is set deliberately instead of taking
+     `mergeBoards`' `max + 1` — `remote.version` when caught up, a real bump
+     only when the merge produced something neither side had. `version` is the
+     Drive sync watermark, so a bump per round would push a no-op to Drive per
+     round. This is also half of (1): without it each tab writes back a
+     version-bumped copy of what it just received, forever.
+  3. **Undo.** Cleared, exactly as a Drive pull clears it, and for a sharper
+     reason: an undo holding a *pre-merge* snapshot would write the other tab's
+     work straight back out. This is tolerable because an idle tab never
+     triggers it — only a `commit()` writes board content, so a merge happens
+     only when both tabs are actively editing. Selection and caret survive
+     (`renderCard` refuses to overwrite a focused field), because it lands
+     mid-sentence.
+  4. **The write is immediate, not debounced.** `diskState` has to describe what
+     is *actually* on disk; any window where it doesn't is a window in which the
+     next `storage` event merges against the wrong base. The pending
+     `saveTimer` is cleared too — the merge folded those very edits in, so
+     letting it fire wakes the other tab for another round of nothing.
 
-  The cheaper alternative is an **ownership model** — one tab holds a Web Lock
-  on the open board while it has it open, a second opens read-only. It answers
-  none of the four because it prevents the divergence instead of resolving it,
-  at the cost of a worse experience. Neither is built.
+  `warnSecondTab` survives as the fallback for what a merge can't cover: no
+  base yet, or content that won't parse. Saying so beats guessing.
 
   What must **not** be done is putting per-tab state *in the board document* to
   coordinate this. Board content syncs and merges; a tab identity is per-device
-  chrome, so it would churn `version` on every tab open and push another
-  device's tab bookkeeping to Drive — see *Viewport is per-device, never
-  content*, which is the same rule.
+  chrome, so it would churn `version` on every tab open and push one device's
+  tab bookkeeping to Drive — see *Viewport is per-device, never content*, which
+  is the same rule.
+
+  Still unhandled: two tabs on one **Drive** board share `syncedLocalVersion` in
+  the library. `withBoardLock` stops them reconciling at once, and a cross-tab
+  merge deliberately leaves the Drive watermarks alone so the next reconcile
+  compares `board.version` against them and reaches the right branch by itself.
 
 ### Merge semantics (`mergeBoards`, pure, tested)
 
@@ -1133,8 +1144,9 @@ silently overwrote newer synced content with no conflict raised for it.
 
 - A pull/merge clears the undo/redo stacks (rebasing undo history across a
   merge is a project of its own).
-- Two tabs on one device editing the same board still overwrite each other —
-  see *Multiple tabs* below for what is and isn't handled.
+- Two tabs on one device now three-way merge instead of overwriting; a pull
+  still clears undo, and the Drive watermarks they share are only guarded by a
+  lock — see *Multiple tabs*.
 - The on-close Drive push is best-effort (fetch may be cut); boot reconcile
   catches whatever was missed.
 - `saveBase` failing on quota is swallowed; a stale base degrades merges
