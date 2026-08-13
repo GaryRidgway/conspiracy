@@ -40,6 +40,7 @@ says *where* to find it.
   - [Folder layout](#folder-layout)
   - [Batched save model](#batched-save-model)
   - [Reconcile state machine (reconcileAttempt)](#reconcile-state-machine-reconcileattempt)
+  - [Multiple tabs (one device, shared localStorage)](#multiple-tabs-one-device-shared-localstorage)
   - [Merge semantics (mergeBoards, pure, tested)](#merge-semantics-mergeboards-pure-tested)
   - [Known limitations (accepted, not bugs)](#known-limitations-accepted-not-bugs)
 - [View layer](#view-layer)
@@ -1038,6 +1039,38 @@ Invariants that took real bugs to learn — keep them:
    state where the hook stands down. Only a deferred answer, like a real popup,
    reproduces it.
 
+### Multiple tabs (one device, shared localStorage)
+
+Two tabs share every key and neither knows the other exists. Three distinct
+problems come out of that, and they have three different answers:
+
+- **Two reconciles at once → one Web Lock.** `reconciling` makes the flight
+  single per *tab*; both tabs read "Drive is newer" off the same entry and both
+  pull, and a pull clears the undo stacks — so the second throws away history
+  for work the first already applied. `withBoardLock` wraps
+  `reconcileDriveBoard` in `navigator.locks` keyed on the board.
+  **`ifAvailable`, not queued**: a blocked tick is SKIPPED exactly as the
+  per-tab guard skips it, because banking it to run when the other tab finishes
+  means running it against watermarks that tab just settled — the redundant
+  pass, delayed rather than avoided. Where Web Locks is missing it falls back to
+  the per-tab guard alone, and nothing on Drive is at risk either way:
+  `guardedUpdate` re-reads Drive's version immediately before every write. This
+  is about wasted round trips and a cleared undo stack.
+- **A stale picker → the `storage` event.** The library is read from disk on
+  every access, but the picker is *drawn* from what was there last time, so a
+  board created, renamed or deleted elsewhere lingered in an already-open list.
+  The listener redraws it.
+- **The open board's content → warn, and only warn.** Both tabs hold their own
+  in-memory copy and write it whole, so the last save wins and the other tab's
+  edits are gone with no error anywhere. **A three-way merge cannot rescue
+  this** the way it rescues two devices: there is no base for a purely local
+  divergence, because nothing ever recorded what the two copies last agreed on.
+  So `warnSecondTab` says it plainly, once, with no auto-dismiss, and leaves the
+  choice to the user. The real fix is an **ownership model** — one tab holds a
+  Web Lock on the open board for as long as it has it open, a second opens
+  read-only — which is a feature to design, not a guard to add, and is not
+  built.
+
 ### Merge semantics (`mergeBoards`, pure, tested)
 
 Per collection → per record → per field, diffed against the base:
@@ -1072,8 +1105,8 @@ silently overwrote newer synced content with no conflict raised for it.
 
 - A pull/merge clears the undo/redo stacks (rebasing undo history across a
   merge is a project of its own).
-- Two tabs on one device editing the same board share watermarks in
-  localStorage and can confuse each other (no `storage`-event coordination).
+- Two tabs on one device editing the same board still overwrite each other —
+  see *Multiple tabs* below for what is and isn't handled.
 - The on-close Drive push is best-effort (fetch may be cut); boot reconcile
   catches whatever was missed.
 - `saveBase` failing on quota is swallowed; a stale base degrades merges

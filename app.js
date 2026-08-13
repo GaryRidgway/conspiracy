@@ -7822,7 +7822,12 @@
   }
 
   // ════════════════════════════════════════════════════════
-  //  BOARD LIBRARY — picker dropdown, switch / new / rename / remove
+  //  DRIVE SYNC — the POLICY half of Drive: which way content should
+  //  move and when. The GOOGLE DRIVE section far above is the other
+  //  half — auth and raw HTTP — and knows nothing about boards. Here:
+  //  the status bar, the reconcile state machine and its watermarks,
+  //  folder layout, asset push/pull, the batched sync tick, and the
+  //  notices a background merge or a failed write puts on screen.
   // ════════════════════════════════════════════════════════
   const boardMenuBtn = document.getElementById('boardMenuBtn');
   const boardMenu = document.getElementById('board-menu');
@@ -8107,6 +8112,50 @@
     }
     storageNotice.classList.remove('hidden');
   }
+
+  // ── Another tab, same device ───────────────────────────────────────────
+  // Two tabs share localStorage, and neither knows the other exists. Two
+  // distinct problems come out of that, and only one of them is fixable here.
+  //
+  // FIXABLE: the library. Every read goes back to disk, but the PICKER renders
+  // from whatever was there when it was last drawn — so a board created,
+  // renamed or deleted in the other tab lingers in this one until something
+  // else happens to redraw it.
+  //
+  // NOT FIXABLE HERE: the open board's content. Both tabs hold their own
+  // in-memory copy and write it WHOLE, so whoever saves last wins and the
+  // other's edits are gone with no error anywhere. A three-way merge can't
+  // rescue this the way it rescues two devices, because there is no base for a
+  // purely local divergence — nothing recorded what the two copies last agreed
+  // on. So this says so, plainly and without auto-dismiss, and leaves the
+  // choice to the user. A real fix is an ownership model (one tab holds a Web
+  // Lock on the open board; a second opens it read-only), which is a feature,
+  // not a guard — see ARCHITECTURE → Multiple tabs.
+  const tabNotice = document.createElement('div');
+  tabNotice.id = 'tab-notice';
+  tabNotice.className = 'app-notice hidden';
+  tabNotice.setAttribute('role', 'status');
+  tabNotice.innerHTML =
+    '<span class="notice-text"></span>' +
+    '<button class="notice-dismiss" type="button" title="Dismiss" aria-label="Dismiss">×</button>';
+  document.body.appendChild(tabNotice);
+  tabNotice.querySelector('.notice-dismiss').addEventListener('click', () => tabNotice.classList.add('hidden'));
+  let tabWarned = false;
+  function warnSecondTab() {
+    if (tabWarned) return;                  // once per session; it can't get worse
+    tabWarned = true;
+    tabNotice.querySelector('.notice-text').textContent =
+      'This board is open in another tab, and both are saving over each other. ' +
+      'Close one of them — the last to save wins, and the other tab’s edits are lost.';
+    tabNotice.classList.remove('hidden');
+  }
+  // Fires only in the OTHER tabs, never in the one that wrote — so reaching
+  // this at all means a second tab exists.
+  window.addEventListener('storage', (e) => {
+    if (!e.key) return;                     // a whole-store clear; nothing to target
+    if (e.key === LIB_KEY) { renderBoardMenu(); updateBoardMenuLabel(); updateDriveUI(); return; }
+    if (currentBoardId && e.key === boardKey(currentBoardId)) warnSecondTab();
+  });
 
   // ── Merge review: the notice's "Review" opens this panel. The merge keeps
   // this device's version on a true conflict, but it also computed the other
@@ -8517,17 +8566,38 @@
     return 'done';
   }
 
+  // `reconciling` makes the flight single per TAB. Two tabs on one device share
+  // every watermark in localStorage, so both can read "Drive is newer" off the
+  // same entry and both pull — and a pull clears the undo stacks, so the second
+  // one throws away history for work the first already applied. Web Locks makes
+  // the flight single across tabs too, keyed on the board.
+  //
+  // `ifAvailable`, deliberately NOT queued: a blocked tick should be SKIPPED
+  // exactly as the per-tab guard skips it. Banking it to run when the other tab
+  // finishes means running it against watermarks that tab just settled — the
+  // redundant pass this is here to prevent, delayed rather than avoided.
+  //
+  // Absent (older browsers), fall back to the per-tab guard alone: guardedUpdate
+  // still re-reads Drive's version immediately before every write, so the file
+  // itself was never at risk. This is about wasted round trips and a cleared
+  // undo stack, not about the correctness of what lands on Drive.
+  function withBoardLock(id, run) {
+    if (!navigator.locks || !navigator.locks.request) return run();
+    return navigator.locks.request('wb-sync:' + id, { ifAvailable: true }, (lock) => (lock ? run() : undefined));
+  }
   async function reconcileDriveBoard(id) {
     const entry = libraryEntry(id);
     if (!entry || entry.mode !== 'drive' || !entry.driveFileId) return;
     if (!DRIVE.isConnected() || reconciling.has(id)) return;
     reconciling.add(id);
     try {
-      // Retry a bounded number of times if a write loses the concurrency check;
-      // each retry re-reads the remote and merges, so it converges quickly.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (await reconcileAttempt(id) !== 'retry') break;
-      }
+      await withBoardLock(id, async () => {
+        // Retry a bounded number of times if a write loses the concurrency check;
+        // each retry re-reads the remote and merges, so it converges quickly.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (await reconcileAttempt(id) !== 'retry') break;
+        }
+      });
     } catch (e) {
       console.error('Drive reconcile failed', e);
       setDriveState('error', 'Drive: sync failed');
@@ -8722,6 +8792,12 @@
     });
   }
 
+  // ════════════════════════════════════════════════════════
+  //  BOARD LIBRARY — picker dropdown, switch / new / rename / remove.
+  //  The chrome elements it drives are declared at the top of DRIVE
+  //  SYNC above, because the board menu and the Drive bar share one
+  //  dropdown.
+  // ════════════════════════════════════════════════════════
   function updateBoardMenuLabel() {
     const e = libraryEntry(currentBoardId);
     if (boardNameLabel) boardNameLabel.textContent = e ? e.name : 'Board';

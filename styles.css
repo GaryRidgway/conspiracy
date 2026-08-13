@@ -773,7 +773,11 @@ body.space-pan #viewport.panning,
 .app-notice .notice-dismiss:hover { color: var(--text); }
 /* Storage pressure sits above a merge notice rather than on top of it — both
    can be up at once, and the storage one is the more urgent read. */
+/* The notices are separate elements so more than one can be up at once (a merge
+   report shouldn't be evicted by "your images didn't fit"), which means each
+   owns a slot in the stack rather than sharing one position. */
 #storage-notice { bottom: 5rem; }
+#tab-notice { bottom: 8.5rem; }
 
 /* ── Docked frame window — one frame's region as a second window on the
    right edge. #dock-world carries its own pan/zoom transform (same world

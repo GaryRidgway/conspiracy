@@ -12,7 +12,7 @@ one line, and `npm run test:docs` fails if that ever stops being true:
 grep -n '//  PORTS' app.js
 ```
 
-Sections in file order (39 total). See ARCHITECTURE.md for the
+Sections in file order (40 total). See ARCHITECTURE.md for the
 invariants behind them — this file only says *where* things are.
 
 | Grep for | What the section covers |
@@ -54,5 +54,6 @@ invariants behind them — this file only says *where* things are.
 | `//  QUICK JUMP (⌘K)` | search every card/frame by its visible text and fly the viewport to the pick. Arrow keys move the highlight, Enter jumps. |
 | `//  SETTINGS` | the cog (top right). Per-device preferences: stored under their own local key, never synced or merged. |
 | `//  HELP` | the ? button (top right) and its shortcuts panel. Replaces the old always-on hint strip: complete reference on demand instead of a partial one permanently on screen. |
-| `//  BOARD LIBRARY` | picker dropdown, switch / new / rename / remove |
+| `//  DRIVE SYNC` | the POLICY half of Drive: which way content should move and when. The GOOGLE DRIVE section far above is the other half — auth and raw HTTP — and knows nothing about boards. |
+| `//  BOARD LIBRARY` | picker dropdown, switch / new / rename / remove. The chrome elements it drives are declared at the top of DRIVE SYNC above, because the board menu and the Drive bar share one dropdown. |
 | `//  BOOT` | the one strictly ordered sequence in the file, and the order is load-bearing: dock chrome restores before first render, the undo baseline is taken after it (so boot is never an undoable edit), the asset GC runs before the pressure check so… |

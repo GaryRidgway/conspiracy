@@ -796,6 +796,45 @@ test('a board whose library entry went missing is recovered at boot', { tag: '@b
   await expect(page.locator(`.board-row[data-id="${id}"]`)).toBeVisible();
 });
 
+// Two tabs share localStorage and neither knows the other exists. Both hold
+// their own in-memory copy of the open board and write it WHOLE, so whoever
+// saves last wins and the other's edits are gone with no error anywhere. There
+// is no base for a purely local divergence, so nothing can merge them — the
+// app's job is to stop that happening in silence.
+test('a second tab editing the same board is reported, not silent', { tag: '@boards' }, async ({ page }) => {
+  await makeCardAt(page, 350, 300, { title: 'From tab one' });
+  await expect(page.locator('#saveState')).toHaveText('saved');
+
+  const second = await page.context().newPage();
+  await second.goto('/');
+  await expect(second.locator('#boardMenuBtn')).toBeVisible();
+  await makeCardAt(second, 500, 300, { title: 'From tab two' });
+  await expect(second.locator('#saveState')).toHaveText('saved');
+
+  await expect(page.locator('#tab-notice')).toBeVisible();
+  await expect(page.locator('#tab-notice .notice-text')).toContainText(/open in another tab/i);
+  await second.close();
+});
+
+// The library is read from disk on every access, but the PICKER is drawn from
+// whatever was there last time — so a board created in another tab used to
+// linger missing from an already-open list.
+test('the open board picker picks up a board created in another tab', { tag: '@boards' }, async ({ page }) => {
+  await page.click('#boardMenuBtn');
+  await expect(page.locator('.board-row')).toHaveCount(1);
+
+  const second = await page.context().newPage();
+  await second.goto('/');
+  await second.click('#boardMenuBtn');
+  await second.click('#newBoardBtn');
+  await expect(second.locator('#saveState')).toHaveText('saved');
+
+  // the first tab's list updates without it being reopened (which would redraw
+  // it anyway and prove nothing)
+  await expect(page.locator('.board-row')).toHaveCount(2);
+  await second.close();
+});
+
 test('board picker: create, switch, and isolate content between boards', { tag: '@boards' }, async ({ page }) => {
   // start with one board; put a card on it
   await makeCardAt(page, 350, 300, { title: 'On board one' });
