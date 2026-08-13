@@ -1373,10 +1373,35 @@ revisit trigger — recorded here so they aren't re-litigated. The full audit
 trail (including the checklist that closed out every acted-on item) lived in
 `AUDIT.md`; it was removed once complete and survives in git history.
 
-- **Per-keystroke whole-board `JSON.stringify` (undo snapshots) — declined.**
-  Every coalesced edit runs `recordUndo` → `contentSnapshot()`, which
-  stringifies all cards/iframes/connections (several MB on a board with
-  pasted images). Two deferral attempts both failed: snapshotting once per
+- **Per-keystroke whole-board `JSON.stringify` (undo snapshots) — declined,
+  and now measured.** Every coalesced edit runs `recordUndo` →
+  `contentSnapshot()`, which stringifies all cards/iframes/connections. This
+  entry used to justify itself with "several MB on a board with pasted images",
+  which **stopped being true** when image bytes moved to IndexedDB — a card body
+  holds `<img data-asset="…">` with no src, so the snapshot is text only. The
+  real numbers, driving the app's own input path on synthetic boards (fast dev
+  machine, Chromium; assume several times worse on a low-end device):
+
+  | cards | board | snapshot | save | **per keystroke** |
+  |---|---|---|---|---|
+  | 200 | 0.08 MB | 0.1 ms | 0.1 ms | **0.2 ms** |
+  | 2,000 | 0.79 MB | 0.7 ms | 1.0 ms | **0.9 ms** |
+  | 5,000 | 2.0 MB | 2.0 ms | 3.2 ms | **2.2 ms** |
+  | 12,000 | 4.83 MB | 6.3 ms | 10.1 ms | **7.5 ms** |
+
+  **The cost is bounded, and that is the finding.** localStorage's ~5MB ceiling
+  caps a board at roughly 12k cards of that shape — and a *Drive* board holds
+  content plus a merge base locally, so it caps near 6k. The worst keystroke the
+  app can currently reach is under half a frame; the save is debounced to 400ms,
+  so 10ms there is one frame every 400. There is no board a user can build on
+  which this janks.
+  **The trigger to revisit is therefore not a slow board — it's moving board
+  content off localStorage.** Lifting the ceiling (IndexedDB, per-record writes)
+  removes the thing that bounds this, and unbounded per-keystroke
+  `O(whole board)` is a real problem. Do the snapshot work *before* that
+  migration, not after; sequenced the other way round, the migration ships the
+  regression and the fix arrives late.
+  Two deferral attempts both failed: snapshotting once per
   burst loses a genuine two-step undo boundary when a burst is interrupted
   (nudge A, then drag B before the 600ms timer), and `setTimeout(0)`-deferred
   bookkeeping races (fuzz-failed on the 9th of 10 runs) because `commit()` is

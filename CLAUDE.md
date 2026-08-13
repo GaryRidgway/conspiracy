@@ -26,8 +26,13 @@ lists every section with a one-line gist and a unique grep marker
   the `app.js` section banners. Run it after adding, removing or retitling a
   section; the `@docs` tests fail while either is stale.
 - No build/lint step **for the app** — it runs by serving the repo root, and
-  nothing in `tools/` runs at load or deploy time. `tools/` only regenerates
-  committed docs, so it is not the build step this rule forbids.
+  nothing in `tools/` runs at load or deploy time. `tools/` holds developer
+  tooling only (doc generation, `bench-commit.mjs`), so it is not the build
+  step this rule forbids.
+- `node tools/bench-commit.mjs` — per-keystroke commit cost against boards up
+  to the storage ceiling. Needs the dev server on :8123; not part of `npm
+  test`. Re-run before re-litigating the undo-snapshot cost (ARCHITECTURE.md →
+  Deferred optimizations).
 
 ## Hard rules
 
