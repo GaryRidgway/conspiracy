@@ -9107,4 +9107,16 @@
     DRIVE.warmup();
     armDriveGestureHook();
   }
+  // Offline shell (sw.js). Every byte of the user's work is already local — the
+  // only thing that ever needed the network was the app itself. Registered last,
+  // after `load`, and failure-tolerant on purpose: this is an enhancement, and
+  // a board that wouldn't open because a service worker didn't register would be
+  // a far worse trade than no offline at all. The path is relative so the scope
+  // follows the app, whether that's a site root or /conspiracy/.
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js')
+        .catch((e) => console.warn('Offline shell unavailable', e));
+    });
+  }
 })();

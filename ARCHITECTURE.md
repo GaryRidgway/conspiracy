@@ -47,6 +47,7 @@ says *where* to find it.
 - [Interaction model](#interaction-model)
   - [Accessibility: known limitations (deliberate, scoped)](#accessibility-known-limitations-deliberate-scoped)
   - [Touch input (TOUCH GESTURES section in app.js)](#touch-input-touch-gestures-section-in-appjs)
+- [Offline shell (sw.js)](#offline-shell-swjs)
 - [Security boundaries](#security-boundaries)
 - [Tests](#tests)
 - [Conventions](#conventions)
@@ -1343,6 +1344,53 @@ surprise:
   explicit `pointerId`s) — see `tests/touch.spec.js`. Playwright cannot
   produce real multi-finger touches.
 
+## Offline shell (`sw.js`)
+
+Every byte of a user's work was already local — localStorage for content,
+IndexedDB for image bytes. The only thing that ever needed the network was the
+app itself.
+
+**Network-first, cache as the fallback**, and that direction is the whole
+design. Cache-first loads faster and is wrong here: `main` auto-deploys, so
+cache-first pins every user one deploy behind until the worker updates, and "an
+old client is holding a board a newer one wrote" is precisely the hazard
+`schemaTooNew` exists to contain. Three things fall out of choosing
+network-first, and they are the reason this was cheap:
+
+- **No update prompt, no `skipWaiting`.** There is nothing to hurry, because an
+  online page is already fresh. The worker takes over on the next load, the
+  default behaviour, with no choreography to get wrong.
+- **It is a no-op online**, so it can be registered for the whole test suite
+  without changing how anything else behaves.
+- **Forgetting to bump `CACHE` is safe.** Every successful online fetch
+  refreshes its own entry, so a stale precache self-heals on the next connected
+  load. The version only tidies away files that no longer exist.
+
+Two things it must never touch, both enforced in the one `fetch` guard:
+
+- **Anything cross-origin.** Google's scripts and every Drive call fall through
+  untouched, so neither the auth flow nor the network-clean guarantee can be
+  affected from here.
+- **Anything that isn't the shell — and an iframe is the trap.** An embedded
+  page is *content*. It is also `mode: 'navigate'`, exactly like the app
+  opening, so **`destination` (`'document'` vs `'iframe'`) is the only thing
+  separating them**. Matching on `mode` alone put the worker in the middle of
+  every same-origin embed on the board; `tests/dock.spec.js`'s reparent-reload
+  test is what caught it, because a worker answering the request means
+  `page.route` never sees it. A `fetch()`-based test does NOT cover this — fetch
+  is `mode: 'cors'` and misses the branch entirely, which is why the offline
+  suite drives a real iframe.
+
+Registration is last in BOOT, after `load`, and failure-tolerant: offline is an
+enhancement, and a board that wouldn't open because a worker failed to register
+is a far worse trade than no offline. The path is relative, so the scope follows
+the app whether it is served from a site root (the test server) or `/conspiracy/`
+(Pages).
+
+Not built: a web app manifest. It would make the app installable, but wants real
+PNG icons at 192/512 — the icon set here is SVG masks — so it is a separate
+piece of work rather than a line of JSON.
+
 ## Security boundaries
 
 - `sanitizeHtml()` allowlists tags for card bodies (paste and load paths).
@@ -1377,7 +1425,7 @@ surprise:
 `tests/whiteboard.spec.js` (behavior) and `tests/usability.spec.js`
 (encodes known complaints about Miro/FigJam/etc. plus keyboard/a11y and the
 merge unit tests), plus feature suites `dock`, `pin`, `touch`, `loading`,
-and `merge-review`. Every test carries a feature-area tag (`@canvas`,
+`offline` and `merge-review`. Every test carries a feature-area tag (`@canvas`,
 `@connections`, …) — `npm run test:<bucket>` runs one area while iterating;
 the full suite still gates every commit. Conventions that prevent flakes:
 

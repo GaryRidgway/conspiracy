@@ -17,6 +17,7 @@
     "test:docs": "playwright test --grep @docs",
     "test:frames": "playwright test --grep @frames",
     "test:nav": "playwright test --grep @nav",
+    "test:offline": "playwright test --grep @offline",
     "test:select": "playwright test --grep @select",
     "test:touch": "playwright test --grep @touch",
     "test:undo": "playwright test --grep @undo"

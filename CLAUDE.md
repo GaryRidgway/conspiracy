@@ -19,7 +19,7 @@ lists every section with a one-line gist and a unique grep marker
   treated as failures.
 - `npm run test:<bucket>` — one feature area while iterating (~4s vs ~33s).
   Buckets: `canvas` `cards` `connections` `frames` `buttons` `boards` `nav`
-  `select` `undo` `chrome` `a11y` `dock` `touch` `docs`. Every test carries a
+  `select` `undo` `chrome` `a11y` `dock` `touch` `docs` `offline`. Every test carries a
   Playwright `tag:`; tag new tests (cross-cutting tests take two tags).
   Buckets are for iteration only — the FULL suite still gates every commit.
 - `npm run map` — regenerate `MAP.md` + the `ARCHITECTURE.md` contents from
