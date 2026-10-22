@@ -1870,7 +1870,11 @@ body.docked #settings-wrap { right: calc(var(--dock-w, 420px) + 1rem + 46px); }
 .iframe-wrap {
   flex: 1;
   position: relative;
-  background: #0E1016;
+  /* white, not the app's dark surface: most web pages are light, and a page
+     with a transparent background should render on white rather than letting
+     the canvas show through. Pre-load the .frame-placeholder (own dark bg)
+     covers this. */
+  background: #fff;
   overflow: hidden;                 /* clips the scaled frame to the node box */
   border-radius: 0 0 10px 10px;
 }
